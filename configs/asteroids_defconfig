@@ -30,6 +30,11 @@ CONFIG_XNU_ARMCPU=y
 # Archive: build/libpthread-kernel/libpthread_kernel.a (build-libpthread-kernel.py)
 CONFIG_XNU_SOURCE_PTHREAD=y
 
+# Added after the second boot (2026-10-22): the unchanged AMFI panicked "AMFI: No PMGR?" (ConfigurationSettings.cpp:235).
+# sheng's placeholder ApplePMGR provider, no hardware access; runs with the boot argument sheng-pmgr=2.
+# Archive: build/sheng-platform-power/libShengPlatformPower.a (build-asteroids-platform-power.py)
+CONFIG_XNU_SHENG_PMGR=y
+
 # Kept, no archive: generic kernel changes that sheng, fajita and uke all build with. (The defconfig parser takes no
 # comment after a value, so each reason is on the line above.)
 # Architectural timer entry (19.2 MHz, as sheng); needs ARMCPU.
@@ -83,5 +88,4 @@ CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 # -v); NativeAdreno knows only the Adreno 740.
 # CONFIG_XNU_NATIVE_LEGACY_DISPLAY is not set
 # CONFIG_XNU_NATIVE_ADRENO is not set
-#
-# Was already removed from asteroids_defconfig (the line contains SHENG): XNU_SHENG_PMGR, the sheng PMGR stub.
+

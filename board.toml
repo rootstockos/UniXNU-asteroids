@@ -41,6 +41,11 @@ archives = [
   # Restored after the first boot: XNU registers pthread at early boot (panic "pthread kernel extension not loaded"
   # at pthread_shims.c:318 without it). XNU_SOURCE_PTHREAD links this archive.
   "build-libpthread-kernel.py",
+  # Restored after the second boot: the unchanged AMFI panics "AMFI: No PMGR?" (ConfigurationSettings.cpp:235) on
+  # every boot, not only with a UFS root. sheng's provider (package/ShengPlatformPower.cpp, unchanged) touches no
+  # hardware; it only publishes an ApplePMGR whose power operations stop with a panic. Our copy of sheng's build
+  # script pins two values so it builds in a fresh tree. XNU_SHENG_PMGR links it; sheng-pmgr=2 runs it.
+  "build-asteroids-platform-power.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
   # Dropped: "build-arm-driver.py NativeUfs". Root on UFS is not part of this boot; NativeUfs links symbols of the
@@ -49,8 +54,6 @@ archives = [
   # Dropped: "build-arm-driver.py NativeVirtioBlock", "build-arm-driver.py NativeRamBlock" and both
   # "build-native-virtio-bindings.py" entries. There is no VirtIO device, and the RAM block only serves a Data seed.
   # Dropped: "build-mockfs-fixture.py". mockfs is the offline executable-root test fixture; no root this boot.
-  # Dropped: "build-sheng-platform-power.py". The sheng PMGR stub (XNU_SHENG_PMGR); sheng-only, and asteroids has no
-  # platform power driver. The AMFI "No PMGR" panic it avoids is only on the native-ufs-root path.
   # Dropped: "build-boot-progress.py". It compiles kits/sheng/BootProgress.c (the sheng package) with a uefi-sheng
   # include path, and XNU_BOOT_PROGRESS also needs UFS, the owner-root audit and VirtIO. See the open questions.
   # Dropped: "build-arm-driver.py NativeAdreno", "build-native-adreno-kits.py", "build-native-adreno-accelerator.py".
@@ -139,7 +142,8 @@ kernel_args = [
   "-no_slto_panic",                   # kept: generic, avoids the SLTO panic on this non-Apple CPU
   "ml-timeout-lock-panic-scale=40",   # kept: generic; a slow 4 KiB-page bring-up with diagnostics trips lock timeouts
   "armcpu-diagnostics=1",             # kept: generic ArmCpu, prints the CPU and GIC state; first check if interrupts fail
-  # Dropped, sheng-* or tied to a dropped module: every sheng-* argument (including sheng-smp, sheng-pmgr,
+  "sheng-pmgr=2",                     # restored: publish the placeholder ApplePMGR (see build-asteroids-platform-power.py)
+  # Dropped, sheng-* or tied to a dropped module: the other sheng-* arguments (including sheng-smp,
   # sheng-platform-stage), armcpu-spi-ipi (SMP only), native-ufs-root, -apfs_shared_datavolume, offline-apfs-load,
   # every offline-legacy-*, offline-mobile-graphics-*, offline-hid-*, offline-key-events and boot-ui-focus4.
   # Not set: boot-progress=2. Its only reader is kits/sheng/BootProgress.c, which this kernel does not link; the
