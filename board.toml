@@ -38,6 +38,9 @@ archives = [
   # Kept: the CPU, GICv3 and timer provider (XNU_ARMCPU). The GIC layout (dist 0x17100000, redist 0x17180000, stride
   # 0x40000) and 19.2 MHz timer are sheng's, taken from the ADT. Secondaries stay off without sheng-smp=1.
   "build-arm-driver.py ArmCpu",
+  # Restored after the first boot: XNU registers pthread at early boot (panic "pthread kernel extension not loaded"
+  # at pthread_shims.c:318 without it). XNU_SOURCE_PTHREAD links this archive.
+  "build-libpthread-kernel.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
   # Dropped: "build-arm-driver.py NativeUfs". Root on UFS is not part of this boot; NativeUfs links symbols of the
@@ -50,7 +53,6 @@ archives = [
   # platform power driver. The AMFI "No PMGR" panic it avoids is only on the native-ufs-root path.
   # Dropped: "build-boot-progress.py". It compiles kits/sheng/BootProgress.c (the sheng package) with a uefi-sheng
   # include path, and XNU_BOOT_PROGRESS also needs UFS, the owner-root audit and VirtIO. See the open questions.
-  # Dropped: "build-libpthread-kernel.py". The pthread component is needed from launchd on; it comes back with root.
   # Dropped: "build-arm-driver.py NativeAdreno", "build-native-adreno-kits.py", "build-native-adreno-accelerator.py".
   # Adreno 740 only; the asteroids GPU is Adreno 8xx (gen8_3_0).
   # Dropped: "build-native-legacy-display.py". The CPU-rendered display for SpringBoard (sheng device script). XNU's
