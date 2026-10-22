@@ -67,6 +67,13 @@ archives = [
   # NativeUfsBlock's IOBlockStorageDevice imports, bound to the original class in the prelinked bootstrap candidate
   # (uke's binder; CI makes the candidate with scripts/ci-bootstrap-candidate.sh as pre_build).
   "build-ufs-original-bindings.py --candidate build/native-prelink/bootstrap-candidate.macho",
+  # UFS root, step 2, as on uke: the Data volume (NativeRamBlock, which needs NativeAES; UniXNU binds NativeAES from
+  # its recorded original addresses, scripts/data/native-aes-original-bindings.S) and the mockfs fixture.
+  # NativeRamBlock's IOBlockStorageDevice imports resolve against NativeUfs's bindings.
+  "build-arm-driver.py NativeAES",
+  "build-native-aes-bindings.py",
+  "build-arm-driver.py NativeRamBlock",
+  "build-mockfs-fixture.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
   # Dropped: "build-arm-driver.py NativeVirtioBlock", "build-arm-driver.py NativeRamBlock" and both
@@ -137,7 +144,7 @@ size_mib = 64                         # sheng's 192 held the verified bundles an
                                       # 49 MiB. payload.py refuses the build if the files exceed 95 %, so raise it if that
                                       # happens. It rides in the kernel image (see [bootimg]), so smaller loads faster
 loader = "firmware"                   # kept: DarwinBoot is already in the asteroids firmware volume
-title = "asteroids first boot: XNU to console"
+title = "asteroids: iPadOS from UFS"
 timeout = 3                           # kept at the default; the menu already works on the phone
 dram_size = "0x80000000"              # the low DRAM window 0x80000000-0x100000000, as on sheng; the phone's /memory fills
                                       # it (with carve-out holes) and puts the rest of its 12 GB above 0x880000000
@@ -161,10 +168,20 @@ kernel_args = [
   "ml-timeout-lock-panic-scale=40",   # kept: generic; a slow 4 KiB-page bring-up with diagnostics trips lock timeouts
   "armcpu-diagnostics=1",             # kept: generic ArmCpu, prints the CPU and GIC state; first check if interrupts fail
   "sheng-pmgr=2",                     # restored: publish the placeholder ApplePMGR (see build-asteroids-platform-power.py)
-  "native-ufs-probe=10",              # UFS step 1, read-only: GPT -> userdata -> first block, reported as a panic
-  # Dropped, sheng-* or tied to a dropped module: the other sheng-* arguments (including sheng-smp,
-  # sheng-platform-stage), armcpu-spi-ipi (SMP only), native-ufs-root, -apfs_shared_datavolume, offline-apfs-load,
-  # every offline-legacy-*, offline-mobile-graphics-*, offline-hid-*, offline-key-events and boot-ui-focus4.
+  # UFS root, step 2, after uke's working set (Allenwdk/UniXNU-uke board.toml) without its display and input:
+  "native-ufs-root=1",                # NativeUfs publishes the OS and SystemOS windows of the userdata root image
+  "native-ufs-allow-unverified=1",    # without the owner policy bundle (our NativeUfs fork); reads are not authenticated
+  "offline-apfs-load=1",              # load APFS (and IOStorageFamily) so the windows' volumes appear
+  "-apfs_shared_datavolume",          # as uke and sheng: the Data volume is shared with the root's volume group
+  "sheng-data-persist=2",             # Data writes go through to the store at the end of userdata
+  "sheng-log=1",                      # persistent kernel log at the end of userdata
+  "sheng-aks=1",                      # AppleKeyStore stand-in, as on uke
+  "sheng-lite=1",                     # leave out the daemons that need missing hardware, as on uke
+  "sheng-disable-watchdogd=1",        # as on uke
+  # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
+  # Dropped: the other sheng-* arguments (sheng-smp, sheng-platform-stage), armcpu-spi-ipi (SMP only), every
+  # offline-legacy-*, offline-mobile-graphics-*, offline-hid-*, offline-key-events and boot-ui-focus4: display and
+  # input come after launchd.
   # Not set: boot-progress=2. Its only reader is kits/sheng/BootProgress.c, which this kernel does not link; the
   # argument would be inert. Add it back together with a ported boot progress kit (see the open questions).
 ]
@@ -175,6 +192,10 @@ cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"   # kept: eight cores, 
                                        # ArmCpu probes only the boot CPU without sheng-smp=1, so the others stay off.
                                        # If boot stalls in CPU topology, try "0" (one core, no /psci)
 psci_method = "smc"                    # stated explicitly (sheng relied on the tool default); the phone uses PSCI over smc
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # the OS volume of 21H461, as on uke (same IPSW)
+packed_data_ramdisk = true             # the Data seed as a packed ramdisk for NativeRamBlock, as on uke
+persistent_data = true                 # with sheng-data-persist=2, Data is not ephemeral
+ipad_identity = true                   # the userland is iPadOS (iPad7,1), as on uke
 # Dropped: owned_memory_size (sheng's 4.75 GiB is for userland; without it DarwinBoot takes its default 256 MiB window,
 # enough for the kernel and prelinked kexts: uke reached the XNU entry with 0x10000000). See the open questions.
 # Dropped: root_match_volume_uuid (no root this boot; without it XNU waits for a root device, which is an acceptable end).

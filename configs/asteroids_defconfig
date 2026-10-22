@@ -38,6 +38,11 @@ CONFIG_XNU_SHENG_PMGR=y
 # UFS step 1 (2026-10-22): NativeUfs for the read-only probe native-ufs-probe=10, built without the verified root.
 # Archive: build/native-ufs/libNativeUfs.a (build-arm-driver.py NativeUfs)
 CONFIG_XNU_NATIVE_UFS=y
+# UFS root, step 2 (2026-10-23), as uke-full_defconfig: the Data volume and its AES dependency, and mockfs.
+# Archives: build/native-aes/libNativeAES.a, build/native-ram-block/libNativeRamBlock.a, the mockfs fixture.
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
+CONFIG_XNU_SOURCE_MOCKFS=y
 
 # Kept, no archive: generic kernel changes that sheng, fajita and uke all build with. (The defconfig parser takes no
 # comment after a value, so each reason is on the line above.)
@@ -59,15 +64,11 @@ CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 
 # Dropped (off), with the reason. "# ... is not set" makes the choice explicit in the configuration.
 #
-# Not needed before userland, and each brings back an archive: mockfs (offline root fixture), the PGZ allocator probe
-# (offline test case only).
-# CONFIG_XNU_SOURCE_MOCKFS is not set
+# Not needed: the PGZ allocator probe (offline test case only).
 # CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE is not set
 #
-# Storage: VirtioBlock has no device; RamBlock serves only a Data seed; NativeAES is needed only by those.
-# CONFIG_XNU_NATIVE_AES is not set
+# Storage: VirtioBlock has no device.
 # CONFIG_XNU_NATIVE_VIRTIO_BLOCK is not set
-# CONFIG_XNU_NATIVE_RAM_BLOCK is not set
 #
 # Owner root and Data chain: needs the verified-root and verified VirtIO bundles that no builder makes ("they need the
 # volume policies of the target image", sheng board.toml) and a root. All follow from VERIFIED_ROOT_PROBE. The two
