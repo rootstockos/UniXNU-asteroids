@@ -50,6 +50,7 @@ archives = [
   # facts hold on SM7635: host 0x1d84000, apps SMMU 0x15000000 with UFS stream 0x60, and the GCC UFS GDSCs (0x77004,
   # 0x9e000) and branches (0x77018...0x770e4) are at SM8550's offsets (gcc-volcano.c, the 3a's live DT). Built
   # without the verified-root check (scripts/build-arm-driver.py), which needs signed volume policies not built yet.
+  # drivers/NativeUfs is our fork (rootstockos/NativeUfs, fix/unverified-build): upstream did not build that way.
   "build-arm-driver.py NativeUfs",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.

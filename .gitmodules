@@ -1,0 +1,4 @@
+[submodule "drivers/NativeUfs"]
+	path = drivers/NativeUfs
+	url = https://github.com/rootstockos/NativeUfs.git
+	branch = fix/unverified-build
