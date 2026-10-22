@@ -43,6 +43,20 @@ CONFIG_XNU_NATIVE_UFS=y
 CONFIG_XNU_NATIVE_AES=y
 CONFIG_XNU_NATIVE_RAM_BLOCK=y
 CONFIG_XNU_SOURCE_MOCKFS=y
+# UFS root, step 3 (2026-10-23), as uke-userland_defconfig: launchd started from the UFS root and found no dyld
+# cache, which is in the SystemOS cryptex. Mount SystemOS (8846FE78-..., the patch default, checked on the image)
+# as a union over /, start from its dyld cache, and mount the Data seed at /private/var. XNU_BRINGUP_OWNER_CACHE
+# (our UniXNU fork, from uke) lets these build with the unverified NativeUfs root instead of the owner trust bundle.
+CONFIG_XNU_BRINGUP_OWNER_CACHE=y
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+CONFIG_XNU_OWNER_DATA_MOUNT=y
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
+# The APFS volume UUID of our Data seed (UniXNU build/owner-data-fixture/seed.json, 2026-10-23).
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="07DEE194-37A6-4A05-8602-8476EB2F65AE"
+# The launchd watchdog policy without the boot progress kit (our UniXNU fork, after uke): makes sheng-lite=1 and
+# sheng-disable-watchdogd=1 effective and pets the Gunyah watchdog. Archive: build/watchdog-policy/libWatchdogPolicy.a.
+CONFIG_XNU_WATCHDOG_POLICY=y
 
 # Kept, no archive: generic kernel changes that sheng, fajita and uke all build with. (The defconfig parser takes no
 # comment after a value, so each reason is on the line above.)
