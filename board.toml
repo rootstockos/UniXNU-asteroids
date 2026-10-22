@@ -105,14 +105,14 @@ roots = [
   "com.apple.iokit.IOHIDEventDriver",
 ]
 
-# The ramdisk of the boot image: a FAT volume with the UniXNU config, the kernel and its ADT. DarwinBoot is in the firmware
+# The payload: a FAT volume with the UniXNU config, the kernel and its ADT. DarwinBoot is in the firmware
 # volume. Build with "unixnu build payload --uefi ../uefi-asteroids": the panic screen takes its font from the Mu-Silicium
 # checkout (Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib).
 [payload]
 volume = "ASTEROIDESP"                # 11 characters, the FAT label limit; the label itself is not matched by anything
-size_mib = 96                         # sheng's 192 held the verified bundles and the Data seed; the minimal kernel is far
-                                      # smaller (uke's similar first-console kernel fit in 64). payload.py refuses the build
-                                      # if the files exceed 95 %, so raise it if that happens
+size_mib = 64                         # sheng's 192 held the verified bundles and the Data seed; this kernel's files take
+                                      # 49 MiB. payload.py refuses the build if the files exceed 95 %, so raise it if that
+                                      # happens. It rides in the kernel image (see [bootimg]), so smaller loads faster
 loader = "firmware"                   # kept: DarwinBoot is already in the asteroids firmware volume
 title = "asteroids first boot: XNU to console"
 timeout = 3                           # kept at the default; the menu already works on the phone
@@ -170,8 +170,8 @@ psci_method = "smc"                    # stated explicitly (sheng relied on the 
 #    requires XNU_NATIVE_UFS, XNU_OWNER_ROOT_AUDIT, XNU_NATIVE_VIRTIO_BLOCK and the supplied verified-root archive. Porting
 #    it (as fajita did, with weak stubs for the sheng-only symbols) is a separate step; until then -v plus panic_screen
 #    give the visible progress.
-# 4. Payload size: whether the asteroids ABL accepts a 96 MiB ramdisk with "fastboot boot" (so far only an empty one has
-#    been tested). fajita's ABL refused large ramdisks.
+# 4. Payload size: whether the asteroids ABL loads a ~67 MiB kernel image (shim, firmware and the 64 MiB payload).
+#    A ramdisk is no option: ABL ignores it (see [bootimg]).
 # 5. Framebuffer: DarwinBoot passes the GOP mode (1080x2392, 32 bpp). Check that the stride it reports is 4320 bytes;
 #    a padded stride would skew the console.
 # 6. Roots: whether a trimmed prelink closure (without IOGPUFamily, IOMobileGraphicsFamily, IOSurface, the audio, AV,
@@ -181,6 +181,12 @@ psci_method = "smc"                    # stated explicitly (sheng relied on the 
 #    that compatible is a question for the UFS stage, together with the SM7635 GCC offsets.
 
 # The device firmware: our Mu-Silicium port (VolcanoPkg + asteroidsPkg) with UniXNU and DarwinBoot added.
+# The 3a's ABL takes the ramdisk from init_boot and ignores the boot image's own: the initrd it passed was the
+# vendor_boot ramdisk + init_boot ramdisk + bootconfig (6948396 + 6281595 + 2689 bytes, observed 2026-10-22).
+# The payload therefore rides in the kernel image; ShengBootMemoryDxe finds it in the "Kernel" memory region.
+[bootimg]
+payload_in_kernel = true
+
 [firmware]
 config = "asteroids"               # Resources/Configs/asteroids.toml in the Mu-Silicium checkout (--uefi)
 dsc = "Platforms/Nothing/asteroidsPkg/asteroids.dsc"
