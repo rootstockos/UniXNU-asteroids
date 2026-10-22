@@ -35,8 +35,13 @@ def require(value, message):
 
 PINNED_AON = {320: 0xfffffff004a20fbc, 321: 0xfffffff004a20fc4}
 CANDIDATES = sorted((ROOT / 'build/native-prelink').glob('*-candidate.macho'), key=lambda f: f.stat().st_mtime)
-if CANDIDATES:
+ORIGINAL = ROOT / '.cache/firmware/kernelcache.macho/kernelcache.release.ipad7.decompressed'
+if CANDIDATES and ORIGINAL.is_file():
     print(run(['python3', ROOT / 'scripts/audit-amfi-pmgr-contract.py', '--candidate', CANDIDATES[-1]], text=True), end='')
+elif CANDIDATES:
+    # The CI bootstrap candidate is there, the decompressed original kernelcache the contract audit also reads is
+    # not: skip only the audit; the slot checks below still run against the candidate.
+    print('No decompressed original kernelcache: AMFI/PMGR contract audit skipped, candidate slot checks kept')
 else:
     print('No prelinked candidate in this tree: AMFI/PMGR contract audit skipped, pinned AON slots used')
 header = '''// Generated exact storage/slot ABI; private fields stay opaque.
