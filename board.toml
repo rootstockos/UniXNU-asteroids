@@ -1,0 +1,53 @@
+# Board description of the Nothing Phone (3a) (asteroids, SM7635 "volcano"), read by the unixnu build driver.
+# Hardware facts and how they were measured: docs/asteroids-hw-facts.md in rootstockos/iosonandng.
+
+[board]
+name = "asteroids"
+soc = "SM7635"
+description = "Nothing Phone (3a)"
+kit = "asteroids"
+
+# Same target OS image as UniXNU's sheng port: the unchanged iPad7,1 iPadOS 17.7.11 restore image.
+[ipsw]
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 0x8011
+board_id = 12
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]
+
+[ipsw.sha256]
+"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
+"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+
+[kernel]
+defconfig = "asteroids_defconfig"
+
+# The device firmware: our Mu-Silicium port (VolcanoPkg + asteroidsPkg) with UniXNU and DarwinBoot added.
+[firmware]
+config = "asteroids"               # Resources/Configs/asteroids.toml in the Mu-Silicium checkout (--uefi)
+dsc = "Platforms/Nothing/asteroidsPkg/asteroids.dsc"
+fd = "Build/asteroidsPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Silicium-ACPI", "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"]
+packages = [
+  "{uefi}",
+  "{uefi}/Platforms/Nothing",
+  "{tree}/package",
+  "{tree}/drivers/DarwinBoot",
+  "{edk2}",
+  "{uefi}/Common/Mu",
+  "{uefi}/Common/Mu_OEM_Sample",
+  "{uefi}/Silicon/Qualcomm",
+  "{uefi}/Silicon/Silicium",
+  "{uefi}/Silicium-ACPI",
+  "{uefi}/Silicium-ACPI/Platforms/Nothing",
+  "{uefi}/Silicium-ACPI/Silicon/Qualcomm",
+]
+
+[firmware.defines]
+ENABLE_SECUREBOOT = "0"
+MEMORY_PROTECTION = "TRUE"
+SHIP_MODE = "FALSE"
+BUILDID_STRING = "asteroids-bringup"
