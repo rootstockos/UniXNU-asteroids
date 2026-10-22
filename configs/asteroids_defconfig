@@ -1,37 +1,82 @@
-# Kernel configuration of the asteroids (Nothing Phone (3a)) image, based on the sheng configuration. CONFIG_XNU_<NAME> becomes XNU_<NAME> for the kernel build.
+# PROPOSAL: kernel configuration for the first XNU boot of the Nothing Phone (3a) (asteroids). Rename to
+# asteroids_defconfig to use it ("unixnu defconfig" only lists *_defconfig). CONFIG_XNU_<NAME> becomes XNU_<NAME> for
+# the kernel build.
+#
+# Goal: XNU to the framebuffer console and the platform expert, no root. This is sheng's configuration reduced to the
+# platform, CPU and source-crypto core, which is close to uke's first-console configuration (that one reached the XNU
+# entry on SM7675). Every archive a CONFIG below links is made by one entry of [kernel] archives in
+# proposed-board-sections.toml, and no CONFIG needs a sheng-only module or an archive supplied from outside.
 
+# Kept: run the [kernel] archives builders before the link. Without it the link finds no ArmDTPlatform, ArmCpu or
+# corecrypto archive.
 CONFIG_XNU_BUILD_ARCHIVES=y
-CONFIG_XNU_SOURCE_CORECRYPTO14=y
-CONFIG_XNU_SOURCE_PTHREAD=y
-CONFIG_XNU_ARM_DT_PLATFORM=y
-CONFIG_XNU_ARMCPU=y
-CONFIG_XNU_NATIVE_UFS=y
-CONFIG_XNU_NATIVE_AES=y
-CONFIG_XNU_NATIVE_VIRTIO_BLOCK=y
-CONFIG_XNU_NATIVE_RAM_BLOCK=y
-CONFIG_XNU_TRUST_CACHE_RUNTIME=y
-CONFIG_XNU_SOURCE_MOCKFS=y
-CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
-CONFIG_XNU_VERIFIED_ROOT_PROBE=y
-CONFIG_XNU_OWNER_ROOT_AUDIT=y
-CONFIG_XNU_OWNER_ROOT_TRUST=y
-CONFIG_XNU_OWNER_CACHE_MOUNT=y
-CONFIG_XNU_OWNER_CACHE_STARTUP=y
-CONFIG_XNU_OWNER_BOOT_MANIFEST=y
-CONFIG_XNU_OWNER_DATA_MOUNT=y
-CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
-CONFIG_XNU_DT_PANIC_REGION=y
-CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE=y
-CONFIG_XNU_NATIVE_ARCH_TIMER=y
-CONFIG_XNU_NATIVE_PAN=y
-CONFIG_XNU_BOOT_PROGRESS=y
-CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
-CONFIG_XNU_NATIVE_ADRENO=y
 
+# Kept: source corecrypto provider. ArmCpu requires it.
+# Archive: build/corecrypto-2023/libcorecrypto_kernel_noasm-namespaced.a (build-corecrypto-14.py, then --namespace)
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+# Kept: the original corecrypto kext (a prelink root) initializes through real OSKext startup, as on sheng.
 CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
-CONFIG_XNU_OWNER_DATA_VOLUME_UUID="18AB5557-DC2D-469B-8758-855E60F5B0DF"
-CONFIG_XNU_NATIVE_VIRTIO_BLOCK_ARCHIVE="{tree}/build/native-virtio-block-verified-bundle/libNativeVirtioBlock.a"
-CONFIG_XNU_VERIFIED_ROOT_ARCHIVE="{tree}/build/verified-root-os-xnu-bundle/libVerifiedRootProbe.a"
-CONFIG_XNU_EXTRA_LD_ARCHIVES=""
+
+# Kept: Apple-format device tree platform expert, the goal of this boot.
+# Archive: build/armdt-platform/libArmDTPlatform.a (build-arm-driver.py ArmDTPlatform)
+CONFIG_XNU_ARM_DT_PLATFORM=y
+# Kept: architectural CPU, GICv3 and IPI provider. Needs SOURCE_CORECRYPTO14 and a platform expert, both set.
+# Archive: build/armcpu/libArmCpu.a (build-arm-driver.py ArmCpu)
+CONFIG_XNU_ARMCPU=y
+
+# Kept, no archive: generic kernel changes that sheng, fajita and uke all build with. (The defconfig parser takes no
+# comment after a value, so each reason is on the line above.)
+# Architectural timer entry (19.2 MHz, as sheng); needs ARMCPU.
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+# ARMv8.1 PAN; the SM7635 cores (ARMv9.2) have it.
+CONFIG_XNU_NATIVE_PAN=y
+# Panic region from the device tree; harmless without one.
+CONFIG_XNU_DT_PANIC_REGION=y
+# Trust cache runtime init on BCM2837; part of the qualified AMFI path.
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+# 4 KiB code signature hashes derived from verified 16 KiB blocks; needed once signed code runs.
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+
+# Kept explicit off, as in sheng: the prototype mobile display and the QEMU virt platform.
 CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
 CONFIG_XNU_ARMVIRT_PLATFORM=n
+CONFIG_XNU_EXTRA_LD_ARCHIVES=""
+
+# Dropped (off), with the reason. "# ... is not set" makes the choice explicit in the configuration.
+#
+# Not needed before userland, and each brings back an archive: pthread (launchd), mockfs (offline root fixture), the PGZ
+# allocator probe (offline test case only).
+# CONFIG_XNU_SOURCE_PTHREAD is not set
+# CONFIG_XNU_SOURCE_MOCKFS is not set
+# CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE is not set
+#
+# Storage: no root on UFS this boot. NativeUfs links symbols of the verified-root archive and carries SM8550 GCC
+# offsets; VirtioBlock has no device; RamBlock serves only a Data seed; NativeAES is needed only by those.
+# CONFIG_XNU_NATIVE_UFS is not set
+# CONFIG_XNU_NATIVE_AES is not set
+# CONFIG_XNU_NATIVE_VIRTIO_BLOCK is not set
+# CONFIG_XNU_NATIVE_RAM_BLOCK is not set
+#
+# Owner root and Data chain: needs the verified-root and verified VirtIO bundles that no builder makes ("they need the
+# volume policies of the target image", sheng board.toml) and a root. All follow from VERIFIED_ROOT_PROBE. The two
+# *_ARCHIVE strings must go too: kernel.py refuses the build when a CONFIG_XNU_*_ARCHIVE names a missing .a, even
+# with its feature off. OWNER_DATA_VOLUME_UUID is the UUID of sheng's Data seed and is read only with OWNER_DATA_MOUNT.
+# CONFIG_XNU_VERIFIED_ROOT_PROBE is not set
+# CONFIG_XNU_OWNER_ROOT_AUDIT is not set
+# CONFIG_XNU_OWNER_ROOT_TRUST is not set
+# CONFIG_XNU_OWNER_CACHE_MOUNT is not set
+# CONFIG_XNU_OWNER_CACHE_STARTUP is not set
+# CONFIG_XNU_OWNER_BOOT_MANIFEST is not set
+# CONFIG_XNU_OWNER_DATA_MOUNT is not set
+# CONFIG_XNU_OWNER_UNION_SYSTEMOS is not set
+#
+# Boot progress: the kit is sheng's package (kits/sheng/BootProgress.c), and the base build refuses it without UFS,
+# owner-root audit and VirtIO.
+# CONFIG_XNU_BOOT_PROGRESS is not set
+#
+# Display and GPU: the legacy display is the CPU-rendered SpringBoard display (a sheng device script, and it excludes
+# -v); NativeAdreno knows only the Adreno 740.
+# CONFIG_XNU_NATIVE_LEGACY_DISPLAY is not set
+# CONFIG_XNU_NATIVE_ADRENO is not set
+#
+# Was already removed from asteroids_defconfig (the line contains SHENG): XNU_SHENG_PMGR, the sheng PMGR stub.
