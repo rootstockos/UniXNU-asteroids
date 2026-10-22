@@ -22,6 +22,18 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 "044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
 "044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
 
+# The userdata partition (LUN 0, sda13), read by NativeUfs's read-only probe (native-ufs-probe=10) on 2026-10-23:
+# first 0x256248, last 0x3a8bffa in 4 KiB blocks = 58940851 blocks (224.84 GiB); the ext4 file system there had exactly
+# that block count. The root image goes here and replaces Ubuntu Touch's data.
+[userdata]
+first_lba = 0x256248
+last_lba = 0x3a8bffa
+lba_bytes = 4096
+windows = [
+  { name = "OS", component = "OS" },
+  { name = "SystemOS", component = "Cryptex1,SystemOS" },
+]
+
 [kernel]
 defconfig = "asteroids_defconfig"
 # Archive builders of the kernel step, in order. Each entry is a script of scripts/ in the build tree, without the
