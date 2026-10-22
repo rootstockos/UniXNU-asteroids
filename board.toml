@@ -52,6 +52,9 @@ archives = [
   # without the verified-root check (scripts/build-arm-driver.py), which needs signed volume policies not built yet.
   # drivers/NativeUfs is our fork (rootstockos/NativeUfs, fix/unverified-build): upstream did not build that way.
   "build-arm-driver.py NativeUfs",
+  # NativeUfsBlock's IOBlockStorageDevice imports, bound to the original class in the prelinked bootstrap candidate
+  # (uke's binder; CI makes the candidate with scripts/ci-bootstrap-candidate.sh as pre_build).
+  "build-ufs-original-bindings.py --candidate build/native-prelink/bootstrap-candidate.macho",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
   # Dropped: "build-arm-driver.py NativeVirtioBlock", "build-arm-driver.py NativeRamBlock" and both
