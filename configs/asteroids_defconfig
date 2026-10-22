@@ -87,15 +87,11 @@ CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 # Owner root and Data chain: needs the verified-root and verified VirtIO bundles that no builder makes ("they need the
 # volume policies of the target image", sheng board.toml) and a root. All follow from VERIFIED_ROOT_PROBE. The two
 # *_ARCHIVE strings must go too: kernel.py refuses the build when a CONFIG_XNU_*_ARCHIVE names a missing .a, even
-# with its feature off. OWNER_DATA_VOLUME_UUID is the UUID of sheng's Data seed and is read only with OWNER_DATA_MOUNT.
+# with its feature off. (The SystemOS, cache startup, Data and union mounts are on above, without the owner trust.)
 # CONFIG_XNU_VERIFIED_ROOT_PROBE is not set
 # CONFIG_XNU_OWNER_ROOT_AUDIT is not set
 # CONFIG_XNU_OWNER_ROOT_TRUST is not set
-# CONFIG_XNU_OWNER_CACHE_MOUNT is not set
-# CONFIG_XNU_OWNER_CACHE_STARTUP is not set
 # CONFIG_XNU_OWNER_BOOT_MANIFEST is not set
-# CONFIG_XNU_OWNER_DATA_MOUNT is not set
-# CONFIG_XNU_OWNER_UNION_SYSTEMOS is not set
 #
 # Boot progress: the kit is sheng's package (kits/sheng/BootProgress.c), and the base build refuses it without UFS,
 # owner-root audit and VirtIO.
