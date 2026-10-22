@@ -46,11 +46,13 @@ archives = [
   # hardware; it only publishes an ApplePMGR whose power operations stop with a panic. Our copy of sheng's build
   # script pins two values so it builds in a fresh tree. XNU_SHENG_PMGR links it; sheng-pmgr=2 runs it.
   "build-asteroids-platform-power.py",
+  # UFS, step 1: NativeUfs for its read-only probe (native-ufs-probe=10: GPT, userdata, first block). Its hardware
+  # facts hold on SM7635: host 0x1d84000, apps SMMU 0x15000000 with UFS stream 0x60, and the GCC UFS GDSCs (0x77004,
+  # 0x9e000) and branches (0x77018...0x770e4) are at SM8550's offsets (gcc-volcano.c, the 3a's live DT). Built
+  # without the verified-root check (scripts/build-arm-driver.py), which needs signed volume policies not built yet.
+  "build-arm-driver.py NativeUfs",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
-  # Dropped: "build-arm-driver.py NativeUfs". Root on UFS is not part of this boot; NativeUfs links symbols of the
-  # verified-root archive (vr_xnu_crypto, verified_root_key) that no builder makes, and its GCC offsets (GccUfs.h) are
-  # SM8550's, not SM7635's.
   # Dropped: "build-arm-driver.py NativeVirtioBlock", "build-arm-driver.py NativeRamBlock" and both
   # "build-native-virtio-bindings.py" entries. There is no VirtIO device, and the RAM block only serves a Data seed.
   # Dropped: "build-mockfs-fixture.py". mockfs is the offline executable-root test fixture; no root this boot.
@@ -143,6 +145,7 @@ kernel_args = [
   "ml-timeout-lock-panic-scale=40",   # kept: generic; a slow 4 KiB-page bring-up with diagnostics trips lock timeouts
   "armcpu-diagnostics=1",             # kept: generic ArmCpu, prints the CPU and GIC state; first check if interrupts fail
   "sheng-pmgr=2",                     # restored: publish the placeholder ApplePMGR (see build-asteroids-platform-power.py)
+  "native-ufs-probe=10",              # UFS step 1, read-only: GPT -> userdata -> first block, reported as a panic
   # Dropped, sheng-* or tied to a dropped module: the other sheng-* arguments (including sheng-smp,
   # sheng-platform-stage), armcpu-spi-ipi (SMP only), native-ufs-root, -apfs_shared_datavolume, offline-apfs-load,
   # every offline-legacy-*, offline-mobile-graphics-*, offline-hid-*, offline-key-events and boot-ui-focus4.

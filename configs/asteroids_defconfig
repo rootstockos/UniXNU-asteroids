@@ -35,6 +35,10 @@ CONFIG_XNU_SOURCE_PTHREAD=y
 # Archive: build/sheng-platform-power/libShengPlatformPower.a (build-asteroids-platform-power.py)
 CONFIG_XNU_SHENG_PMGR=y
 
+# UFS step 1 (2026-10-22): NativeUfs for the read-only probe native-ufs-probe=10, built without the verified root.
+# Archive: build/native-ufs/libNativeUfs.a (build-arm-driver.py NativeUfs)
+CONFIG_XNU_NATIVE_UFS=y
+
 # Kept, no archive: generic kernel changes that sheng, fajita and uke all build with. (The defconfig parser takes no
 # comment after a value, so each reason is on the line above.)
 # Architectural timer entry (19.2 MHz, as sheng); needs ARMCPU.
@@ -60,9 +64,7 @@ CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 # CONFIG_XNU_SOURCE_MOCKFS is not set
 # CONFIG_XNU_ZONE_PGZ_ALIGNMENT_PROBE is not set
 #
-# Storage: no root on UFS this boot. NativeUfs links symbols of the verified-root archive and carries SM8550 GCC
-# offsets; VirtioBlock has no device; RamBlock serves only a Data seed; NativeAES is needed only by those.
-# CONFIG_XNU_NATIVE_UFS is not set
+# Storage: VirtioBlock has no device; RamBlock serves only a Data seed; NativeAES is needed only by those.
 # CONFIG_XNU_NATIVE_AES is not set
 # CONFIG_XNU_NATIVE_VIRTIO_BLOCK is not set
 # CONFIG_XNU_NATIVE_RAM_BLOCK is not set
