@@ -213,6 +213,11 @@ root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # the OS volum
 packed_data_ramdisk = true             # the Data seed as a packed ramdisk for NativeRamBlock, as on uke
 persistent_data = true                 # with sheng-data-persist=2, Data is not ephemeral
 ipad_identity = true                   # the userland is iPadOS (iPad7,1), as on uke
+# mount(8) phase 1 (launchd's first boot task) exits with 66 without /chosen/boot-manifest-hash; it names
+# /private/preboot/<hash> from it. There is no Apple personalization manifest here, so this is an explicit bring-up
+# boot-set identity, not Apple data: uke's value (SHA-384 of "UkeBringup.BootSet.v1\0"), kept for parity with the port
+# that boots past this point.
+boot_manifest_hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
 # Dropped: owned_memory_size (sheng's 4.75 GiB is for userland; without it DarwinBoot takes its default 256 MiB window,
 # enough for the kernel and prelinked kexts: uke reached the XNU entry with 0x10000000). See the open questions.
 # Dropped: root_match_volume_uuid (no root this boot; without it XNU waits for a root device, which is an acceptable end).
