@@ -1,0 +1,22 @@
+{
+  "linux": {
+    "repository": "https://github.com/torvalds/linux.git",
+    "commit": "734bef548a96e8774d6eef5dfa2026c6edc4e80b",
+    "date": "2026-10-22T15:58:00-10:00",
+    "files": {
+      "drivers/gpu/drm/msm/adreno/a6xx_gmu.c": "6d7a4c3f75bec2043ac28e3d27632717f11d2156d3e91e05279d30ee6bdd5038",
+      "drivers/gpu/drm/msm/adreno/a6xx_catalog.c": "17eb678609709a0c90f109e510036c4a71cc24408e92e44eabad728ce7d9d6d0",
+      "drivers/gpu/drm/msm/registers/adreno/a6xx.xml": "529cfbcb5f6729e4a5ffde2a7c9c73e4654821b44372ca9ea980f128b3095f33",
+      "drivers/gpu/drm/msm/registers/adreno/a6xx_gmu.xml": "f13f07aa3c975c1d671c1a7f5ba62ddaaf525aedb7a0e481186cbfffe461f88b"
+    }
+  },
+  "sheng_gmu": {
+    "repository": "https://github.com/UniXNU/UniXNU-sheng",
+    "commit": "fb2d4ed7ae02aa3fb53688c3d70bfaefd5c1b8f5",
+    "files": [
+      "package/ShengGmu.c",
+      "package/ShengGmu.h"
+    ],
+    "licence": "BSD-2-Clause-Patent"
+  }
+}
