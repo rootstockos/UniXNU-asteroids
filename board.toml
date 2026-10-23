@@ -166,6 +166,8 @@ kernel_args = [
   "-v",                               # kept: verbose text console on the framebuffer
   "-enable_kprintf_spam",             # from uke: DEVELOPMENT kernels keep kprintf off without it; with no UART it goes to
                                       # the video console, so kernel diagnostics show on screen
+  "-textconsole",                     # our UniXNU fork (uke's -uketextconsole): text console with the framebuffer mapped, so
+                                      # kernel and launchd output scrolls live; also prints the previous boot's panic log
   "serial=3",                         # kept: serial console and kprintf on; no UART, so output stays on the video console (as on sheng)
   "debug=0x14e",                      # kept: debug mask with kprintf (DB_KPRT) and panic detail
   "kt_fixed_zones=120",               # kept: generic XNU zone sizing that sheng, fajita and uke all boot with
