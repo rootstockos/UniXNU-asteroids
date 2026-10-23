@@ -11,8 +11,9 @@ pinned in scripts/data/a810-gmu-inputs.json:
     reservation is /reserved-memory/...cmd-db;
   - torvalds/linux: the A810 catalog BCM policy (SH0, MC0, ACV) and the A8xx fixed-BCM rule of
     a6xx_gmu_rpmh_bw_votes_init (perfmode on every valid bandwidth for any non-A7xx GPU).
-Both bins are generated; the vote builder selects one from the SKU code the caller reads on the phone, and refuses a
-code no bin lists. No command-db value is in the output: rails and BCM aux data are read from the reservation at boot.
+Both bins are generated in device-tree order, because the builder selects one as KGSL's adreno_of_get_pwrlevels does
+(the 3a's own graphics-kernel adreno.c): the first bin, in that order, listing the SoC code or 0, and 0 matches any
+code. On the 3a qcom,gpu-pwrlevels-1 (codes 0x2, 0x0) comes first, so every 3a takes it. No command-db value is in the output: rails and BCM aux data are read from the reservation at boot.
 Writes the headers and votes-source-report.json; --check compares."""
 import hashlib, json, re, struct, sys
 from pathlib import Path
@@ -90,7 +91,10 @@ def main():
 
     bins = []
     root = GPU + '/qcom,gpu-pwrlevel-bins'
-    for path in sorted(p for p in nodes if re.fullmatch(re.escape(root) + r'/qcom,gpu-pwrlevels-\d+', p)):
+    # Dict order is FDT order (parse_fdt inserts nodes as it meets them); KGSL walks the bins in it.
+    for path in [p for p in nodes if re.fullmatch(re.escape(root) + r'/qcom,gpu-pwrlevels-\d+', p)]:
+        if 'qcom,speed-bin' in nodes[path]:
+            fail('bin with qcom,speed-bin; the builder handles SoC codes only')
         skus = cells(nodes[path]['qcom,sku-codes'])
         levels = []
         for child in sorted(p for p in nodes if re.fullmatch(re.escape(path) + r'/qcom,gpu-pwrlevel@[0-9a-f]+', p)):
@@ -110,8 +114,8 @@ def main():
             fail('nonmonotonic corners in ' + path)
         levels = [dict(hz=0, level=0, kbps=0, acd_present=0, acd=0)] + levels
         bins.append(dict(node=path, skus=skus, levels=levels, bandwidths=sorted({e['kbps'] for e in levels})))
-    if len(bins) < 1 or len({s for b in bins for s in b['skus']}) != sum(len(b['skus']) for b in bins):
-        fail('the bins do not list disjoint SKU codes')
+    if not bins:
+        fail('no power-level bins')
 
     gmu_nodes = [p for p, n in nodes.items() if b'qcom,gen8-gmu\0' in n.get('compatible', b'')]
     if len(gmu_nodes) != 1:
@@ -165,7 +169,7 @@ def main():
              'typedef struct {uint64_t hz;uint32_t level,kbps,acd_present,acd;} ShengGmuOpp;',
              'typedef struct {unsigned sku_count;uint32_t skus[16];unsigned opp_count;ShengGmuOpp opps[16];',
              '    unsigned bandwidth_count;uint32_t bandwidths[16];} ShengGmuGpuBin;',
-             '/* qcom,gpu-pwrlevel-bins, in node order. */',
+             '/* qcom,gpu-pwrlevel-bins in device-tree order: the first listing the SoC code or 0 (any) is used. */',
              '#define SHENG_GPU_BINS %du' % len(bins), 'static const ShengGmuGpuBin sheng_gpu_bins[%d]={' % len(bins)]
     for b in bins:
         lines.append('    {%d,{%s},%d,{%s},%d,{%s}},   /* %s */' % (
@@ -195,9 +199,11 @@ def main():
         path.write_text(text)
     report = dict(dtb_sha256=sha(DTB), linux_revision=PINS['linux']['commit'], bins=bins, gmu_opps=gmu,
                   bcms=policies, command_db=dict(node=db[0], base=hex(db_base), bytes=db_bytes),
-                  ddr_type=7, actual_command_db_available=False, sku_code_known=False, hardware_ready=False)
+                  ddr_type=7, selection='first bin in DT order listing the SoC code or 0 (KGSL)',
+                  selected_for_any_soc_code=next((b['node'] for b in bins if 0 in b['skus']), None),
+                  actual_command_db_available=False, hardware_ready=False)
     (OUT / 'votes-source-report.json').write_text(json.dumps(report, indent=2) + '\n')
-    print('PASS: %d GPU bins (%s), %d GMU levels, A810 BCM policy, cmd-db 0x%x/0x%x; SKU code and cmd-db read at boot'
+    print('PASS: %d GPU bins (%s), %d GMU levels, A810 BCM policy, cmd-db 0x%x/0x%x; rails and BCM aux read at boot'
           % (len(bins), ', '.join('%d levels' % len(b['levels']) for b in bins), len(gmu), db_base, db_bytes))
 
 

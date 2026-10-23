@@ -6,6 +6,7 @@
 #include "ShengGmu.h"
 #include "ShengGmuCommandDb.h"
 #include "ShengGmuCommandDbSource.h"
+#include "ShengGmuVotesSource.h"
 #include "ShengGmuSource.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <stdio.h>
@@ -183,24 +184,25 @@ int main(int argc,char **argv)
     CHECK(ShengGmuCommandDbInputs(db,sizeof(db),1,&inputs)==ShengGmuDbSuccess && !inputs.gmxc_present);
     inputs.chip_id=SHENG_GMU_CHIP_ID;
     AdrenoHfiStartupConfig startup_config;
-    /* Votes: no SKU, an unknown SKU and ACD refuse; SKU 0x3 is bin 0 (11 levels), SKU 0x2 bin 1 (10 levels). */
-    CHECK(ShengGmuBuildStartup(&inputs,&startup_config)==AdrenoHfiStartupInvalid);
-    inputs.sku_present=1;inputs.sku_code=0x7;
-    CHECK(ShengGmuBuildStartup(&inputs,&startup_config)==AdrenoHfiStartupInvalid);
-    inputs.sku_code=0x2;
+    /* Bins as KGSL picks them: the first in DT order listing the SoC code or 0. On the 3a that is
+     * qcom,gpu-pwrlevels-1 (0x2, 0x0, 10 levels to 1050 MHz) for any code, even 0x3, which the later bin also lists. */
+    CHECK(sheng_gpu_bins[0].opp_count==10 && sheng_gpu_bins[1].opp_count==11);
     CHECK(ShengGmuBuildStartup(&inputs,&startup_config)==AdrenoHfiStartupSuccess && startup_config.gpu_count==10);
-    inputs.sku_code=0x3;inputs.enable_acd=1;
+    inputs.sku_present=1;inputs.sku_code=0x7;
+    CHECK(ShengGmuBuildStartup(&inputs,&startup_config)==AdrenoHfiStartupSuccess && startup_config.gpu_count==10);
+    inputs.sku_present=2;CHECK(ShengGmuBuildStartup(&inputs,&startup_config)==AdrenoHfiStartupInvalid);
+    inputs.sku_present=1;inputs.sku_code=0x3;inputs.enable_acd=1;
     CHECK(ShengGmuBuildStartup(&inputs,&startup_config)==AdrenoHfiStartupInvalid);
     inputs.enable_acd=0;
     CHECK(ShengGmuBuildStartup(&inputs,&startup_config)==AdrenoHfiStartupSuccess);
-    CHECK(startup_config.table_format==1 && startup_config.gpu_count==11 && startup_config.gmu_count==3);
+    CHECK(startup_config.table_format==1 && startup_config.gpu_count==10 && startup_config.gmu_count==3);
     CHECK(startup_config.gpu_dependency[0]==UINT32_MAX);
     CHECK(startup_config.gpu_dependency[1]==((0x3fffu<<14)|(2u<<8)|0xff));    /* corner 56 -> mx 64 at index 2 */
-    CHECK(startup_config.gpu_dependency[10]==((0x3fffu<<14)|(9u<<8)|0xff));   /* corner 432 -> mx index 9 */
-    CHECK(startup_config.gpu[10].hz==1150000000ULL && startup_config.gmu[2].hz==650000000ULL);
+    CHECK(startup_config.gpu_dependency[9]==((0x3fffu<<14)|(8u<<8)|0xff));    /* corner 416 -> mx index 8 */
+    CHECK(startup_config.gpu[9].hz==1050000000ULL && startup_config.gmu[2].hz==650000000ULL);
     /* ACV votes perfmode (4) on every nonzero bandwidth, including the 2136718 kB/s level under perfmode_bw. */
     CHECK(startup_config.ddr_data[0][2]==0x40000000u && startup_config.ddr_data[1][2]==0x60000004u);
-    unsigned bw=0;CHECK(ShengGmuPerfVote(10,&bw)==10 && bw==7);
+    unsigned bw=0;CHECK(ShengGmuPerfVote(10,&bw)==9 && bw==7);   /* clamped to the top level, 18597656 kB/s */
 
     /* ColdStart through the HFI startup: the GPU_PERF table first, then the bandwidth table, core start, start. */
     reset_sim();
@@ -211,9 +213,9 @@ int main(int argc,char **argv)
     CHECK(ShengGmuColdStart(&cold,&config,&startup_config,&limits,&startup)==ShengGmuSuccess);
     CHECK(startup.protocol_status==AdrenoHfiStartupSuccess && startup.protocol.stage==AdrenoHfiStageComplete);
     CHECK(sim.messages==4 && sim.ids[0]==15 && sim.ids[1]==3 && sim.ids[2]==14 && sim.ids[3]==10);
-    CHECK(sim.words[0]==6+3*11+2*3 && sim.payload[0][1]==1 && sim.payload[0][2]==11 && sim.payload[0][3]==3);
+    CHECK(sim.words[0]==6+3*10+2*3 && sim.payload[0][1]==1 && sim.payload[0][2]==10 && sim.payload[0][3]==3);
     CHECK(sim.payload[0][8]==startup_config.gpu_dependency[1] && sim.payload[0][9]==264000);
-    CHECK(sim.payload[0][37]==3 && sim.payload[0][38]==2 && sim.payload[0][40]==0 && sim.payload[0][42]==350000);
+    CHECK(sim.payload[0][34]==3 && sim.payload[0][35]==2 && sim.payload[0][37]==0 && sim.payload[0][39]==350000);
     CHECK(sim.words[1]==159 && sim.payload[1][31+8+2]==0x60000004u);
     /* An A7xx-format table is refused on gen8 before the device is touched. */
     reset_sim();
@@ -234,7 +236,7 @@ int main(int argc,char **argv)
     mmio.windows[ShengGmuPdc]=(ShengGmuMmioWindow){(volatile unsigned char *)sim.mem[ShengGmuCxMisc],0x3d90000,0x1000};
     CHECK(ShengGmuBindMmio(&mmio,&bound)==ShengGmuArgument);
     printf("PASS: gen8 GMU load to HFI ready with the pinned firmware (%zu records): no RSC/PDC or TCM retention, A8XX "
-        "FAL/GENERAL offsets, fence 0x80c808c0, GBIF CX list and MRC QoS; fault reset; cmd-db votes by SKU bin; ColdStart through the A8xx "
+        "FAL/GENERAL offsets, fence 0x80c808c0, GBIF CX list and MRC QoS; fault reset; cmd-db votes, KGSL bin rule; ColdStart through the A8xx "
         "GPU_PERF table; A7xx table refused; PDC absent\n",
         record);
     return 0;

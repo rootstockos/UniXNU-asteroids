@@ -16,8 +16,9 @@ typedef struct {
     ShengGmuBcmInput sh0,mc0,acv;
     uint32_t cn0_address;
     unsigned enable_acd,enable_ifpc;
-    /* asteroids: the SKU code KGSL matches against each bin's qcom,sku-codes, read on the phone by the caller.
-     * sku_present 0 refuses: no bin is guessed. */
+    /* asteroids: the SoC code KGSL matches against each bin's qcom,sku-codes ((pcode << 16) | feature code, pcode
+     * only for internal parts). Bins are tried in device-tree order and a listed 0 matches any code, as KGSL's
+     * adreno_of_get_pwrlevels does; with sku_present 0 only such a bin can match. No other bin is guessed. */
     uint32_t sku_code;
     unsigned sku_present;
 } ShengGmuVoteInputs;

@@ -5,18 +5,22 @@
 #include "ShengGmuVotes.h"
 #include "ShengGmuVotesSource.h"
 static const ShengGmuGpuBin *selected_bin;
-static const ShengGmuGpuBin *bin_for(uint32_t sku)
+/* adreno_of_get_pwrlevels: the first bin, in device-tree order, listing the SoC code or 0 (which matches any). */
+static const ShengGmuGpuBin *bin_for(const ShengGmuVoteInputs *in)
 {
     for(unsigned i=0;i<SHENG_GPU_BINS;++i)
-        for(unsigned j=0;j<sheng_gpu_bins[i].sku_count;++j)if(sheng_gpu_bins[i].skus[j]==sku)return &sheng_gpu_bins[i];
+        for(unsigned j=0;j<sheng_gpu_bins[i].sku_count;++j) {
+            const uint32_t code=sheng_gpu_bins[i].skus[j];
+            if(!code || (in->sku_present && code==in->sku_code))return &sheng_gpu_bins[i];
+        }
     return 0;
 }
 AdrenoHfiStartupStatus ShengGmuBuildStartup(const ShengGmuVoteInputs *in,AdrenoHfiStartupConfig *out)
 {
     if(!in || !out || in->chip_id!=SHENG_GMU_VOTES_CHIP_ID || in->gmxc_present>1 ||
-        in->enable_acd || in->enable_ifpc>1 || in->sku_present!=1 ||
+        in->enable_acd || in->enable_ifpc>1 || in->sku_present>1 ||
         (!in->gmxc_present && (in->gmxc.data || in->gmxc.bytes)))return AdrenoHfiStartupInvalid;
-    const ShengGmuGpuBin *bin=bin_for(in->sku_code);
+    const ShengGmuGpuBin *bin=bin_for(in);
     if(!bin)return AdrenoHfiStartupInvalid;
     AdrenoHfiStartupConfig c={0};uint32_t votes[16],levels[16];
     /* a6xx_gmu_rpmh_votes_init: GMxC, when cmd-db has it, is the secondary rail of the GX votes. */
