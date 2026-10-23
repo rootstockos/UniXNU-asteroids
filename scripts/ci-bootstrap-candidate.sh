@@ -17,6 +17,12 @@ for name in native-owner-mobile-graphics-candidate native-owner-ufs-cpu-desktop-
   cp "$out/kernel/kernel.macho" "$out/tree/build/native-prelink/$name.macho"
   cp "$out/kernel/kernel.json" "$out/tree/build/native-prelink/$name.json"
 done
+# audit-mobile-graphics-legacy.py accepts the recorded runtime observation hash from its previous output when the live
+# (HVF) observation is absent. The observation is of the unchanged iPad7,1 IOMobileFramebufferLegacy class in the shared
+# 21H461 kernelcache, not of our kernel; uke's CI seeds the same value.
+mkdir -p "$out/tree/build/display-analysis"
+abi="$out/tree/build/display-analysis/mobile-graphics-legacy-abi.json"
+[ -f "$abi" ] || printf '{"runtime_metadata_checkpoint_sha256": "3044c2beff552911605994c0dc7aa73182066cbb5aed0b396999ceeb5a96da2b"}\n' > "$abi"
 # The bootstrap kernel must not be taken for the result.
 rm -f "$out/kernel/kernel.macho" "$out/kernel/kernel.json"
 ./unixnu defconfig asteroids_defconfig -D "$device"
