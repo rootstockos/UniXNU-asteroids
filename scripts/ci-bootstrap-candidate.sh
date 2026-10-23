@@ -12,6 +12,11 @@ out=out/asteroids
 mkdir -p "$out/tree/build/native-prelink"
 cp "$out/kernel/kernel.macho" "$out/tree/build/native-prelink/bootstrap-candidate.macho"
 cp "$out/kernel/kernel.json" "$out/tree/build/native-prelink/bootstrap-candidate.json"
+# The display and HID builds (uke's and UniXNU's scripts) read the same candidate under these names.
+for name in native-owner-mobile-graphics-candidate native-owner-ufs-cpu-desktop-v9-hid-init-candidate; do
+  cp "$out/kernel/kernel.macho" "$out/tree/build/native-prelink/$name.macho"
+  cp "$out/kernel/kernel.json" "$out/tree/build/native-prelink/$name.json"
+done
 # The bootstrap kernel must not be taken for the result.
 rm -f "$out/kernel/kernel.macho" "$out/kernel/kernel.json"
 ./unixnu defconfig asteroids_defconfig -D "$device"

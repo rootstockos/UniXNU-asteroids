@@ -57,6 +57,9 @@ CONFIG_XNU_OWNER_DATA_VOLUME_UUID="07DEE194-37A6-4A05-8602-8476EB2F65AE"
 # The launchd watchdog policy without the boot progress kit (our UniXNU fork, after uke): makes sheng-lite=1 and
 # sheng-disable-watchdogd=1 effective and pets the Gunyah watchdog. Archive: build/watchdog-policy/libWatchdogPolicy.a.
 CONFIG_XNU_WATCHDOG_POLICY=y
+# Display, CPU-rendered (2026-10-23): UniXNU's NativeLegacyDisplay with uke's board probe on the UEFI framebuffer.
+# SpringBoard started and crash-looped without a display. Archive: build/native-legacy-display/libNativeLegacyDisplay.late.a
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
 
 # Kept, no archive: generic kernel changes that sheng, fajita and uke all build with. (The defconfig parser takes no
 # comment after a value, so each reason is on the line above.)
@@ -99,6 +102,5 @@ CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 #
 # Display and GPU: the legacy display is the CPU-rendered SpringBoard display (a sheng device script, and it excludes
 # -v); NativeAdreno knows only the Adreno 740.
-# CONFIG_XNU_NATIVE_LEGACY_DISPLAY is not set
 # CONFIG_XNU_NATIVE_ADRENO is not set
 

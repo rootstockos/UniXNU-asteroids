@@ -77,6 +77,10 @@ archives = [
   # UFS root, step 3: the launchd watchdog policy (uke's BootWatchdogPolicy.c): disables watchdogd and, with
   # sheng-lite=1, the daemons that need missing hardware, and pets the Gunyah watchdog every 5 s.
   "build-watchdog-policy.py",
+  # Display, CPU-rendered: uke's display build (scripts/build-native-legacy-display.py, without uke's touch, CPU frequency
+  # and boot-trace probes) with uke's board probe (package/LegacyDisplayProbe.cpp, HidInputProbe.cpp, KeyStoreProbe.cpp,
+  # LegacyDisplayStubs.c). It binds UniXNU's NativeLegacyDisplay to the original IOMobileFramebufferLegacy.
+  "build-native-legacy-display.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
   # Dropped: "build-arm-driver.py NativeVirtioBlock", "build-arm-driver.py NativeRamBlock" and both
@@ -186,9 +190,24 @@ kernel_args = [
   "sheng-lite=1",                     # leave out the daemons that need missing hardware, as on uke
   "sheng-disable-watchdogd=1",        # as on uke
   # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
-  # Dropped: the other sheng-* arguments (sheng-smp, sheng-platform-stage), armcpu-spi-ipi (SMP only), every
-  # offline-legacy-*, offline-mobile-graphics-*, offline-hid-*, offline-key-events and boot-ui-focus4: display and
-  # input come after launchd.
+  # Display, CPU-rendered, as uke boots it: load IOMobileGraphicsFamily, register NativeLegacyDisplay on the GOP
+  # framebuffer as the default surface, and present frames drawn by the CPU. offline-hid-* and offline-key-events publish
+  # the HID and key event services SpringBoard waits for (no touch hardware behind them yet).
+  "offline-mobile-graphics-load=1",
+  "offline-mobile-graphics-client=0",
+  "offline-legacy-register=1",
+  "offline-legacy-gop=1",
+  "offline-legacy-unit-scale=1",      # uke uses 2 on its 3200-wide panel; 2 would make the 3a's 1080 pixels 540 points
+  "offline-legacy-pm=1",
+  "offline-legacy-validate=1",
+  "offline-legacy-transfer=1",
+  "offline-legacy-cpu-present=1",
+  "offline-legacy-default-surface=1",
+  "offline-legacy-phase=4",
+  "offline-hid-home=1",
+  "offline-hid-input=1",
+  "offline-key-events=1",
+  # Dropped: the other sheng-* arguments (sheng-smp, sheng-platform-stage), armcpu-spi-ipi (SMP only) and boot-ui-focus4.
   # Not set: boot-progress=2. Its only reader is kits/sheng/BootProgress.c, which this kernel does not link; the
   # argument would be inert. Add it back together with a ported boot progress kit (see the open questions).
 ]
