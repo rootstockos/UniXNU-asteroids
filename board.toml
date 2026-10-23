@@ -207,7 +207,12 @@ kernel_args = [
   "offline-hid-home=1",
   "offline-hid-input=1",
   "offline-key-events=1",
-  # Dropped: the other sheng-* arguments (sheng-smp, sheng-platform-stage), armcpu-spi-ipi (SMP only) and boot-ui-focus4.
+  # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
+  # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
+  # without a first frame.
+  "sheng-smp=1",
+  "armcpu-spi-ipi=1",
+  # Dropped: sheng-platform-stage and boot-ui-focus4.
   # Not set: boot-progress=2. Its only reader is kits/sheng/BootProgress.c, which this kernel does not link; the
   # argument would be inert. Add it back together with a ported boot progress kit (see the open questions).
 ]
