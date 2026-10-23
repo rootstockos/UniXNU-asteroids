@@ -5,3 +5,7 @@
 [submodule "drivers/NativeMobileDisplay"]
 	path = drivers/NativeMobileDisplay
 	url = https://github.com/Allenwdk/NativeMobileDisplay.git
+[submodule "kits/AdrenoFirmware"]
+	path = kits/AdrenoFirmware
+	url = https://github.com/rootstockos/AdrenoFirmware.git
+	branch = asteroids-a8xx

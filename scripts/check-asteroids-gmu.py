@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Build and run the gen8 GMU cold-start host test (package/ShengGmuGen8HostTests.c) against the generated
-build/sheng-gmu/ShengGmuSource.h, UniXNU's kits/AdrenoFirmware and the pinned gen80300_gmu.bin. Host only."""
+build/sheng-gmu headers, the kits/AdrenoFirmware submodule and the pinned gen80300_gmu.bin. Host only."""
 import argparse, subprocess
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--unixnu', default=str(ROOT.parent / 'UniXNU'), help='UniXNU checkout with kits/AdrenoFirmware')
 args = parser.parse_args()
-kit = Path(args.unixnu) / 'kits/AdrenoFirmware'
+kit = ROOT / 'kits/AdrenoFirmware'   # rootstockos/AdrenoFirmware asteroids-a8xx (submodule)
 subprocess.run(['python3', str(ROOT / 'scripts/prepare-asteroids-gmu.py'), '--check'], check=True)
+subprocess.run(['python3', str(ROOT / 'scripts/prepare-asteroids-gmu-votes.py'), '--check'], check=True)
 out = ROOT / 'build/sheng-gmu'
 binary = out / 'gen8-host-test'
 # The kit's HFI transport is AArch64-only (its barriers are dmb/dsb). On another host, compile a copy whose only
@@ -32,6 +32,7 @@ if subprocess.run(['uname', '-m'], capture_output=True, text=True).stdout.strip(
 subprocess.run(['clang', '-std=c11', '-O1', '-Wall', '-Wextra', '-Werror', '-DSHENG_GMU_HOST_TEST',
                 '-I', str(out), '-I', str(kit), '-I', str(ROOT / 'package'),
                 str(ROOT / 'package/ShengGmuGen8HostTests.c'), str(ROOT / 'package/ShengGmu.c'),
+                str(ROOT / 'package/ShengGmuVotes.c'), str(ROOT / 'package/ShengGmuCommandDb.c'), str(kit / 'AdrenoHfiVotes.c'),
                 str(kit / 'AdrenoFirmware.c'), str(hfi), str(kit / 'AdrenoHfiStartup.c'),
                 '-o', str(binary)], check=True)
 subprocess.run([str(binary), str(ROOT / '.cache/firmware/asteroids-gpu/gen80300_gmu.bin')], check=True)

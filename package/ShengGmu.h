@@ -9,8 +9,7 @@ enum {ShengGmuCore,ShengGmuRscc,ShengGmuPdc,ShengGmuGpu,ShengGmuCxMisc,ShengGmuW
 typedef enum {
     ShengGmuSuccess,ShengGmuArgument,ShengGmuFirmware,ShengGmuBusy,
     ShengGmuIoError,ShengGmuStateMismatch,ShengGmuTimeout,ShengGmuClockError,
-    ShengGmuPoisoned,ShengGmuFault,ShengGmuProtocolError,
-    ShengGmuUnsupported   /* asteroids: a step this generation's sequence does not have yet */
+    ShengGmuPoisoned,ShengGmuFault,ShengGmuProtocolError
 } ShengGmuStatus;
 typedef struct {
     void *cookie;

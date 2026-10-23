@@ -7,8 +7,8 @@
  *   - the A8XX FAL interface, GENERAL_8/9/10 offsets and AHB fence range (generated);
  *   - the GBIF CX list of the catalog entry, then GBIF_CX_CONFIG again and GMU_MRC_GBIF_QOS_CTRL, instead of the four
  *     QSB writes;
- *   - the HFI startup's performance table is the A8xx table message, which AdrenoHfiStartup does not encode yet, so
- *     ShengGmuColdStart refuses gen8 before any access; ShengGmuLoadAndStartHfi runs. */
+ *   - the HFI startup's performance table must be the A8xx GPU_PERF table (AdrenoFirmware table_format 1, built by
+ *     ShengGmuBuildStartup); ShengGmuColdStart refuses any other before touching the device. */
 #include "ShengGmu.h"
 #include "AdrenoFirmware.h"
 /* Generated only from exact pinned XML/catalog/DT/firmware policy; ignored.
@@ -275,13 +275,11 @@ ShengGmuStatus ShengGmuColdStart(ShengGmuDevice *d,const ShengGmuConfig *c,
     if(!r)return ShengGmuArgument;
     *r=(ShengGmuStartupResult){0};r->load.resources_must_retain=r->protocol.resources_must_retain=1;
     r->protocol_status=AdrenoHfiStartupInvalid; /* Not attempted until the load succeeds. */
-#if SHENG_GMU_GENERATION>=8
-    /* a8xx_hfi_send_perf_table: HFI_H2F_MSG_TABLE with GX {arc, dependency, kHz} and CX {arc, kHz} entries, a format
-     * AdrenoHfiStartup does not encode. Refuse before anything else rather than send the A7xx table. */
-    (void)d;(void)c;(void)config;(void)limits;
-    return ShengGmuUnsupported;
-#endif
     if(!d || !c || !limits || AdrenoHfiStartupValidate(config)!=AdrenoHfiStartupSuccess)return ShengGmuArgument;
+#if SHENG_GMU_GENERATION>=8
+    /* a8xx_hfi_send_perf_table: the A8xx GPU_PERF table (AdrenoFirmware table_format 1); refuse an A7xx table. */
+    if(config->table_format!=1)return ShengGmuArgument;
+#endif
     StartupContext context={d,r};
     AdrenoHfiStartupServices services={&context,startup_now,startup_wait,startup_health,
         limits->polls_per_command,limits->wait_interval_us,limits->command_timeout_us,limits->total_timeout_us};
