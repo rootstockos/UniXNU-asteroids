@@ -980,7 +980,8 @@ struct gpb_bar {
 // thirds down the screen.
 static inline int gpb_bar_plan(uint64_t base, uint32_t width, uint32_t height, uint32_t row_bytes, uint32_t depth,
                                struct gpb_bar *b) {
-    *b = (struct gpb_bar){0};
+    b->page = b->bytes = b->offset = 0;
+    b->y0 = b->rows = b->width = b->row_bytes = b->ib_dwords = b->ib_bytes = 0;
     if (!base || depth != 32) return 1;
     if (width < 3 || width > 16381) return 2;
     if (height < GPB_BAR_ROWS * 3) return 3;

@@ -858,18 +858,18 @@ void barStart() {
           video.v_baseAddr, video.v_width, video.v_height, video.v_rowBytes, video.v_depth, g[4], b.y0, b.y0 + b.rows - 1, b.page,
           b.bytes, b.offset, b.ib_dwords);
     if (g[4]) {native_gpu_power_stage = 0xfa; return;}
-    g[5] = gFb.adopt(b.page, size_t(b.bytes), bits, size_t(b.bytes));
-    if (!g[5]) g[6] = vm->map(&gFb, 0, GPB_FB_IOVA, 3u, 0, 2, &handle);
+    g[5] = uint32_t(gFb.adopt(b.page, size_t(b.bytes), bits, size_t(b.bytes)));
+    if (!g[5]) g[6] = uint32_t(vm->map(&gFb, 0, GPB_FB_IOVA, 3u, 0, 2, &handle));
     IOLog("ASTEROIDS GPU: bar: framebuffer pages adopt %x map %x at %llx\n", g[5], g[6], GPB_FB_IOVA);
     if (g[5] || g[6]) {native_gpu_power_stage = 0xfb; return;}
     uint32_t header = 0;
     if (AdrenoPM4Type7(GPB_CP_MEM_WRITE, uint16_t(b.width + 2), &header) != AdrenoPM4Success) {IOLog("ASTEROIDS GPU: bar pm4 refused\n"); return;}
-    g[7] = gBarIb.allocate(b.ib_bytes, bits, false, b.ib_bytes);
+    g[7] = uint32_t(gBarIb.allocate(b.ib_bytes, bits, false, b.ib_bytes));
     if (!g[7]) {
         gpb_bar_fill(&b, header, GPB_FB_IOVA, static_cast<uint32_t *>(gBarIb.mapping()));
-        g[7] = gBarIb.publishForDevice(0, b.ib_bytes, false);
+        g[7] = uint32_t(gBarIb.publishForDevice(0, b.ib_bytes, false));
     }
-    if (!g[7]) g[8] = vm->map(&gBarIb, 0, GPB_BAR_IB_IOVA, 1u, 0, 2, &handle);
+    if (!g[7]) g[8] = uint32_t(vm->map(&gBarIb, 0, GPB_BAR_IB_IOVA, 1u, 0, 2, &handle));
     IOLog("ASTEROIDS GPU: bar: ib alloc %x (%u spans) map %x at %llx\n", g[7], unsigned(gBarIb.spanCount()), g[8], GPB_BAR_IB_IOVA);
     if (g[7] || g[8]) {native_gpu_power_stage = 0xfb; return;}
     g[0] = 3;
