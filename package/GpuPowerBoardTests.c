@@ -30,8 +30,8 @@ static int wr(void *cookie, unsigned w, uint32_t off, uint32_t v) {
     if (w == GPB_WIN_GPUCC && off == GPB_CC_SMMU_VOTE_CLK && (v & GPB_CBCR_ENABLE)) mem[w][off / 4] &= ~GPB_CBCR_CLK_OFF;
     return 0;
 }
-static unsigned stages[8], nstages;
-static void stage(void *cookie, unsigned w) {CHECK(cookie == mem && nstages < 8); stages[nstages++] = w;}
+static unsigned stages[64], nstages;
+static void stage(void *cookie, unsigned w) {CHECK(cookie == mem && nstages < 64); stages[nstages++] = w;}
 static void delay(void *cookie, unsigned us) {CHECK(cookie == mem); delayed += us;}
 static const struct gpb_io io = {mem, rd, wr, stage, delay};
 static const unsigned all = (1u << GPB_WINDOWS) - 1;
@@ -81,7 +81,17 @@ int main(void) {
     reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = GPB_GDSC_PWR_ON;
     mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0x00290406;
     gpb_run(&io, 1, all, &r);
-    CHECK(r.smmu == GPB_DONE && r.id0 == 0x00290406 && reads_in(GPB_WIN_SMMU) == 5 && r.gpu == GPB_SKIPPED_PREREQ);
+    mem[GPB_WIN_SMMU][GPB_SMMU_SMR(2) / 4] = 0x80000005; mem[GPB_WIN_SMMU][GPB_SMMU_S2CR(2) / 4] = 0x00000001;
+    nreads = 0; gpb_run(&io, 1, all, &r);
+    // The stream-match survey: ID0's NUMSMRG (6) entries, SMR and S2CR each, read only.
+    CHECK(r.smmu == GPB_DONE && r.id0 == 0x00290406 && reads_in(GPB_WIN_SMMU) == 5 + 2 * 6 && r.gpu == GPB_SKIPPED_PREREQ);
+    CHECK(r.num_smr == 6 && r.smr_valid == 1 && r.smr[2] == 0x80000005 && r.s2cr[2] == 1 && !nwrites);
+    CHECK(was_read(GPB_WIN_SMMU, 0x800) && was_read(GPB_WIN_SMMU, 0x814) && was_read(GPB_WIN_SMMU, 0xc14) &&
+          !was_read(GPB_WIN_SMMU, 0x818));
+    mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0xff; nreads = 0; gpb_run(&io, 1, all, &r);   // a large NUMSMRG is capped
+    CHECK(r.num_smr == GPB_SMMU_MAX_SMR && reads_in(GPB_WIN_SMMU) == 5 + 2 * GPB_SMMU_MAX_SMR);
+    mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0x00290406; mem[GPB_WIN_SMMU][GPB_SMMU_SMR(2) / 4] = 0; nreads = 0;
+    gpb_run(&io, 1, all, &r);
     // GX on as well: RBBM_STATUS at the gen8 offset.
     mem[GPB_WIN_GPUCC][GPB_CC_GX_GDSCR / 4] = GPB_GDSC_PWR_ON; mem[GPB_WIN_GPU][0x48 / 4] = 0x12345678; nreads = 0;
     gpb_run(&io, 1, all, &r);

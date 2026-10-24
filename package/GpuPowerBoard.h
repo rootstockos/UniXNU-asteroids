@@ -78,6 +78,12 @@
 #define GPB_SMMU_ID1 0x24
 #define GPB_SMMU_ID2 0x28
 #define GPB_SMMU_GFSR 0x48
+// Stream match and stream-to-context registers in global space 0: SMRn 0x800 + 4n (VALID bit 31), S2CRn 0xc00 + 4n.
+// IDR0.NUMSMRG (bits 0-7) gives the count; the phone's ID0 0x00290406 reports 6. uke's mode 4 runs only when none is valid.
+#define GPB_SMMU_SMR(n) (0x800 + 4 * (n))
+#define GPB_SMMU_S2CR(n) (0xc00 + 4 * (n))
+#define GPB_SMMU_SMR_VALID (1u << 31)
+#define GPB_SMMU_MAX_SMR 16u
 
 // a6xx.xml (torvalds/linux 734bef548a96): RBBM_STATUS is dword 0x012 for A8XX- (0x210 is the A6XX-A7XX offset); NativeAdreno's
 // generated NativeAdrenoA810HwInit.h has the same A810_RBBM_STATUS. Byte offset = dword * 4.
@@ -106,6 +112,8 @@ struct gpb_result {
     uint32_t cfg_ahb, cfg_ahb_after, memnoc, dvm, axi, pll_vote;
     uint32_t cx_gdscr, cx_hwctrl, gx_gdscr, cc_ahb, cc_smmu, cc_gmu;
     uint32_t scr0, id0, id1, id2, gfsr;
+    unsigned num_smr, smr_valid;         // the stream-match survey (stage 3): entries read, entries with VALID set
+    uint32_t smr[GPB_SMMU_MAX_SMR], s2cr[GPB_SMMU_MAX_SMR];
     uint32_t rbbm_status;
     // Mode 3: the CX GDSCR before, after the probe-init write and after enabling; the hw-ctrl status it polled and the tries it
     // took; the two clocks before. powered_cx and powered_clocks are 1 only when the status read confirmed them.
@@ -226,6 +234,14 @@ static inline void gpb_run(const struct gpb_io *io, unsigned mode, unsigned have
         gpb_rd(io, r, GPB_WIN_SMMU, GPB_SMMU_ID1, &r->id1);
         gpb_rd(io, r, GPB_WIN_SMMU, GPB_SMMU_ID2, &r->id2);
         gpb_rd(io, r, GPB_WIN_SMMU, GPB_SMMU_GFSR, &r->gfsr);
+        // Every stream match entry and its S2CR, read only: which streams the bootloader or hypervisor already routes.
+        r->num_smr = r->id0 & 0xff;
+        if (r->num_smr > GPB_SMMU_MAX_SMR) r->num_smr = GPB_SMMU_MAX_SMR;
+        for (unsigned i = 0; i < r->num_smr; ++i) {
+            if (gpb_rd(io, r, GPB_WIN_SMMU, GPB_SMMU_SMR(i), &r->smr[i])) break;
+            gpb_rd(io, r, GPB_WIN_SMMU, GPB_SMMU_S2CR(i), &r->s2cr[i]);
+            if (r->smr[i] & GPB_SMMU_SMR_VALID) ++r->smr_valid;
+        }
         r->smmu = GPB_DONE;
     }
     // Stage 4: the GPU register window needs CX and GX on. GX is GMU-owned on gen8, so before the GMU runs this stays skipped.
