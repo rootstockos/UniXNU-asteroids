@@ -12,9 +12,10 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 6u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 7u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
-                          // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing
+                          // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
+                          // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -381,5 +382,150 @@ static inline void gpb_read_gmu_clocks(const struct gpb_io *io, struct gpb_resul
     gpb_rd(io, r, GPB_WIN_GCC_GPU, GPB_GCC_GPU_MEMNOC_GFX, &k->memnoc);
     gpb_rd(io, r, GPB_WIN_GCC_VOTE, GPB_GCC_PLL_VOTE, &k->gpll0_vote);
     k->done = 1;
+}
+// Mode 7: the GMU clock bring-up a6xx_gmu_resume relies on, in Linux order, each step mainline's code for these clocks
+// (torvalds/linux 734bef548a96):
+//   1 gcc_gpu_gpll0_clk_src / gcc_gpu_gpll0_div_clk_src: the GCC vote register 0x52000 bits 15/16 (gcc-milos.c,
+//     BRANCH_HALT_DELAY: 10 us, no status)
+//   2 the seven always-on enables the gpucc probe sets (gpu_cc_milos_critical_cbcrs, bit 0 each)
+//   3 clk_lucid_ole_pll_configure(gpu_cc_pll0, gpu_cc_pll0_config): L 0x24 with the CAL_L (bit 16) and RINGOSC_CAL_L
+//     (bit 24) fields 0x44, alpha 0x7555, CONFIG_CTL/U/U1, USER_CTL/U, TEST_CTL U/U1/U2 (a zero value is not written,
+//     as clk_alpha_pll_write_config skips it), then OUTCTRL off, OPMODE STANDBY, RESET_N on
+//   4 alpha_pll_lucid_evo_enable: refuse an FSM-voted PLL (USER_CTL bit 25, checked before step 3 writes it), skip one already running (OPMODE RUN and
+//     OUTCTRL), else RESET_N, OPMODE RUN, LOCK_DET within 1500 x 1 us, USER_CTL outputs 0x7, OUTCTRL
+//   5 gpu_cc_hub_clk_src to 200 MHz (GPLL0 sel 5, pre_div 3 -> 5): a6xx_gmu_resume asks 150 MHz for non-A740 GPUs and
+//     the CEIL table lookup gives 200 MHz. clk_rcg2_shared_ops on an enabled root: ROOT_EN, wait for the root (500 x
+//     1 us), write CFG (mask: the 5-bit divider, MODE, HW_CLK_CTRL and SRC_SEL), CMD_UPDATE and wait for it to clear
+//     (500 x 1 us), drop ROOT_EN
+//   6 gpu_cc_gmu_clk_src to 350 MHz (PLL0_OUT_EVEN sel 2, pre_div 1 -> 1): resume asks 200 MHz, the table's next rate is
+//     350 MHz, which is also the first qcom,gmu-freq-table level; the same RCG sequence
+//   7 gpu_cc_ahb_clk enable (bit 0; BRANCH_HALT_DELAY: 10 us), the one GMU node clock T8 read disabled
+// Nothing else is written; mode 7's writes are exactly gpb_mode7_writable.
+#define GPB_PLL_CONFIG_CTL 0x20
+#define GPB_PLL_RESET_N (1u << 2)
+#define GPB_PLL_OUTCTRL (1u << 0)
+#define GPB_PLL_VOTE_RUN (1u << 25)       // LUCID_EVO_ENABLE_VOTE_RUN, in USER_CTL
+#define GPB_PLL_LOCK_TRIES 1500u
+#define GPB_RCG_UPDATE (1u << 0)
+#define GPB_RCG_ROOT_EN (1u << 1)
+#define GPB_RCG_TRIES 500u
+#define GPB_RCG_CFG_MASK (0x1fu | (0x3u << 12) | (1u << 20) | (0x7u << 8))
+#define GPB_HUB_CFG ((5u << 8) | 5u)      // GPLL0 / 3 = 200 MHz
+#define GPB_GMU_CFG ((2u << 8) | 1u)      // PLL0_OUT_EVEN / 1 = 350 MHz
+// gpu_cc_pll0_config (gpucc-milos.c, the same in gpucc-volcano.c), as {offset, value}; zero values are left out.
+#define GPB_PLL0_CONFIG_WRITES 10u
+static const uint32_t gpb_pll0_config[GPB_PLL0_CONFIG_WRITES][2] = {
+    {0x10, 0x24u | (0x44u << 16) | (0x44u << 24)},   // L_VAL with CAL_L and RINGOSC_CAL_L
+    {0x14, 0x7555}, {0x20, 0x20485699}, {0x24, 0x00182261}, {0x28, 0x82aa299c},
+    {0x18, 0x00000400}, {0x1c, 0x00000005},          // USER_CTL (even post-divider 2), USER_CTL_U
+    {0x30, 0x00000003}, {0x34, 0x00009000}, {0x38, 0x00000034},   // TEST_CTL_U, U1, U2 (TEST_CTL is 0: not written)
+};
+static inline int gpb_mode7_writable(unsigned window, uint32_t off) {
+    if (window == GPB_WIN_GCC_VOTE) return off == GPB_GCC_PLL_VOTE;
+    if (window != GPB_WIN_GPUCC) return 0;
+    if (off <= 0x38) return 1;   // PLL0
+    if (off == GPB_CC_GMU_RCGR || off == GPB_CC_GMU_RCGR + 4 || off == GPB_CC_HUB_RCGR || off == GPB_CC_HUB_RCGR + 4 ||
+        off == GPB_CC_AHB_CLK) return 1;
+    for (unsigned i = 0; i < GPB_CRITICAL_BRANCHES; ++i) if (off == gpb_critical_branch[i]) return 1;
+    return 0;
+}
+struct gpb_gmu_clock_on {
+    unsigned step;                       // last step started, 1-7; 8 when all finished
+    unsigned failed;                     // 0 ok, 1 refused (precondition or FSM PLL), 2 timeout, 3 I/O
+    unsigned pll_was_running, lock_polls, hub_root_polls, hub_polls, gmu_root_polls, gmu_polls, writes;
+    uint32_t vote, pll0_mode, pll0_opmode, pll0_user, hub_cmd, hub_cfg, gmu_cmd, gmu_cfg, ahb;
+};
+static inline int gpb_wr7(const struct gpb_io *io, struct gpb_gmu_clock_on *o, unsigned w, uint32_t off, uint32_t v) {
+    if (!gpb_mode7_writable(w, off)) return -1;
+    ++o->writes;
+    return io->write32(io->cookie, w, off, v) ? -1 : 0;
+}
+static inline int gpb_set7(const struct gpb_io *io, struct gpb_result *r, struct gpb_gmu_clock_on *o, unsigned w, uint32_t off,
+                           uint32_t clear, uint32_t set) {
+    uint32_t v;
+    if (gpb_rd(io, r, w, off, &v)) return -1;
+    return gpb_wr7(io, o, w, off, (v & ~clear) | set);
+}
+// One clk_rcg2_shared set_rate on an enabled root. Returns 0, 2 (timeout) or 3 (I/O).
+static inline unsigned gpb_rcg7(const struct gpb_io *io, struct gpb_result *r, struct gpb_gmu_clock_on *o, uint32_t rcgr,
+                                uint32_t cfg, unsigned *root_polls, unsigned *polls) {
+    uint32_t v = 0;
+    if (gpb_set7(io, r, o, GPB_WIN_GPUCC, rcgr, 0, GPB_RCG_ROOT_EN)) return 3;
+    for (*root_polls = 0;; ++*root_polls) {
+        if (gpb_rd(io, r, GPB_WIN_GPUCC, rcgr, &v)) return 3;
+        if (!(v & GPB_RCG_ROOT_OFF)) break;
+        if (*root_polls >= GPB_RCG_TRIES) return 2;
+        if (io->delay_us) io->delay_us(io->cookie, 1);
+    }
+    if (gpb_set7(io, r, o, GPB_WIN_GPUCC, rcgr + 4, GPB_RCG_CFG_MASK, cfg)) return 3;
+    if (gpb_set7(io, r, o, GPB_WIN_GPUCC, rcgr, 0, GPB_RCG_UPDATE)) return 3;
+    for (*polls = 0;; ++*polls) {
+        if (gpb_rd(io, r, GPB_WIN_GPUCC, rcgr, &v)) return 3;
+        if (!(v & GPB_RCG_UPDATE)) break;
+        if (*polls >= GPB_RCG_TRIES) return 2;   // ROOT_EN stays set, as Linux leaves it on this error
+        if (io->delay_us) io->delay_us(io->cookie, 1);
+    }
+    return gpb_set7(io, r, o, GPB_WIN_GPUCC, rcgr, GPB_RCG_ROOT_EN, 0) ? 3 : 0;
+}
+static inline void gpb_gmu_clocks_on(const struct gpb_io *io, struct gpb_result *r, const struct gpb_gmu_clocks *k,
+                                     struct gpb_gmu_clock_on *o) {
+    __builtin_memset(o, 0, sizeof *o);
+    const int cx_on = gpb_gdsc_on(r->cx_gdscr) || gpb_gdsc_on(r->cx_hwctrl);
+    o->step = 1;
+    if (!k->done || !cx_on || r->io_error || (k->gmu_cmd & GPB_RCG_ROOT_OFF) || (k->hub_cmd & GPB_RCG_ROOT_OFF)) {
+        o->failed = 1; return;
+    }
+#define GPB_STEP(n) do {o->step = (n);} while (0)
+#define GPB_TRY(x) do {if (x) {o->failed = 3; return;}} while (0)
+    GPB_TRY(gpb_set7(io, r, o, GPB_WIN_GCC_VOTE, GPB_GCC_PLL_VOTE, 0, GPB_GCC_GPLL0_GPU | GPB_GCC_GPLL0_DIV_GPU));
+    if (io->delay_us) io->delay_us(io->cookie, GPB_BRANCH_HALT_DELAY_US);
+    GPB_STEP(2);
+    for (unsigned i = 0; i < GPB_CRITICAL_BRANCHES; ++i)
+        if (!(k->critical[i] & GPB_CBCR_ENABLE)) GPB_TRY(gpb_set7(io, r, o, GPB_WIN_GPUCC, gpb_critical_branch[i], 0, GPB_CBCR_ENABLE));
+    uint32_t mode = 0, opmode = 0, user = 0;
+    GPB_TRY(gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_MODE, &mode));
+    GPB_TRY(gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_OPMODE, &opmode));
+    o->pll_was_running = (opmode & 1) && (mode & GPB_PLL_OUTCTRL);
+    if (!o->pll_was_running) {
+        GPB_STEP(3);
+        // Checked before configure: configure writes USER_CTL, which would hide another master's vote bit.
+        GPB_TRY(gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_USER_CTL, &user));
+        if (user & GPB_PLL_VOTE_RUN) {o->failed = 1; return;}
+        for (unsigned i = 0; i < GPB_PLL0_CONFIG_WRITES; ++i)
+            GPB_TRY(gpb_wr7(io, o, GPB_WIN_GPUCC, GPB_CC_PLL0 + gpb_pll0_config[i][0], gpb_pll0_config[i][1]));
+        GPB_TRY(gpb_set7(io, r, o, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_MODE, GPB_PLL_OUTCTRL, 0));
+        GPB_TRY(gpb_wr7(io, o, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_OPMODE, 0));   // STANDBY
+        GPB_TRY(gpb_set7(io, r, o, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_MODE, 0, GPB_PLL_RESET_N));
+        GPB_STEP(4);
+        GPB_TRY(gpb_set7(io, r, o, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_MODE, 0, GPB_PLL_RESET_N));
+        GPB_TRY(gpb_wr7(io, o, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_OPMODE, 1));   // RUN
+        for (o->lock_polls = 0;; ++o->lock_polls) {
+            GPB_TRY(gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_MODE, &mode));
+            if (mode & GPB_PLL_LOCK_DET) break;
+            if (o->lock_polls >= GPB_PLL_LOCK_TRIES) {o->failed = 2; o->pll0_mode = mode; return;}
+            if (io->delay_us) io->delay_us(io->cookie, 1);
+        }
+        GPB_TRY(gpb_set7(io, r, o, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_USER_CTL, 0, 0x7));
+        GPB_TRY(gpb_set7(io, r, o, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_MODE, 0, GPB_PLL_OUTCTRL));
+    }
+    GPB_STEP(5);
+    if ((o->failed = gpb_rcg7(io, r, o, GPB_CC_HUB_RCGR, GPB_HUB_CFG, &o->hub_root_polls, &o->hub_polls))) return;
+    GPB_STEP(6);
+    if ((o->failed = gpb_rcg7(io, r, o, GPB_CC_GMU_RCGR, GPB_GMU_CFG, &o->gmu_root_polls, &o->gmu_polls))) return;
+    GPB_STEP(7);
+    GPB_TRY(gpb_set7(io, r, o, GPB_WIN_GPUCC, GPB_CC_AHB_CLK, 0, GPB_CBCR_ENABLE));
+    if (io->delay_us) io->delay_us(io->cookie, GPB_BRANCH_HALT_DELAY_US);
+    GPB_STEP(8);
+    gpb_rd(io, r, GPB_WIN_GCC_VOTE, GPB_GCC_PLL_VOTE, &o->vote);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_MODE, &o->pll0_mode);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_OPMODE, &o->pll0_opmode);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_USER_CTL, &o->pll0_user);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_HUB_RCGR, &o->hub_cmd);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_HUB_RCGR + 4, &o->hub_cfg);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_GMU_RCGR, &o->gmu_cmd);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_GMU_RCGR + 4, &o->gmu_cfg);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_AHB_CLK, &o->ahb);
+#undef GPB_STEP
+#undef GPB_TRY
 }
 #endif

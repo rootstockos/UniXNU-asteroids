@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // asteroids Adreno 810 power observation and CX power-up, modes 1-3, the GMU pool round trip, mode 4, the GMU's SMMU
-// context on that pool, mode 5, and the read-only GMU clock and command-DB snapshot, mode 6 (sheng-gpu-power=1..6; absent
-// or 0 does nothing). The shape of
+// context on that pool, mode 5, the read-only GMU clock and command-DB snapshot, mode 6, and the GMU clock bring-up, mode 7
+// (sheng-gpu-power=1..7; absent or 0 does nothing). The shape of
 // UniXNU-sheng's and Allenwdk/UniXNU-uke's GpuPowerProbe.cpp (BSD-2-Clause-Patent) without their GMU, ring and Metal stages:
 // a kernel thread waits for the console, maps the five windows uncached, runs GpuPowerBoard.h's gated sequence and logs it.
 // Every block is announced in the log before its first access, so a read that hangs the bus leaves its name as the last line.
 // Writes are allowed only to gcc_gpu_cfg_ahb_clk (mode 2 and up) and to the CX GDSCR, gpu_cc_ahb_clk and
-// gpu_cc_hlos1_vote_gpu_smmu_clk (mode 3); anything else is refused here as well. Mode 5 hands NativeAdreno's
+// gpu_cc_hlos1_vote_gpu_smmu_clk (mode 3), and, only while mode 7's gpb_gmu_clocks_on runs, to gpb_mode7_writable's
+// GPLL0 vote, PLL0, two RCGs and branches; anything else is refused here as well. Mode 5 hands NativeAdreno's
 // NativeAdrenoGmuContextBringup (uke's mode 4) its own uncached map of the whole SMMU window, and only when
 // gpb_gmu_context_gate passes; the GMU itself stays in reset, so no transaction uses the context yet.
 #include <IOKit/IOLib.h>
@@ -43,11 +44,13 @@ int rd(void *, unsigned w, uint32_t off, uint32_t *out) {
     *out = *reinterpret_cast<volatile uint32_t *>(gVa[w] + off);
     return 0;
 }
+bool gClocksOn;
 int wr(void *, unsigned w, uint32_t off, uint32_t value) {
     const bool gcc = gMode >= 2 && w == GPB_WIN_GCC_GPU && off == GPB_GCC_GPU_CFG_AHB;
     const bool cc = gMode >= 3 && w == GPB_WIN_GPUCC &&
                     (off == GPB_CC_CX_GDSCR || off == GPB_CC_AHB_CLK || off == GPB_CC_SMMU_VOTE_CLK);
-    if (!(gcc || cc) || !gVa[w]) return -1;
+    const bool clocks = gMode >= 7 && gClocksOn && gpb_mode7_writable(w, off);
+    if (!(gcc || cc || clocks) || !gVa[w]) return -1;
     *reinterpret_cast<volatile uint32_t *>(gVa[w] + off) = value;
     __asm__ volatile("dsb sy" ::: "memory");
     return 0;
@@ -112,6 +115,19 @@ void gmuContext(const gpb_result &r) {
 constexpr const char *kDbStatus[] = {"ok", "argument", "version", "corrupt", "duplicate", "missing"};
 alignas(8) uint8_t gCmdDb[SHENG_GMU_COMMAND_DB_BYTES];
 ShengGmuVoteInputs gVoteInputs;
+void logGmuClocks(const char *when, const gpb_gmu_clocks &k, int io_error) {
+    IOLog("ASTEROIDS GPU: gmuclk %s pll0 mode=%08x op=%x st=%08x l=%08x a=%08x user=%08x io=%d\n", when, k.pll0_mode,
+          k.pll0_opmode, k.pll0_status, k.pll0_l, k.pll0_alpha, k.pll0_user, io_error);
+    IOLog("ASTEROIDS GPU: gmuclk %s rcg gmu=%08x/%08x hub=%08x/%08x div=%08x ff=%08x/%08x\n", when, k.gmu_cmd, k.gmu_cfg,
+          k.hub_cmd, k.hub_cfg, k.hub_div, k.ff_cmd, k.ff_cfg);
+    // Branch digits: 1 on, 3 enabled but off, 2 disabled and off, 0 disabled and on.
+    IOLog("ASTEROIDS GPU: gmuclk %s br gmu=%08x cxo=%08x ahb=%08x hubcx=%08x hubaon=%08x memnoc=%08x\n", when, k.branch[0],
+          k.branch[1], k.branch[2], k.branch[3], k.branch[4], k.branch[5]);
+    IOLog("ASTEROIDS GPU: gmuclk %s aon %u%u%u%u%u%u%u gcc axi=%08x mem=%08x vote=%08x\n", when,
+          gpb_branch_digit(k.critical[0]), gpb_branch_digit(k.critical[1]), gpb_branch_digit(k.critical[2]),
+          gpb_branch_digit(k.critical[3]), gpb_branch_digit(k.critical[4]), gpb_branch_digit(k.critical[5]),
+          gpb_branch_digit(k.critical[6]), k.axi, k.memnoc, k.gpll0_vote);
+}
 AdrenoHfiStartupConfig gStartup;
 extern "C" {
 struct gpb_gmu_clocks native_gpu_gmu_clocks;
@@ -126,17 +142,7 @@ void gmuPrerequisites(const gpb_result &r) {
     gpb_read_gmu_clocks(&io, &scratch, &k);
     if (!k.done) IOLog("ASTEROIDS GPU: gmuclk skipped (GPUCC not read)\n");
     else {
-        IOLog("ASTEROIDS GPU: gmuclk pll0 mode=%08x op=%x st=%08x l=%08x a=%08x user=%08x io=%d\n", k.pll0_mode,
-              k.pll0_opmode, k.pll0_status, k.pll0_l, k.pll0_alpha, k.pll0_user, scratch.io_error);
-        IOLog("ASTEROIDS GPU: gmuclk rcg gmu=%08x/%08x hub=%08x/%08x div=%08x ff=%08x/%08x\n", k.gmu_cmd, k.gmu_cfg,
-              k.hub_cmd, k.hub_cfg, k.hub_div, k.ff_cmd, k.ff_cfg);
-        // Branch digits: 1 on, 3 enabled but off, 2 disabled and off, 0 disabled and on.
-        IOLog("ASTEROIDS GPU: gmuclk br gmu=%08x cxo=%08x ahb=%08x hubcx=%08x hubaon=%08x memnoc=%08x\n", k.branch[0],
-              k.branch[1], k.branch[2], k.branch[3], k.branch[4], k.branch[5]);
-        IOLog("ASTEROIDS GPU: gmuclk aon %u%u%u%u%u%u%u gcc axi=%08x mem=%08x vote=%08x\n",
-              gpb_branch_digit(k.critical[0]), gpb_branch_digit(k.critical[1]), gpb_branch_digit(k.critical[2]),
-              gpb_branch_digit(k.critical[3]), gpb_branch_digit(k.critical[4]), gpb_branch_digit(k.critical[5]),
-              gpb_branch_digit(k.critical[6]), k.axi, k.memnoc, k.gpll0_vote);
+        logGmuClocks("before", k, scratch.io_error);
     }
     native_gpu_power_stage = 0x61;
     IOLog("ASTEROIDS GPU: mapping the command DB 0x%llx + 0x%x\n", static_cast<unsigned long long>(SHENG_GMU_COMMAND_DB_BASE),
@@ -188,6 +194,31 @@ void gmuPrerequisites(const gpb_result &r) {
         IOLog("ASTEROIDS GPU: hfi gmu%u %lluk vote=%08x\n", i, static_cast<unsigned long long>(c.gmu[i].hz / 1000),
               c.gmu[i].vote);
     native_gpu_power_stage = 0x6f;
+}
+extern "C" {
+struct gpb_gmu_clock_on native_gpu_gmu_clock_on;
+}
+// Mode 7: gpb_gmu_clocks_on from mode 6's snapshot, then the same snapshot again. The GMU stays in reset.
+void gmuClocksOn(const gpb_result &r) {
+    gpb_io io{nullptr, rd, wr, stage, delayUs};
+    gpb_result scratch = r;
+    gpb_gmu_clock_on &o = native_gpu_gmu_clock_on;
+    native_gpu_power_stage = 0x70;
+    IOLog("ASTEROIDS GPU: gmuclk on: GPLL0 vote, PLL0 700 MHz, hub 200 MHz, gmu 350 MHz, gpu_cc_ahb\n");
+    gClocksOn = true;
+    gpb_gmu_clocks_on(&io, &scratch, &native_gpu_gmu_clocks, &o);
+    gClocksOn = false;
+    native_gpu_power_stage = 0x71;
+    static const char *const kFail[] = {"ok", "refused", "timeout", "io"};
+    IOLog("ASTEROIDS GPU: gmuclk on step=%u %s writes=%u running=%u lock=%u hub=%u/%u gmu=%u/%u\n", o.step,
+          o.failed < 4 ? kFail[o.failed] : "?", o.writes, o.pll_was_running, o.lock_polls, o.hub_root_polls, o.hub_polls,
+          o.gmu_root_polls, o.gmu_polls);
+    IOLog("ASTEROIDS GPU: gmuclk on vote=%08x pll0=%08x/%x/%08x hub=%08x/%08x gmu=%08x/%08x ahb=%08x\n", o.vote,
+          o.pll0_mode, o.pll0_opmode, o.pll0_user, o.hub_cmd, o.hub_cfg, o.gmu_cmd, o.gmu_cfg, o.ahb);
+    gpb_gmu_clocks after;
+    gpb_read_gmu_clocks(&io, &scratch, &after);
+    if (after.done) logGmuClocks("after", after, scratch.io_error);
+    native_gpu_power_stage = 0x72;
 }
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
@@ -250,6 +281,7 @@ void probeThread(void *, wait_result_t) {
     }
     if (gMode >= 5) gmuContext(r);
     if (gMode >= 6) gmuPrerequisites(r);
+    if (gMode >= 7) gmuClocksOn(r);
     native_gpu_power_stage = 4;
 }
 }

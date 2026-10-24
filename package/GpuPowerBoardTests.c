@@ -10,7 +10,8 @@
 static const uint32_t sizes[GPB_WINDOWS] = {0x1000, 0x1000, (uint32_t)GPB_GPUCC_SIZE, (uint32_t)GPB_SMMU_GR0_SIZE,
                                             (uint32_t)GPB_GPU_WINDOW};
 static uint32_t mem[GPB_WINDOWS][0x9800 / 4];
-static struct {unsigned window; uint32_t offset; uint32_t value;} reads[2048], writes[16];
+static struct {unsigned window; uint32_t offset; uint32_t value;} reads[2048], writes[64];
+static int hw7 = 0, pll_locks = 1, rcg_updates = 1;   // fake PLL0 / RCGs for mode 7
 static int cx_on_after = -1;   // fake GDSC: polls of the hw-ctrl register left until PWR_ON, once SW_COLLAPSE is cleared
 static unsigned delayed;
 static unsigned nreads, nwrites, fail_read_window = 99;
@@ -25,9 +26,13 @@ static int rd(void *cookie, unsigned w, uint32_t off, uint32_t *out) {
 }
 static int wr(void *cookie, unsigned w, uint32_t off, uint32_t v) {
     CHECK(cookie == mem && w < GPB_WINDOWS && !(off & 3) && off + 4 <= sizes[w]);
-    CHECK(nwrites < 16); writes[nwrites].window = w; writes[nwrites].offset = off; writes[nwrites].value = v; ++nwrites;
+    CHECK(nwrites < 64); writes[nwrites].window = w; writes[nwrites].offset = off; writes[nwrites].value = v; ++nwrites;
     mem[w][off / 4] = v;
     if (w == GPB_WIN_GPUCC && off == GPB_CC_SMMU_VOTE_CLK && (v & GPB_CBCR_ENABLE)) mem[w][off / 4] &= ~GPB_CBCR_CLK_OFF;
+    if (hw7 && w == GPB_WIN_GPUCC) {
+        if (off == GPB_PLL_OPMODE && v == 1 && pll_locks) mem[w][0] |= GPB_PLL_LOCK_DET;
+        if ((off == GPB_CC_HUB_RCGR || off == GPB_CC_GMU_RCGR) && rcg_updates) mem[w][off / 4] &= ~(GPB_RCG_UPDATE | GPB_RCG_ROOT_OFF);
+    }
     return 0;
 }
 static unsigned stages[64], nstages;
@@ -35,7 +40,7 @@ static void stage(void *cookie, unsigned w) {CHECK(cookie == mem && nstages < 64
 static void delay(void *cookie, unsigned us) {CHECK(cookie == mem); delayed += us;}
 static const struct gpb_io io = {mem, rd, wr, stage, delay};
 static const unsigned all = (1u << GPB_WINDOWS) - 1;
-static void reset(void) {memset(mem, 0, sizeof mem); nreads = nwrites = nstages = delayed = 0; fail_read_window = 99; cx_on_after = -1;}
+static void reset(void) {memset(mem, 0, sizeof mem); hw7 = 0; pll_locks = rcg_updates = 1; nreads = nwrites = nstages = delayed = 0; fail_read_window = 99; cx_on_after = -1;}
 static int was_read(unsigned w, uint32_t off) {
     for (unsigned i = 0; i < nreads; ++i) if (reads[i].window == w && reads[i].offset == off) return 1;
     return 0;
@@ -211,8 +216,73 @@ int main(void) {
         CHECK(!k.done && nreads == skipped);
     }
 
-    // Modes 0 and 7+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 10; m += (m == 0 ? 7 : 1)) {
+    // Mode 7's bring-up from T8's phone state: the exact write sequence, all of it allowed by gpb_mode7_writable.
+    {
+        struct gpb_gmu_clocks k; struct gpb_gmu_clock_on o;
+#define T8_STATE() do { reset(); hw7 = 1; \
+        mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = 0x00228800; \
+        mem[GPB_WIN_GPUCC][GPB_CC_CX_GDS_HW_CTRL / 4] = GPB_GDSC_PWR_ON; mem[GPB_WIN_GCC_VOTE][0] = 0x0060257f; \
+        mem[GPB_WIN_GPUCC][0] = 0x100; mem[GPB_WIN_GPUCC][0x18 / 4] = 1; \
+        mem[GPB_WIN_GPUCC][GPB_CC_GMU_RCGR / 4 + 1] = 0x00100000; mem[GPB_WIN_GPUCC][GPB_CC_HUB_RCGR / 4 + 1] = 0x00100000; \
+        mem[GPB_WIN_GPUCC][0x93a4 / 4] = 1; mem[GPB_WIN_GPUCC][0x9008 / 4] = 0; mem[GPB_WIN_GPUCC][0x9010 / 4] = 0; \
+        mem[GPB_WIN_GPUCC][0x9064 / 4] = 1; mem[GPB_WIN_GPUCC][0x93a8 / 4] = 1; mem[GPB_WIN_GPUCC][0x9004 / 4] = 1; \
+        mem[GPB_WIN_GPUCC][0x90cc / 4] = 1; \
+        gpb_run(&io, 1, all, &r); gpb_read_gmu_clocks(&io, &r, &k); nwrites = 0; delayed = 0; } while (0)
+        T8_STATE();
+        CHECK(k.done && r.cc == GPB_DONE);
+        gpb_gmu_clocks_on(&io, &r, &k, &o);
+        CHECK(!o.failed && o.step == 8 && !o.pll_was_running && o.writes == nwrites);
+        static const uint32_t want[][3] = {
+            {GPB_WIN_GCC_VOTE, 0, 0x0060257f | (3u << 15)},
+            {GPB_WIN_GPUCC, 0x9008, 1}, {GPB_WIN_GPUCC, 0x9010, 1},
+            {GPB_WIN_GPUCC, 0x10, 0x44440024}, {GPB_WIN_GPUCC, 0x14, 0x7555}, {GPB_WIN_GPUCC, 0x20, 0x20485699},
+            {GPB_WIN_GPUCC, 0x24, 0x00182261}, {GPB_WIN_GPUCC, 0x28, 0x82aa299c}, {GPB_WIN_GPUCC, 0x18, 0x400},
+            {GPB_WIN_GPUCC, 0x1c, 5}, {GPB_WIN_GPUCC, 0x30, 3}, {GPB_WIN_GPUCC, 0x34, 0x9000}, {GPB_WIN_GPUCC, 0x38, 0x34},
+            {GPB_WIN_GPUCC, 0x0, 0x100}, {GPB_WIN_GPUCC, 0x4, 0}, {GPB_WIN_GPUCC, 0x0, 0x104},
+            {GPB_WIN_GPUCC, 0x0, 0x104}, {GPB_WIN_GPUCC, 0x4, 1}, {GPB_WIN_GPUCC, 0x18, 0x407},
+            {GPB_WIN_GPUCC, 0x0, 0x80000105},
+            {GPB_WIN_GPUCC, 0x93ec, 2}, {GPB_WIN_GPUCC, 0x93f0, 0x505}, {GPB_WIN_GPUCC, 0x93ec, 3}, {GPB_WIN_GPUCC, 0x93ec, 0},
+            {GPB_WIN_GPUCC, 0x9318, 2}, {GPB_WIN_GPUCC, 0x931c, 0x201}, {GPB_WIN_GPUCC, 0x9318, 3}, {GPB_WIN_GPUCC, 0x9318, 0},
+            {GPB_WIN_GPUCC, 0x90bc, 1},
+        };
+        const unsigned nwant = sizeof want / sizeof want[0];
+        CHECK(nwrites == nwant);
+        for (unsigned i = 0; i < nwant; ++i) {
+            CHECK(writes[i].window == want[i][0] && writes[i].offset == want[i][1]);
+            if (writes[i].value != want[i][2]) {fprintf(stderr, "write %u: %08x want %08x\n", i, writes[i].value, want[i][2]); exit(1);}
+            CHECK(gpb_mode7_writable(writes[i].window, writes[i].offset));
+        }
+        CHECK(delayed == 2 * GPB_BRANCH_HALT_DELAY_US && o.hub_cfg == 0x505 && o.gmu_cfg == 0x201 && o.ahb == 1 &&
+              (o.pll0_mode & GPB_PLL_LOCK_DET) && o.pll0_opmode == 1 && (o.pll0_user & 7) == 7);
+        // The allow-list refuses everything else in the windows mode 7 touches.
+        CHECK(!gpb_mode7_writable(GPB_WIN_GPUCC, GPB_CC_CX_GDSCR) && !gpb_mode7_writable(GPB_WIN_GPUCC, 0x3c) &&
+              !gpb_mode7_writable(GPB_WIN_GPUCC, GPB_CC_HUB_DIV) && !gpb_mode7_writable(GPB_WIN_GPUCC, GPB_CC_FF_RCGR) &&
+              !gpb_mode7_writable(GPB_WIN_GCC_VOTE, 4) && !gpb_mode7_writable(GPB_WIN_GCC_GPU, 0) &&
+              !gpb_mode7_writable(GPB_WIN_SMMU, 0) && !gpb_mode7_writable(GPB_WIN_GPU, 0));
+        // A PLL that never locks: stops at step 4 after 1500 polls, no RCG or branch write.
+        T8_STATE(); pll_locks = 0; gpb_gmu_clocks_on(&io, &r, &k, &o);
+        CHECK(o.failed == 2 && o.step == 4 && o.lock_polls == GPB_PLL_LOCK_TRIES && nwrites == 18);
+        // An RCG update that never clears: stops at step 5.
+        T8_STATE(); rcg_updates = 0; gpb_gmu_clocks_on(&io, &r, &k, &o);
+        CHECK(o.failed == 2 && o.step == 5 && o.hub_root_polls == 0 && o.hub_polls == GPB_RCG_TRIES && nwrites == 23);
+        // A PLL already running is left alone: no configure and no enable writes.
+        T8_STATE(); mem[GPB_WIN_GPUCC][0] = 0x80000107; mem[GPB_WIN_GPUCC][1] = 1;
+        gpb_gmu_clocks_on(&io, &r, &k, &o);
+        CHECK(!o.failed && o.pll_was_running && nwrites == 3 + 8 + 1);
+        for (unsigned i = 0; i < nwrites; ++i) CHECK(writes[i].offset > 0x38 || writes[i].window != GPB_WIN_GPUCC);
+        // An FSM-voted PLL is refused before it is enabled.
+        T8_STATE(); mem[GPB_WIN_GPUCC][0x18 / 4] = GPB_PLL_VOTE_RUN; gpb_gmu_clocks_on(&io, &r, &k, &o);
+        CHECK(o.failed == 1 && o.step == 3 && nwrites == 3);
+        // Refused with nothing written: no snapshot, CX off, an I/O error, or a root reporting off.
+        T8_STATE(); k.done = 0; gpb_gmu_clocks_on(&io, &r, &k, &o); CHECK(o.failed == 1 && !nwrites);
+        T8_STATE(); r.cx_gdscr = r.cx_hwctrl = 0; gpb_gmu_clocks_on(&io, &r, &k, &o); CHECK(o.failed == 1 && !nwrites);
+        T8_STATE(); r.io_error = 1; gpb_gmu_clocks_on(&io, &r, &k, &o); CHECK(o.failed == 1 && !nwrites);
+        T8_STATE(); k.gmu_cmd = GPB_RCG_ROOT_OFF; gpb_gmu_clocks_on(&io, &r, &k, &o); CHECK(o.failed == 1 && !nwrites);
+#undef T8_STATE
+    }
+
+    // Modes 0 and 8+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 10; m += (m == 0 ? 8 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -226,6 +296,7 @@ int main(void) {
     printf("PASS: asteroids GPU power modes 1-3: exact reads per mode, mode 1 never writes, mode 2 only the cfg_ahb enable, "
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
-           "the mode 6 clock snapshot (reads only), modes 0 and 7+ refused\n");
+           "the mode 6 clock snapshot (reads only), the mode 7 clock bring-up (29 writes in Linux order, lock and update timeouts, "
+           "a running PLL left alone, an FSM PLL and 4 preconditions refused), modes 0 and 8+ refused\n");
     return 0;
 }
