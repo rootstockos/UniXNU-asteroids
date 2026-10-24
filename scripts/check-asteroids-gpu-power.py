@@ -6,6 +6,10 @@ ROOT = Path(__file__).resolve().parents[1]
 out = ROOT / 'build/gpu-power'
 out.mkdir(parents=True, exist_ok=True)
 binary = out / 'board-test'
-subprocess.run(['clang', '-std=c11', '-O1', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'package'),
+# With the generated GMU header present, mode 8's offsets are also checked against it.
+sheng = ROOT / 'build/sheng-gmu/ShengGmuSource.h'
+extra = ['-DGPB_HAVE_SHENG_SOURCE', '-I', str(sheng.parent)] if sheng.exists() else []
+subprocess.run(['clang', '-std=c11', '-O1', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'package'), *extra,
                 str(ROOT / 'package/GpuPowerBoardTests.c'), '-o', str(binary)], check=True)
+print('mode 8 offsets checked against ' + str(sheng) if extra else 'mode 8 offsets: no generated ShengGmuSource.h here')
 subprocess.run([str(binary)], check=True)

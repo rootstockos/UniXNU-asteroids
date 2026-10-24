@@ -12,10 +12,11 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 7u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 8u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
                           // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
-                          // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset
+                          // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset; 8 then reads the GMU
+                          // core and RSCC state the cold start checks first (gpb_read_gmu_state), and writes nothing more
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -527,5 +528,73 @@ static inline void gpb_gmu_clocks_on(const struct gpb_io *io, struct gpb_result 
     gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_AHB_CLK, &o->ahb);
 #undef GPB_STEP
 #undef GPB_TRY
+}
+// Mode 8: the first GMU and RSCC register reads, only after mode 7 finished. Reads only. These are the states
+// ShengGmuLoadAndStartHfi verifies before it writes anything (CM3 held in reset, RSCC sequencer idle, no stale HFI ready
+// bit, no fatal AO/CM3 interrupt), plus the configuration words it will write and the always-on counter, read twice, to
+// show the GMU's XO domain is ticking. GMU byte offsets are dword offsets from a6xx_gmu.xml (A8XX variants) * 4 minus the
+// window delta 0x37000 (the GMU window starts at 0x3d37000, the GPU's at 0x3d00000), as ShengGmuSource.h generates them;
+// the host test compares the two whenever build/sheng-gmu/ShengGmuSource.h exists.
+#define GPB_WIN_GMU 5u                    // outside GPB_WINDOWS: mapped only by mode 8
+#define GPB_WIN_RSCC 6u
+#define GPB_ALL_WINDOWS 7u
+#define GPB_GMU_BASE 0x03d37000ULL
+#define GPB_GMU_SIZE 0x68000ULL
+#define GPB_RSCC_BASE 0x03d50000ULL
+#define GPB_RSCC_SIZE 0x10000ULL
+#define GPB_GMU_DELTA 0x37000u
+#define GPB_GMU_REG(dword) ((uint32_t)(dword) * 4u - GPB_GMU_DELTA)
+#define GPB_GMU_CM3_SYSRESET GPB_GMU_REG(0x1f800)
+#define GPB_GMU_CM3_BOOT_CONFIG GPB_GMU_REG(0x1f801)
+#define GPB_GMU_CM3_FW_INIT_RESULT GPB_GMU_REG(0x1f81c)
+#define GPB_GMU_CM3_CFG GPB_GMU_REG(0x1f82d)
+#define GPB_GMU_AO_COUNTER_L GPB_GMU_REG(0x1f840)
+#define GPB_GMU_AO_COUNTER_H GPB_GMU_REG(0x1f841)
+#define GPB_GMU_HFI_CTRL_STATUS GPB_GMU_REG(0x1f980)
+#define GPB_GMU_GMU2HOST_INTR_INFO GPB_GMU_REG(0x1f992)
+#define GPB_GMU_GENERAL_8 GPB_GMU_REG(0x1f9c8)
+#define GPB_GMU_GENERAL_9 GPB_GMU_REG(0x1f9c9)
+#define GPB_GMU_GENERAL_10 GPB_GMU_REG(0x1f9ca)
+#define GPB_GMU_AO_HOST_INTERRUPT_STATUS GPB_GMU_REG(0x23b05)
+#define GPB_GMU_AHB_FENCE_RANGE_0 GPB_GMU_REG(0x23b11)
+#define GPB_GMU_ITCM GPB_GMU_REG(0x1b400)
+#define GPB_GMU_DTCM_VERSION GPB_GMU_REG(0x1c400 + 0xff8)   // the word a6xx_gmu_start reads for the ready rule
+#define GPB_RSCC_SEQ_BUSY_DRV0 (0x101u * 4u)
+#define GPB_GMU_AO_FATAL 0x29u                              // SHENG_GMU_AO_FATAL_MASK
+#define GPB_GMU_CM3_FATAL 0x800000u                          // SHENG_GMU_CM3_FATAL_MASK
+#define GPB_GMU_STATE_READS 16u
+static const uint32_t gpb_gmu_state_reg[GPB_GMU_STATE_READS] = {
+    GPB_GMU_CM3_SYSRESET, GPB_GMU_HFI_CTRL_STATUS, GPB_GMU_AO_HOST_INTERRUPT_STATUS, GPB_GMU_GMU2HOST_INTR_INFO,
+    GPB_GMU_CM3_FW_INIT_RESULT, GPB_GMU_CM3_BOOT_CONFIG, GPB_GMU_CM3_CFG, GPB_GMU_GENERAL_8, GPB_GMU_GENERAL_9,
+    GPB_GMU_GENERAL_10, GPB_GMU_AHB_FENCE_RANGE_0, GPB_GMU_ITCM, GPB_GMU_DTCM_VERSION,
+    GPB_GMU_AO_COUNTER_L, GPB_GMU_AO_COUNTER_H, GPB_GMU_AO_COUNTER_L,
+};
+struct gpb_gmu_state {
+    unsigned done;                       // 0 not run (refused), 1 read
+    unsigned gate;                       // 0 the cold start's preconditions hold; else the first that fails, gpb_gmu_state_text
+    uint32_t v[GPB_GMU_STATE_READS];     // in gpb_gmu_state_reg order
+    uint32_t rscc_busy;
+    int io_error;
+};
+static inline const char *gpb_gmu_state_text(unsigned gate) {
+    static const char *const t[] = {"ok", "not-run", "io", "not-in-reset", "rscc-busy", "stale-hfi-ready", "ao-fatal",
+                                    "cm3-fatal"};
+    return gate < 8 ? t[gate] : "?";
+}
+// `clocks_ok`: mode 7 reached step 8 with no failure. The GMU window is read first (CM3_SYSRESET), then RSCC.
+static inline void gpb_read_gmu_state(const struct gpb_io *io, struct gpb_result *r, int clocks_ok, struct gpb_gmu_state *g) {
+    __builtin_memset(g, 0, sizeof *g);
+    g->gate = 1;
+    if (!clocks_ok) return;
+    g->done = 1;
+    if (io->stage) io->stage(io->cookie, GPB_WIN_GMU);
+    for (unsigned i = 0; i < GPB_GMU_STATE_READS; ++i) {
+        if (i == GPB_GMU_STATE_READS - 1 && io->delay_us) io->delay_us(io->cookie, 10);   // the counter's second read
+        if (gpb_rd(io, r, GPB_WIN_GMU, gpb_gmu_state_reg[i], &g->v[i])) {g->io_error = 1; g->gate = 2; return;}
+    }
+    if (io->stage) io->stage(io->cookie, GPB_WIN_RSCC);
+    if (gpb_rd(io, r, GPB_WIN_RSCC, GPB_RSCC_SEQ_BUSY_DRV0, &g->rscc_busy)) {g->io_error = 1; g->gate = 2; return;}
+    g->gate = g->v[0] != 1 ? 3 : g->rscc_busy ? 4 : (g->v[1] & 1) ? 5 : (g->v[2] & GPB_GMU_AO_FATAL) ? 6 :
+              (g->v[3] & GPB_GMU_CM3_FATAL) ? 7 : 0;
 }
 #endif

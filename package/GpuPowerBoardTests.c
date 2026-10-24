@@ -3,6 +3,9 @@
 // never writes, that mode 2 writes only the gcc_gpu_cfg_ahb_clk enable and only when it is off, the gating, and that every access
 // stays inside its window. Build: scripts/check-asteroids-gpu-power.py.
 #include "GpuPowerBoard.h"
+#ifdef GPB_HAVE_SHENG_SOURCE
+#include "ShengGmuSource.h"   // build/sheng-gmu, generated from the pinned linux XML: mode 8's offsets must match it
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +49,21 @@ static int was_read(unsigned w, uint32_t off) {
     return 0;
 }
 static unsigned reads_in(unsigned w) {unsigned n = 0; for (unsigned i = 0; i < nreads; ++i) n += reads[i].window == w; return n;}
+// Mode 8's fake GMU and RSCC windows: any in-bounds offset reads its value from a short list, else 0.
+static struct {unsigned w; uint32_t off, v;} gmu_vals[24];
+static unsigned ngmu_vals, gmu_fail_at = 99, ao_tick;
+static int rd8(void *cookie, unsigned w, uint32_t off, uint32_t *out) {
+    CHECK(cookie == mem && (w == GPB_WIN_GMU || w == GPB_WIN_RSCC) && !(off & 3));
+    CHECK(off + 4 <= (w == GPB_WIN_GMU ? GPB_GMU_SIZE : GPB_RSCC_SIZE));
+    CHECK(nreads < 2048); reads[nreads].window = w; reads[nreads].offset = off;
+    if (nreads++ == gmu_fail_at) return 1;
+    *out = 0;
+    for (unsigned i = 0; i < ngmu_vals; ++i) if (gmu_vals[i].w == w && gmu_vals[i].off == off) *out = gmu_vals[i].v;
+    if (w == GPB_WIN_GMU && off == GPB_GMU_AO_COUNTER_L) *out += ao_tick++ * 192;
+    return 0;
+}
+static int wr8(void *cookie, unsigned w, uint32_t off, uint32_t v) {(void)cookie; (void)w; (void)off; (void)v; CHECK(0); return 1;}
+static void gmu_set(unsigned w, uint32_t off, uint32_t v) {gmu_vals[ngmu_vals].w = w; gmu_vals[ngmu_vals].off = off; gmu_vals[ngmu_vals++].v = v;}
 int main(void) {
     struct gpb_result r;
     // The facts every read relies on.
@@ -281,8 +299,52 @@ int main(void) {
 #undef T8_STATE
     }
 
-    // Modes 0 and 8+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 10; m += (m == 0 ? 8 : 1)) {
+    // Mode 8's GMU state read: reads only, inside the two new windows, offsets as ShengGmuSource.h has them.
+    {
+        CHECK(GPB_GMU_CM3_SYSRESET == 0x47000 && GPB_GMU_HFI_CTRL_STATUS == 0x47600 && GPB_GMU_AO_COUNTER_L == 0x47100 &&
+              GPB_GMU_AO_HOST_INTERRUPT_STATUS == 0x57c14 && GPB_GMU_DTCM_VERSION == 0x3dfe0 && GPB_RSCC_SEQ_BUSY_DRV0 == 0x404);
+#ifdef GPB_HAVE_SHENG_SOURCE
+#define SAME(mine, word) CHECK((mine) == (word) * 4u - SHENG_GMU_CORE_GPU_DELTA)
+        CHECK(GPB_GMU_DELTA == SHENG_GMU_CORE_GPU_DELTA && GPB_GMU_BASE == sheng_gmu_window_physical[0] &&
+              GPB_GMU_SIZE == sheng_gmu_window_bytes[0] && GPB_RSCC_BASE == sheng_gmu_window_physical[1] &&
+              GPB_RSCC_SIZE == sheng_gmu_window_bytes[1] && GPB_RSCC_SEQ_BUSY_DRV0 == REG_RSCC_SEQ_BUSY_DRV0 * 4u &&
+              GPB_GMU_AO_FATAL == SHENG_GMU_AO_FATAL_MASK && GPB_GMU_CM3_FATAL == SHENG_GMU_CM3_FATAL_MASK);
+        SAME(GPB_GMU_CM3_SYSRESET, REG_GMU_CM3_SYSRESET); SAME(GPB_GMU_CM3_BOOT_CONFIG, REG_GMU_CM3_BOOT_CONFIG);
+        SAME(GPB_GMU_CM3_FW_INIT_RESULT, REG_GMU_CM3_FW_INIT_RESULT); SAME(GPB_GMU_CM3_CFG, REG_GMU_CM3_CFG);
+        SAME(GPB_GMU_HFI_CTRL_STATUS, REG_GMU_HFI_CTRL_STATUS); SAME(GPB_GMU_GMU2HOST_INTR_INFO, REG_GMU_GMU2HOST_INTR_INFO);
+        SAME(GPB_GMU_GENERAL_8, REG_GMU_GENERAL_8); SAME(GPB_GMU_GENERAL_9, REG_GMU_GENERAL_9);
+        SAME(GPB_GMU_GENERAL_10, REG_GMU_GENERAL_10); SAME(GPB_GMU_AHB_FENCE_RANGE_0, REG_GMU_AHB_FENCE_RANGE_0);
+        SAME(GPB_GMU_AO_HOST_INTERRUPT_STATUS, REG_GMU_AO_HOST_INTERRUPT_STATUS); SAME(GPB_GMU_ITCM, REG_GMU_CM3_ITCM_START);
+        SAME(GPB_GMU_DTCM_VERSION, REG_GMU_CM3_DTCM_START + 0xff8);
+#undef SAME
+#endif
+        const struct gpb_io io8 = {mem, rd8, wr8, stage, delay};
+        struct gpb_gmu_state g;
+        reset(); ngmu_vals = 0; gmu_fail_at = 99; ao_tick = 0;
+        gpb_read_gmu_state(&io8, &r, 0, &g);
+        CHECK(!g.done && g.gate == 1 && !nreads);
+        gmu_set(GPB_WIN_GMU, GPB_GMU_CM3_SYSRESET, 1);
+        reset(); gpb_read_gmu_state(&io8, &r, 1, &g);
+        CHECK(g.done && g.gate == 0 && !nwrites && nreads == GPB_GMU_STATE_READS + 1 && delayed == 10 && nstages == 2 &&
+              stages[0] == GPB_WIN_GMU && stages[1] == GPB_WIN_RSCC && reads[0].offset == GPB_GMU_CM3_SYSRESET &&
+              reads[nreads - 1].window == GPB_WIN_RSCC && g.v[15] - g.v[13] == 192);
+        const struct {unsigned w; uint32_t off, v; unsigned gate;} bad[] = {
+            {GPB_WIN_GMU, GPB_GMU_CM3_SYSRESET, 0, 3}, {GPB_WIN_RSCC, GPB_RSCC_SEQ_BUSY_DRV0, 1, 4},
+            {GPB_WIN_GMU, GPB_GMU_HFI_CTRL_STATUS, 1, 5}, {GPB_WIN_GMU, GPB_GMU_AO_HOST_INTERRUPT_STATUS, 0x20, 6},
+            {GPB_WIN_GMU, GPB_GMU_GMU2HOST_INTR_INFO, 0x800000, 7}};
+        for (unsigned i = 0; i < 5; ++i) {
+            ngmu_vals = 1; gmu_set(bad[i].w, bad[i].off, bad[i].v);
+            if (bad[i].gate == 3) ngmu_vals = 0;
+            reset(); gpb_read_gmu_state(&io8, &r, 1, &g);
+            CHECK(g.gate == bad[i].gate && !strcmp(gpb_gmu_state_text(g.gate), gpb_gmu_state_text(bad[i].gate)));
+        }
+        ngmu_vals = 1; reset(); gmu_fail_at = 0; gpb_read_gmu_state(&io8, &r, 1, &g);
+        CHECK(g.gate == 2 && g.io_error && nreads == 1);
+        gmu_fail_at = 99;
+    }
+
+    // Modes 0 and 9+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 12; m += (m == 0 ? 9 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -297,6 +359,6 @@ int main(void) {
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
            "the mode 6 clock snapshot (reads only), the mode 7 clock bring-up (29 writes in Linux order, lock and update timeouts, "
-           "a running PLL left alone, an FSM PLL and 4 preconditions refused), modes 0 and 8+ refused\n");
+           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), modes 0 and 9+ refused\n");
     return 0;
 }

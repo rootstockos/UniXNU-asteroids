@@ -217,7 +217,8 @@ kernel_args = [
   # ("ASTEROIDS GPU: ..."). 2 adds the one write Linux makes (gcc_gpu_cfg_ahb_clk), 3 powers CX and the SMMU clocks, 4 tests
   # the GMU pool, 5 builds the GMU's SMMU context on it (NativeAdrenoGmuContextBringup), 6 reads the GMU clock tree and the
   # command DB and builds the HFI table (no writes), 7 brings up the GMU clocks (GPLL0 vote, PLL0, hub and gmu RCGs,
-  # gpu_cc_ahb) with the GMU still in reset. Remove the line to turn it off.
+  # gpu_cc_ahb) with the GMU still in reset, 8 then reads the GMU and RSCC state the cold start checks (no writes).
+  # Remove the line to turn it off.
   "sheng-gpu-power=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes

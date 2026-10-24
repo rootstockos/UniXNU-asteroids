@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // asteroids Adreno 810 power observation and CX power-up, modes 1-3, the GMU pool round trip, mode 4, the GMU's SMMU
-// context on that pool, mode 5, the read-only GMU clock and command-DB snapshot, mode 6, and the GMU clock bring-up, mode 7
-// (sheng-gpu-power=1..7; absent or 0 does nothing). The shape of
+// context on that pool, mode 5, the read-only GMU clock and command-DB snapshot, mode 6, the GMU clock bring-up, mode 7,
+// and the first GMU and RSCC register reads, mode 8 (sheng-gpu-power=1..8; absent or 0 does nothing). The shape of
 // UniXNU-sheng's and Allenwdk/UniXNU-uke's GpuPowerProbe.cpp (BSD-2-Clause-Patent) without their GMU, ring and Metal stages:
 // a kernel thread waits for the console, maps the five windows uncached, runs GpuPowerBoard.h's gated sequence and logs it.
 // Every block is announced in the log before its first access, so a read that hangs the bus leaves its name as the last line.
@@ -32,15 +32,19 @@ volatile uint32_t native_gpu_power_stage;
 }
 
 namespace {
-constexpr uint64_t kPhys[GPB_WINDOWS] = {GPB_GCC_GPU_PAGE, GPB_GCC_VOTE_PAGE, GPB_GPUCC_BASE, GPB_SMMU_BASE, GPB_GPU_BASE};
-constexpr uint64_t kLen[GPB_WINDOWS] = {0x1000, 0x1000, GPB_GPUCC_SIZE, GPB_SMMU_GR0_SIZE, GPB_GPU_WINDOW};
-constexpr const char *kName[GPB_WINDOWS] = {"GCC GPU page", "GCC vote page", "GPUCC", "GPU SMMU GR0", "GPU RBBM"};
-OSSharedPtr<IOMemoryMap> gMaps[GPB_WINDOWS];
-uintptr_t gVa[GPB_WINDOWS];
+// The first GPB_WINDOWS are mapped at start; the GMU and RSCC windows only by mode 8.
+constexpr uint64_t kPhys[GPB_ALL_WINDOWS] = {GPB_GCC_GPU_PAGE, GPB_GCC_VOTE_PAGE, GPB_GPUCC_BASE, GPB_SMMU_BASE, GPB_GPU_BASE,
+                                             GPB_GMU_BASE, GPB_RSCC_BASE};
+constexpr uint64_t kLen[GPB_ALL_WINDOWS] = {0x1000, 0x1000, GPB_GPUCC_SIZE, GPB_SMMU_GR0_SIZE, GPB_GPU_WINDOW, GPB_GMU_SIZE,
+                                            GPB_RSCC_SIZE};
+constexpr const char *kName[GPB_ALL_WINDOWS] = {"GCC GPU page", "GCC vote page", "GPUCC", "GPU SMMU GR0", "GPU RBBM", "GMU",
+                                                "GMU RSCC"};
+OSSharedPtr<IOMemoryMap> gMaps[GPB_ALL_WINDOWS];
+uintptr_t gVa[GPB_ALL_WINDOWS];
 unsigned gMode;
 
 int rd(void *, unsigned w, uint32_t off, uint32_t *out) {
-    if (w >= GPB_WINDOWS || !gVa[w] || off >= kLen[w] || (off & 3)) return -1;
+    if (w >= GPB_ALL_WINDOWS || !gVa[w] || off >= kLen[w] || (off & 3)) return -1;
     *out = *reinterpret_cast<volatile uint32_t *>(gVa[w] + off);
     return 0;
 }
@@ -59,7 +63,7 @@ void delayUs(void *, unsigned us) {IODelay(us);}
 void stage(void *, unsigned w) {
     native_gpu_power_stage = 0x10 + w;
     if (w == GPB_WINDOWS) {IOLog("ASTEROIDS GPU: powering the CX GDSC (GPUCC 0x9080)\n"); return;}
-    IOLog("ASTEROIDS GPU: reading %s (0x%llx)\n", w < GPB_WINDOWS ? kName[w] : "?", w < GPB_WINDOWS ? kPhys[w] : 0ULL);
+    IOLog("ASTEROIDS GPU: reading %s (0x%llx)\n", w < GPB_ALL_WINDOWS ? kName[w] : "?", w < GPB_ALL_WINDOWS ? kPhys[w] : 0ULL);
 }
 constexpr const char *kGmuStep[] = {"-", "allocate", "prepare", "program", "attach", "vm attach", "map", "ready"};
 void gmuProgress(uint32_t step) {
@@ -220,6 +224,42 @@ void gmuClocksOn(const gpb_result &r) {
     if (after.done) logGmuClocks("after", after, scratch.io_error);
     native_gpu_power_stage = 0x72;
 }
+extern "C" {
+struct gpb_gmu_state native_gpu_gmu_state;
+}
+// Mode 8: map the GMU and RSCC windows uncached and read the cold start's preconditions. Each window is announced before
+// its first read, so a read that hangs leaves its name last. Nothing is written.
+void gmuState(const gpb_result &r) {
+    const gpb_gmu_clock_on &o = native_gpu_gmu_clock_on;
+    const int clocks_ok = o.step == 8 && !o.failed;
+    native_gpu_power_stage = 0x80;
+    for (unsigned w = GPB_WINDOWS; w < GPB_ALL_WINDOWS && clocks_ok; ++w) {
+        IODeviceMemory *memory = IODeviceMemory::withRange(kPhys[w], kLen[w]);
+        if (!memory) continue;
+        gMaps[w] = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
+        memory->release();
+        if (gMaps[w]) gVa[w] = static_cast<uintptr_t>(gMaps[w]->getVirtualAddress());
+    }
+    if (clocks_ok && (!gVa[GPB_WIN_GMU] || !gVa[GPB_WIN_RSCC])) {
+        IOLog("ASTEROIDS GPU: gmu map failed gmu=%d rscc=%d\n", gVa[GPB_WIN_GMU] != 0, gVa[GPB_WIN_RSCC] != 0);
+        return;
+    }
+    gpb_io io{nullptr, rd, wr, stage, delayUs};
+    gpb_result scratch = r;
+    gpb_gmu_state &g = native_gpu_gmu_state;
+    gpb_read_gmu_state(&io, &scratch, clocks_ok, &g);
+    native_gpu_power_stage = 0x81;
+    const uint32_t *v = g.v;
+    IOLog("ASTEROIDS GPU: gmu gate=%s reset=%08x hfi=%08x ao=%08x cm3=%08x rscc=%08x io=%d\n", gpb_gmu_state_text(g.gate),
+          v[0], v[1], v[2], v[3], g.rscc_busy, g.io_error);
+    if (g.done && !g.io_error) {
+        IOLog("ASTEROIDS GPU: gmu init=%08x boot=%08x cfg=%08x gen8=%08x gen9=%08x gen10=%08x fence=%08x\n", v[4], v[5], v[6],
+              v[7], v[8], v[9], v[10]);
+        IOLog("ASTEROIDS GPU: gmu itcm0=%08x dtcm_ver=%08x ao=%08x:%08x then %08x (+%u)\n", v[11], v[12], v[14], v[13], v[15],
+              v[15] - v[13]);
+    }
+    native_gpu_power_stage = 0x82;
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -282,6 +322,7 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 5) gmuContext(r);
     if (gMode >= 6) gmuPrerequisites(r);
     if (gMode >= 7) gmuClocksOn(r);
+    if (gMode >= 8) gmuState(r);
     native_gpu_power_stage = 4;
 }
 }
