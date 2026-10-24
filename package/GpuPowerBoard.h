@@ -79,11 +79,14 @@
 #define GPB_SMMU_ID2 0x28
 #define GPB_SMMU_GFSR 0x48
 // Stream match and stream-to-context registers in global space 0: SMRn 0x800 + 4n (VALID bit 31), S2CRn 0xc00 + 4n.
-// IDR0.NUMSMRG (bits 0-7) gives the count; the phone's ID0 0x00290406 reports 6. uke's mode 4 runs only when none is valid.
+// IDR0.NUMSMRG (bits 0-7) gives the count. On the phone (T4/T5) the SMMU rows read sCR0 0x00290406, ID0 0x4c017e18
+// (NUMSMRG 0x18: 24 entries), ID1 0x40000016 (NUMCB 0x16: 22 context banks), ID2 0x00005511. The 32-entry cap covers all of
+// them and stays inside global space 0 (0x800 + 4 * 32 = 0x880, 0xc00 + 4 * 32 = 0xc80). uke's mode 4 runs only when none is
+// valid.
 #define GPB_SMMU_SMR(n) (0x800 + 4 * (n))
 #define GPB_SMMU_S2CR(n) (0xc00 + 4 * (n))
 #define GPB_SMMU_SMR_VALID (1u << 31)
-#define GPB_SMMU_MAX_SMR 16u
+#define GPB_SMMU_MAX_SMR 32u
 
 // a6xx.xml (torvalds/linux 734bef548a96): RBBM_STATUS is dword 0x012 for A8XX- (0x210 is the A6XX-A7XX offset); NativeAdreno's
 // generated NativeAdrenoA810HwInit.h has the same A810_RBBM_STATUS. Byte offset = dword * 4.

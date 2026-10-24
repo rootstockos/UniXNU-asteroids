@@ -79,18 +79,18 @@ int main(void) {
 
     // CX on and the SMMU vote clock running: global space 0 is read; GX still off, so the GPU window is not.
     reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = GPB_GDSC_PWR_ON;
-    mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0x00290406;
+    mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0x4c017e18;   // the phone's ID0: NUMSMRG 24
     gpb_run(&io, 1, all, &r);
     mem[GPB_WIN_SMMU][GPB_SMMU_SMR(2) / 4] = 0x80000005; mem[GPB_WIN_SMMU][GPB_SMMU_S2CR(2) / 4] = 0x00000001;
     nreads = 0; gpb_run(&io, 1, all, &r);
-    // The stream-match survey: ID0's NUMSMRG (6) entries, SMR and S2CR each, read only.
-    CHECK(r.smmu == GPB_DONE && r.id0 == 0x00290406 && reads_in(GPB_WIN_SMMU) == 5 + 2 * 6 && r.gpu == GPB_SKIPPED_PREREQ);
-    CHECK(r.num_smr == 6 && r.smr_valid == 1 && r.smr[2] == 0x80000005 && r.s2cr[2] == 1 && !nwrites);
-    CHECK(was_read(GPB_WIN_SMMU, 0x800) && was_read(GPB_WIN_SMMU, 0x814) && was_read(GPB_WIN_SMMU, 0xc14) &&
-          !was_read(GPB_WIN_SMMU, 0x818));
+    // The stream-match survey: ID0's NUMSMRG (24 on the phone) entries, SMR and S2CR each, read only.
+    CHECK(r.smmu == GPB_DONE && r.id0 == 0x4c017e18 && reads_in(GPB_WIN_SMMU) == 5 + 2 * 24 && r.gpu == GPB_SKIPPED_PREREQ);
+    CHECK(r.num_smr == 24 && r.smr_valid == 1 && r.smr[2] == 0x80000005 && r.s2cr[2] == 1 && !nwrites);
+    CHECK(was_read(GPB_WIN_SMMU, 0x800) && was_read(GPB_WIN_SMMU, 0x85c) && was_read(GPB_WIN_SMMU, 0xc5c) &&
+          !was_read(GPB_WIN_SMMU, 0x860));
     mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0xff; nreads = 0; gpb_run(&io, 1, all, &r);   // a large NUMSMRG is capped
     CHECK(r.num_smr == GPB_SMMU_MAX_SMR && reads_in(GPB_WIN_SMMU) == 5 + 2 * GPB_SMMU_MAX_SMR);
-    mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0x00290406; mem[GPB_WIN_SMMU][GPB_SMMU_SMR(2) / 4] = 0; nreads = 0;
+    mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0x4c017e18; mem[GPB_WIN_SMMU][GPB_SMMU_SMR(2) / 4] = 0; nreads = 0;
     gpb_run(&io, 1, all, &r);
     // GX on as well: RBBM_STATUS at the gen8 offset.
     mem[GPB_WIN_GPUCC][GPB_CC_GX_GDSCR / 4] = GPB_GDSC_PWR_ON; mem[GPB_WIN_GPU][0x48 / 4] = 0x12345678; nreads = 0;
@@ -99,7 +99,7 @@ int main(void) {
 
     // Mode 3 from the value T2 read on the phone (0x0022f001): the downstream gdsc-regulator.c writes, in order, then the clocks.
     reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = 0x0022f001;
-    mem[GPB_WIN_GPUCC][GPB_CC_SMMU_VOTE_CLK / 4] = GPB_CBCR_CLK_OFF; mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0x00290406;
+    mem[GPB_WIN_GPUCC][GPB_CC_SMMU_VOTE_CLK / 4] = GPB_CBCR_CLK_OFF; mem[GPB_WIN_SMMU][GPB_SMMU_ID0 / 4] = 0x4c017e18;
     cx_on_after = 3;
     gpb_run(&io, 3, all, &r);
     CHECK(r.cx_before == 0x0022f001 && r.cx_init == 0x00228001 && r.cx_after == 0x00228800 && !r.cx_refused);
@@ -111,7 +111,7 @@ int main(void) {
     CHECK(writes[4].offset == GPB_CC_SMMU_VOTE_CLK && (writes[4].value & GPB_CBCR_ENABLE));
     for (unsigned i = 0; i < nwrites; ++i) CHECK(writes[i].window == GPB_WIN_GPUCC && writes[i].offset != GPB_CC_GX_GDSCR);
     CHECK(r.cx_tries == 4 && r.powered_cx && r.powered_clocks && gpb_gdsc_on(r.cx_hwctrl_after));
-    CHECK(r.smmu == GPB_DONE && r.id0 == 0x00290406 && r.gpu == GPB_SKIPPED_PREREQ && !r.io_error);
+    CHECK(r.smmu == GPB_DONE && r.id0 == 0x4c017e18 && r.gpu == GPB_SKIPPED_PREREQ && !r.io_error);
     CHECK(delayed >= 1 + 3 + 2 + GPB_BRANCH_HALT_DELAY_US);   // 1 us before polling, 1 us per poll, 2 us after, halt delay
     // The exact value T2 read on the phone, 0x0022f801: RETAIN_FF (bit 11) is already set, so there are two GDSC writes, no third.
     reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = 0x0022f801;
