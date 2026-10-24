@@ -334,7 +334,11 @@ zap_region = "gpu_microcode_region@9ea9a000"
 firmware_sqe = ["gen80300_sqe.fw"]
 firmware_gmu = ["gen80300_gmu.bin"]
 firmware_zap = ["gen80300_zap.mbn"]
-firmware_source = "vendor/firmware (public 3a vendor-blob repositories, two identical copies)"
+# Fetched at build time by scripts/fetch-asteroids-gpu-firmware.py from this one source and commit only, checked against
+# the pins below, never committed. The blobs are identical on every NullDebris branch from lineage-23.1 to 24.0.
+firmware_repository = "https://gitlab.com/NullDebris/proprietary_vendor_nothing_asteroids"
+firmware_commit = "7d498e06705f7de4ecbe6fb932ac19ce0995e148"   # lineage-24.0, 2026-10-18
+firmware_path = "proprietary/vendor/firmware"
 
 [gpu.firmware_pins."gen80300_sqe.fw"]
 bytes = 85844

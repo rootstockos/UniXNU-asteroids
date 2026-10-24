@@ -7,6 +7,9 @@
 set -euo pipefail
 device=${DEVICE_DIR:?DEVICE_DIR is the device repository}
 out=out/asteroids
+# The A810 firmware, from board.toml's one pinned source; checked against its pins. The workflow's last step deletes
+# device/.cache/firmware.
+python3 "$device/scripts/fetch-asteroids-gpu-firmware.py"
 ./unixnu defconfig bootstrap_defconfig -D "$device"
 ./unixnu build kernel -D "$device"
 mkdir -p "$out/tree/build/native-prelink"
