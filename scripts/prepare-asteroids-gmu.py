@@ -29,6 +29,7 @@ SRC = DEVICE / '.cache/linux-a8xx'
 MSM = SRC / 'drivers/gpu/drm/msm'
 FIRMWARE = DEVICE / '.cache/firmware/asteroids-gpu/gen80300_gmu.bin'
 SQE = DEVICE / '.cache/firmware/asteroids-gpu/gen80300_sqe.fw'
+ZAP = DEVICE / '.cache/firmware/asteroids-gpu/gen80300_zap.mbn'
 OUT = ROOT / 'build/sheng-gmu'
 NS = '{http://nouveau.freedesktop.org/}'
 ORDER = ['A2XX', 'A3XX', 'A4XX', 'A5XX', 'A6XX', 'A7XX', 'A8XX']
@@ -145,6 +146,9 @@ def main():
     sqe_pin = board['firmware_pins']['gen80300_sqe.fw']
     if not SQE.exists() or SQE.stat().st_size != sqe_pin['bytes'] or sha(SQE) != sqe_pin['sha256']:
         fail('gen80300_sqe.fw is missing or differs from its board.toml pin')
+    zap_pin = board['firmware_pins']['gen80300_zap.mbn']
+    if not ZAP.exists() or ZAP.stat().st_size != zap_pin['bytes'] or sha(ZAP) != zap_pin['sha256']:
+        fail('gen80300_zap.mbn is missing or differs from its board.toml pin')
     gmu = (MSM / 'adreno/a6xx_gmu.c').read_text()
     catalog = (MSM / 'adreno/a6xx_catalog.c').read_text()
     r = Registers()
@@ -293,8 +297,11 @@ def main():
     # The SQE microcode for modes 12-14: the whole file; the probe copies it without its first dword into the GPU's SQE
     # buffer, as adreno_fw_create_bo does.
     sqe_text = blob_header('gen80300_sqe.fw', sqe_pin['sha256'], 'sheng_sqe_firmware', SQE.read_bytes())
+    # The zap shader for mode 15: the whole signed image; the probe splits it into metadata and the load segment.
+    zap_text = blob_header('gen80300_zap.mbn', zap_pin['sha256'], 'sheng_zap_firmware', ZAP.read_bytes())
     firmware_header = OUT / 'ShengGmuFirmware.h'
     sqe_header = OUT / 'ShengSqeFirmware.h'
+    zap_header = OUT / 'ShengZapFirmware.h'
     if '--check' in sys.argv[1:]:
         if not header.exists() or header.read_text() != text:
             fail('build/sheng-gmu/ShengGmuSource.h is stale')
@@ -302,12 +309,15 @@ def main():
             fail('build/sheng-gmu/ShengGmuFirmware.h is stale')
         if not sqe_header.exists() or sqe_header.read_text() != sqe_text:
             fail('build/sheng-gmu/ShengSqeFirmware.h is stale')
+        if not zap_header.exists() or zap_header.read_text() != zap_text:
+            fail('build/sheng-gmu/ShengZapFirmware.h is stale')
         print('PASS: A810 GMU inputs match the pinned sources')
         return
     OUT.mkdir(parents=True, exist_ok=True)
     header.write_text(text)
     firmware_header.write_text(firmware_text)
     sqe_header.write_text(sqe_text)
+    zap_header.write_text(zap_text)
     report = dict(linux_revision=PIN['commit'], source_sha256=PIN['files'], registers=regs,
                   windows=[dict(base=hex(b), bytes=hex(s)) for b, s in windows],
                   window_names=['gmu', 'rscc', '(no gmu_pdc on A8xx)', 'kgsl_3d0_reg_memory', 'cx_misc'],

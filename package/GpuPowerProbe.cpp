@@ -4,7 +4,8 @@
 // the first GMU and RSCC register reads, mode 8, the GMU firmware load to HFI ready, mode 9, and the whole cold start with
 // the HFI startup messages, mode 10, the GX request with the first RBBM reads, mode 11, the SW fuse and CP survey with
 // the GPU's own SMMU context and the SQE copy, mode 12, a8xx hw_init's register writes, mode 13, and the CP start through
-// CP_ME_INIT and a first CP_MEM_WRITE, mode 14 (sheng-gpu-power=1..14; absent or 0 does nothing). Modes 9-10 hand the
+// CP_ME_INIT and a first CP_MEM_WRITE, mode 14, and the zap shader with the secure-mode exit, mode 15 (sheng-gpu-power=1..15;
+// absent or 0 does nothing). Modes 9-10 hand the
 // device package's ShengGmu.c (UniXNU-sheng's, with mainline's gen8 branches) its own uncached maps of the GMU, RSCC, GPU and CX_MISC
 // windows and Normal non-cacheable maps of the five payloads mode 5 placed in the pool; its writes go through its own
 // MMIO adapter (ShengGmuBindMmio), not this file's wr(). The shape of
@@ -15,7 +16,7 @@
 // gpu_cc_hlos1_vote_gpu_smmu_clk (mode 3), and, only while mode 7's gpb_gmu_clocks_on runs, to gpb_mode7_writable's
 // GPLL0 vote, PLL0, two RCGs and branches; anything else is refused here as well. Mode 5 hands NativeAdreno's
 // NativeAdrenoGmuContextBringup (uke's mode 4) its own uncached map of the whole SMMU window, and only when
-// gpb_gmu_context_gate passes; the GMU itself stays in reset, so no transaction uses the context yet. Modes 9-14 write
+// gpb_gmu_context_gate passes; the GMU itself stays in reset, so no transaction uses the context yet. Modes 9-15 write
 // through ShengGmu's adapter instead: the GMU from mode 9, the GPU block only from mode 13 (gGpuWrites), CX_MISC never.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
@@ -40,6 +41,10 @@ extern "C" {
 #include "NativeAdrenoPwrup.h"
 #include "AdrenoPM4.h"
 #include "ShengSqeFirmware.h"   // build/sheng-gmu: the pinned gen80300_sqe.fw as an array; never committed
+#include "ShengZapFirmware.h"   // build/sheng-gmu: the pinned gen80300_zap.mbn as an array; never committed
+#include "NativeAdrenoMemory.h"
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include <kern/task.h>
 #include <kern/clock.h>
 
 extern "C" {
@@ -665,6 +670,127 @@ void cpStart() {
     IOLog("ASTEROIDS GPU: cp pwrup st=%x bytes=%u\n", c[7], c[6]);
     native_gpu_power_stage = !c[3] && !c[4] && c[5] == 0x5e9a810 ? 0xd7 : 0xdf;
 }
+// Mode 15 (T13): leave secure mode with the zap shader, as a8xx hw_init does after cp_init and pandora's level 11 did on
+// the A840. One boot; each step runs only when the one before it passed, and is logged before it runs:
+//   1 SCM: is_call_avail for PAS_IS_SUPPORTED, then PAS_IS_SUPPORTED(13)
+//   2 gen80300_zap.mbn split (gpb_mdt_parse) against the DT's 8 KiB gpu_microcode_region; the metadata (headers, then
+//     the hash segment) in one physically contiguous page below 4 GiB, cleaned to memory. pandora needed no shared-
+//     memory bridge of its own for it
+//   3 PAS_INIT_IMAGE(13, metadata), PAS_MEM_SETUP(13, region, span), the load segment written into the region through a
+//     write-combined map, PAS_AUTH_AND_RESET(13)
+//   4 CP_SET_SECURE_MODE 0 in the ring, then a second CP_MEM_WRITE (0x05ec0ff1) into the scratch page
+// RBBM_SECVID_TRUST_CNTL is read before step 1 and after step 4.
+extern "C" void sheng_smc_call(uint64_t r[8]);   // BootWatchdogPolicy.c
+extern "C" {
+// step reached, then status and result of is_call_avail, is_supported, init_image, mem_setup, auth_and_reset, the mbn
+// rule (0 = usable), write status, its fence result, scratch word, trust before, trust after
+uint64_t native_gpu_zap[18];
+}
+struct ScmReply {uint64_t status, value; unsigned again;};
+ScmReply scmCall(const char *what, uint32_t svc, uint32_t cmd, uint32_t arginfo, uint64_t a0, uint64_t a1, uint64_t a2) {
+    IOLog("ASTEROIDS GPU: zap scm %s (%08x %02x %llx %llx %llx)\n", what, gpb_scm_fn(svc, cmd), arginfo, a0, a1, a2);
+    uint64_t r[8] = {gpb_scm_fn(svc, cmd), arginfo, a0, a1, a2, 0, 0, 0};
+    ScmReply out{};
+    for (;;) {
+        uint64_t x[8] = {r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]};
+        sheng_smc_call(x);
+        if (x[0] != GPB_SCM_INTERRUPTED || out.again >= 1000) {out.status = x[0]; out.value = x[1]; break;}
+        ++out.again;
+        r[0] = GPB_SCM_INTERRUPTED; r[6] = x[6];
+    }
+    IOLog("ASTEROIDS GPU: zap scm %s -> status=%llx value=%llx again=%u\n", what, out.status, out.value, out.again);
+    return out;
+}
+void zapStart() {
+    native_gpu_power_stage = 0xe0;
+    uint64_t *z = native_gpu_zap;
+    if (native_gpu_cp[3] || native_gpu_cp[4] || native_gpu_cp[5] != 0x5e9a810) {IOLog("ASTEROIDS GPU: zap skipped: mode 14 did not finish\n"); return;}
+    uint32_t trust = 0;
+    ringRead(nullptr, A810_RBBM_SECVID_TRUST_CNTL, &trust);
+    z[16] = trust;
+    IOLog("ASTEROIDS GPU: zap: PAS %u into %llx+%x, then CP_SET_SECURE_MODE 0; trust_cntl=%08x\n", GPB_ZAP_PAS, GPB_ZAP_REGION,
+          GPB_ZAP_REGION_BYTES, trust);
+    z[0] = 1;
+    native_gpu_power_stage = 0xe1;
+    ScmReply q = scmCall("is_call_avail", GPB_SCM_SVC_INFO, GPB_SCM_INFO_IS_CALL_AVAIL, GPB_SCM_ARGS_1,
+                         gpb_scm_query(GPB_SCM_SVC_PIL, GPB_SCM_PAS_IS_SUPPORTED), 0, 0);
+    z[1] = q.status; z[2] = q.value;
+    if (q.status || !q.value) {native_gpu_power_stage = 0xe9; return;}
+    q = scmCall("is_supported", GPB_SCM_SVC_PIL, GPB_SCM_PAS_IS_SUPPORTED, GPB_SCM_ARGS_1, GPB_ZAP_PAS, 0, 0);
+    z[3] = q.status; z[4] = q.value;
+    if (q.status || !q.value) {native_gpu_power_stage = 0xea; return;}
+    z[0] = 2;
+    native_gpu_power_stage = 0xe2;
+    struct gpb_mdt m;
+    z[11] = gpb_mdt_parse(sheng_zap_firmware, sizeof sheng_zap_firmware, GPB_ZAP_REGION_BYTES, &m);
+    IOLog("ASTEROIDS GPU: zap mbn rule=%llu header=%x hash=%x+%x meta=%x loads=%u reloc=%u span=%x-%x\n", z[11], m.header_bytes,
+          m.hash_offset, m.hash_bytes, m.meta_bytes, m.loads, m.relocatable, m.min_addr, m.max_addr);
+    if (z[11] || m.meta_bytes > 0x1000) {native_gpu_power_stage = 0xeb; return;}
+    // The metadata page outlives this function: the monitor may still read it at auth_and_reset, and it is never freed.
+    IOBufferMemoryDescriptor *meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+        static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryMapperNone) | kIOMemoryPhysicallyContiguous,
+        0x1000, 0xfffff000ull);
+    if (!meta || meta->prepare() != kIOReturnSuccess) {IOLog("ASTEROIDS GPU: zap metadata page refused\n"); native_gpu_power_stage = 0xec; return;}
+    uint8_t *meta_va = static_cast<uint8_t *>(meta->getBytesNoCopy());
+    IOByteCount length = 0;
+    const uint64_t meta_pa = meta->getPhysicalSegment(0, &length, kIOMemoryMapperNone);
+    if (!meta_va || !meta_pa || length < 0x1000) {IOLog("ASTEROIDS GPU: zap metadata page has no address\n"); native_gpu_power_stage = 0xec; return;}
+    memset(meta_va, 0, 0x1000);
+    gpb_mdt_metadata(sheng_zap_firmware, &m, meta_va);
+    if (NativeAdrenoMaintainOwnedPages(meta_va, 0x1000, NativeAdrenoClean)) {IOLog("ASTEROIDS GPU: zap metadata clean failed\n"); native_gpu_power_stage = 0xec; return;}
+    ringBarrier(nullptr);
+    z[0] = 3;
+    native_gpu_power_stage = 0xe3;
+    q = scmCall("init_image", GPB_SCM_SVC_PIL, GPB_SCM_PAS_INIT_IMAGE, GPB_SCM_ARGS_INIT_IMAGE, GPB_ZAP_PAS, meta_pa, 0);
+    z[5] = q.status; z[6] = q.value;
+    if (q.status || q.value) {native_gpu_power_stage = 0xed; return;}
+    native_gpu_power_stage = 0xe4;
+    q = scmCall("mem_setup", GPB_SCM_SVC_PIL, GPB_SCM_PAS_MEM_SETUP, GPB_SCM_ARGS_3, GPB_ZAP_PAS, GPB_ZAP_REGION,
+                m.max_addr - m.min_addr);
+    z[7] = q.status; z[8] = q.value;
+    if (q.status || q.value) {native_gpu_power_stage = 0xed; return;}
+    native_gpu_power_stage = 0xe5;
+    IOLog("ASTEROIDS GPU: zap writing %x bytes into the region\n", m.max_addr - m.min_addr);
+    {
+        IODeviceMemory *region = IODeviceMemory::withRange(GPB_ZAP_REGION, GPB_ZAP_REGION_BYTES);
+        OSSharedPtr<IOMemoryMap> map;
+        if (region) {
+            map = OSSharedPtr<IOMemoryMap>(region->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
+            region->release();
+        }
+        if (!map) {IOLog("ASTEROIDS GPU: zap region map failed\n"); native_gpu_power_stage = 0xec; return;}
+        gpb_mdt_place(sheng_zap_firmware, &m, reinterpret_cast<volatile uint8_t *>(map->getVirtualAddress()));
+        ringBarrier(nullptr);
+    }
+    native_gpu_power_stage = 0xe6;
+    q = scmCall("auth_and_reset", GPB_SCM_SVC_PIL, GPB_SCM_PAS_AUTH_AND_RESET, GPB_SCM_ARGS_1, GPB_ZAP_PAS, 0, 0);
+    z[9] = q.status; z[10] = q.value;
+    if (q.status || q.value) {native_gpu_power_stage = 0xed; return;}
+    z[0] = 4;
+    native_gpu_power_stage = 0xe7;
+    volatile uint32_t *scratch = reinterpret_cast<volatile uint32_t *>(gGpuCpu[4]);
+    scratch[1] = 0;
+    ringBarrier(nullptr);
+    uint32_t words[6] = {}, fence = 0, seen = 0;
+    if (AdrenoPM4Type7(GPB_CP_SET_SECURE_MODE, 1, &words[0]) != AdrenoPM4Success ||
+        AdrenoPM4Type7(0x3d, 3, &words[2]) != AdrenoPM4Success) {IOLog("ASTEROIDS GPU: zap pm4 refused\n"); return;}
+    words[1] = 0;
+    const uint64_t at = gGpuBuffers[4].iova + 4;
+    words[3] = uint32_t(at); words[4] = uint32_t(at >> 32); words[5] = 0x05ec0ff1;
+    const NativeAdrenoRingClock clock{nullptr, ringNow, ringIdle};
+    z[12] = uint32_t(gRing.submit(words, 6, &fence));
+    if (!z[12]) z[13] = gRing.wait(fence, &clock, 200000, &seen);
+    ringBarrier(nullptr);
+    z[14] = scratch[1];
+    ringRead(nullptr, A810_RBBM_SECVID_TRUST_CNTL, &trust);
+    z[17] = trust;
+    static const char *const kFence[] = {"done", "timeout", "poisoned", "argument"};
+    const bool ok = !z[12] && !z[13] && z[14] == 0x05ec0ff1;
+    IOLog("ASTEROIDS GPU: zap secure off st=%llx fence %u %s seen=%u scratch=%08llx trust_cntl=%08x %s\n", z[12], fence,
+          z[12] ? "-" : z[13] < 4 ? kFence[z[13]] : "?", seen, z[14], trust, ok ? "ok" : "miss");
+    cpState("zap");
+    native_gpu_power_stage = ok ? 0xe8 : 0xef;
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -733,6 +859,7 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 12) gpuSurvey();
     if (gMode >= 13) gpuHwInit();
     if (gMode >= 14) cpStart();
+    if (gMode >= 15) zapStart();
     native_gpu_power_stage = 4;
 }
 }

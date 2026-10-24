@@ -527,8 +527,59 @@ int main(void) {
         // A failed access stops it and says so.
         hw_reset(); hw_fail_at = 5; gpb_hw_init(&hio, &h); CHECK(h.failed == 3 && h.step == 1 && nhw == 3);   // op 5 is the TSB_CNTL write
     }
-    // Modes 0 and 15+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 18; m += (m == 0 ? 15 : 1)) {
+    // Mode 15's SCM encodings and the mbn split, on an image laid out as gen80300_zap.mbn is: three program headers (the
+    // ELF headers as segment type 7, one relocatable PT_LOAD of 0x378 bytes at 0x1000, the hash segment at 0x2000).
+    {
+        CHECK(gpb_scm_fn(GPB_SCM_SVC_PIL, GPB_SCM_PAS_INIT_IMAGE) == 0x42000201u);
+        CHECK(gpb_scm_fn(GPB_SCM_SVC_PIL, GPB_SCM_PAS_AUTH_AND_RESET) == 0x42000205u);
+        CHECK(gpb_scm_fn(GPB_SCM_SVC_INFO, GPB_SCM_INFO_IS_CALL_AVAIL) == 0x42000601u);
+        CHECK(gpb_scm_query(GPB_SCM_SVC_PIL, GPB_SCM_PAS_IS_SUPPORTED) == 0x02000207u);
+        static uint8_t img[0x2f38], meta[0x1000], region[GPB_ZAP_REGION_BYTES];
+        struct gpb_mdt m;
+#define PUT32(at, v) do {uint32_t v_ = (v); img[(at)] = v_; img[(at) + 1] = v_ >> 8; img[(at) + 2] = v_ >> 16; img[(at) + 3] = v_ >> 24;} while (0)
+#define PHDR(i, type, off, addr, file, mem, flags) do {const uint32_t b_ = 0x34 + 32 * (i); PUT32(b_, type); PUT32(b_ + 4, off); \
+        PUT32(b_ + 8, addr); PUT32(b_ + 12, addr); PUT32(b_ + 16, file); PUT32(b_ + 20, mem); PUT32(b_ + 24, flags);} while (0)
+        memset(img, 0, sizeof img);
+        img[0] = 0x7f; img[1] = 'E'; img[2] = 'L'; img[3] = 'F'; img[4] = 1; img[5] = 1;
+        PUT32(0x1c, 0x34); img[0x2a] = 32; img[0x2c] = 3;
+        PHDR(0, 0, 0, 0, 0x94, 0, 0x07000000u);
+        PHDR(1, 1, 0x1000, 0x1000, 0x378, 0x378, 0x08000007u);
+        PHDR(2, 0, 0x2000, 0, 0xf38, 0xf38, 0x02000000u);
+        for (uint32_t i = 0; i < 0x378; ++i) img[0x1000 + i] = (uint8_t)(i * 7 + 1);
+        for (uint32_t i = 0; i < 0xf38; ++i) img[0x2000 + i] = (uint8_t)(i * 3 + 5);
+        CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 0);
+        CHECK(m.header_bytes == 0x94 && m.hash_offset == 0x2000 && m.hash_bytes == 0xf38 && m.meta_bytes == 0xfcc);
+        CHECK(m.loads == 1 && m.relocatable && m.min_addr == 0x1000 && m.max_addr == 0x1378 && m.offset[0] == 0x1000);
+        gpb_mdt_metadata(img, &m, meta);
+        CHECK(!memcmp(meta, img, 0x94) && !memcmp(meta + 0x94, img + 0x2000, 0xf38));
+        memset(region, 0xa5, sizeof region);
+        gpb_mdt_place(img, &m, region);
+        CHECK(!memcmp(region, img + 0x1000, 0x378) && region[0x378] == 0xa5);
+        // A shorter file part is zero-filled up to the memory size.
+        PHDR(1, 1, 0x1000, 0x1000, 0x300, 0x378, 0x08000007u);
+        CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 0);
+        gpb_mdt_place(img, &m, region);
+        CHECK(!memcmp(region, img + 0x1000, 0x300) && region[0x300] == 0 && region[0x377] == 0 && region[0x378] == 0xa5);
+        PHDR(1, 1, 0x1000, 0x1000, 0x378, 0x378, 0x08000007u);
+        // Each rule refuses.
+        CHECK(gpb_mdt_parse(img, 0x30, GPB_ZAP_REGION_BYTES, &m) == 1);
+        img[4] = 2; CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 2); img[4] = 1;
+        img[0x2c] = 200; CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 3); img[0x2c] = 3;
+        CHECK(gpb_mdt_parse(img, 0x2e00, GPB_ZAP_REGION_BYTES, &m) == 4);
+        PHDR(0, 0, 0, 0, 0x94, 0, 0x02000000u); CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 5);
+        PHDR(0, 0, 0, 0, 0x94, 0, 0x07000000u);
+        PHDR(1, 1, 0x1000, 0x1000, 0x400, 0x378, 0x08000007u); CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 6);
+        PHDR(1, 1, 0x1000, 0x1000, 0x378, 0x378, 0x08000007u);
+        PHDR(2, 0, 0x2000, 0, 0xf38, 0xf38, 0); CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 7);
+        PHDR(2, 0, 0x2000, 0, 0xf38, 0xf38, 0x02000000u);
+        PHDR(1, 0, 0x1000, 0x1000, 0x378, 0x378, 0x08000007u); CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 8);
+        PHDR(1, 1, 0x1000, 0x1000, 0x378, 0x378, 0x08000007u);
+        CHECK(gpb_mdt_parse(img, sizeof img, 0x300, &m) == 9);
+#undef PHDR
+#undef PUT32
+    }
+    // Modes 0 and 16+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 19; m += (m == 0 ? 16 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -543,6 +594,6 @@ int main(void) {
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
            "the mode 6 clock snapshot (reads only), the mode 7 clock bring-up (29 writes in Linux order, lock and update timeouts, "
-           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), the mode 12 survey (reads only), mode 13's hw_init writes (Linux order, cached aperture, no CP start), modes 0 and 15+ refused (9-10 and 14 are the probe's)\n");
+           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), the mode 12 survey (reads only), mode 13's hw_init writes (Linux order, cached aperture, no CP start), mode 15's SCM encodings and mbn split (headers + hash as metadata, the relocatable load placed and zero-filled, 9 refusals), modes 0 and 16+ refused (9-10 and 14-15 are the probe's)\n");
     return 0;
 }

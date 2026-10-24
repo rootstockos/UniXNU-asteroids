@@ -74,6 +74,23 @@ extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation
                                                   thread_t *new_thread);
 #define BASEPRI_PREEMPT 92
 
+// The device repository's one SMC: x0-x7 in r[], and back in r[] after the call. The SMC Calling Convention lets the
+// callee change x4-x17. The Gunyah watchdog pet below and the GPU probe's secure monitor calls (mode 15) share it.
+void sheng_smc_call(uint64_t r[8]);
+void sheng_smc_call(uint64_t r[8]) {
+ register uint64_t x0 __asm("x0")=r[0];
+ register uint64_t x1 __asm("x1")=r[1];
+ register uint64_t x2 __asm("x2")=r[2];
+ register uint64_t x3 __asm("x3")=r[3];
+ register uint64_t x4 __asm("x4")=r[4];
+ register uint64_t x5 __asm("x5")=r[5];
+ register uint64_t x6 __asm("x6")=r[6];
+ register uint64_t x7 __asm("x7")=r[7];
+ __asm__ volatile("smc #0" : "+r"(x0),"+r"(x1),"+r"(x2),"+r"(x3),"+r"(x4),"+r"(x5),"+r"(x6),"+r"(x7) : :
+                  "x8","x9","x10","x11","x12","x13","x14","x15","x16","x17","memory");
+ r[0]=x0;r[1]=x1;r[2]=x2;r[3]=x3;r[4]=x4;r[5]=x5;r[6]=x6;r[7]=x7;
+}
+
 // The device runs under Gunyah and the hypervisor keeps a virtual watchdog for
 // this VM. Android's gh_virt_wdt pets it from a timer; the UEFI pet only covers
 // the firmware handoff, and the CPU display renderer can take minutes, so keep
@@ -81,15 +98,8 @@ extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation
 static void uke_gunyah_wdt_pet_thread(void *arg, wait_result_t result) {
  (void)arg;(void)result;
  for (;;) {
-  register uint64_t x0 __asm("x0")=0x86000007;
-  register uint64_t x1 __asm("x1")=0;
-  register uint64_t x2 __asm("x2")=0;
-  register uint64_t x3 __asm("x3")=0;
-  register uint64_t x4 __asm("x4")=0;
-  register uint64_t x5 __asm("x5")=0;
-  register uint64_t x6 __asm("x6")=0;
-  register uint64_t x7 __asm("x7")=0;
-  __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1),"r"(x2),"r"(x3),"r"(x4),"r"(x5),"r"(x6),"r"(x7) : "memory");
+  uint64_t r[8]={0x86000007,0,0,0,0,0,0,0};
+  sheng_smc_call(r);
   assert_wait_timeout((event_t)&uke_gunyah_wdt_pet_thread,THREAD_UNINT,5000,NSEC_PER_MSEC);
   thread_block(THREAD_CONTINUE_NULL);
  }

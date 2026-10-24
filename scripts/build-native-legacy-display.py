@@ -242,7 +242,7 @@ gmu_gen=ROOT/'build/sheng-gmu';hfi_kit=ROOT/'kits/AdrenoFirmware'
 for header in ('ShengGmuVotesSource.h','ShengGmuCommandDbSource.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu-votes.py --from-data first')
 # Modes 9-10 run the GMU cold start (ShengGmu.c over AdrenoFirmware.c) on the generated registers and firmware.
-for header in ('ShengGmuSource.h','ShengGmuFirmware.h','ShengSqeFirmware.h'):
+for header in ('ShengGmuSource.h','ShengGmuFirmware.h','ShengSqeFirmware.h','ShengZapFirmware.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu.py first')
 vote_flags=['-I',str(ROOT/'kits/asteroids'),'-I',str(hfi_kit),'-I',str(gmu_gen)]
 run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags+vote_flags),cwd=r['directory'])
@@ -313,7 +313,7 @@ sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
          *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
          gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',
-         gmu_gen/'ShengGmuFirmware.h',gmu_gen/'ShengSqeFirmware.h',adreno/'NativeAdrenoA810HwInit.h',
+         gmu_gen/'ShengGmuFirmware.h',gmu_gen/'ShengSqeFirmware.h',gmu_gen/'ShengZapFirmware.h',adreno/'NativeAdrenoA810HwInit.h',
          adreno/'NativeAdrenoRegisters.h',pm4/'AdrenoPM4.h']
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeGOPPresenter'],text=True),end='')
 gop=ROOT/'build/native-gop-presenter';gop_late=gop/'NativeGOPPresenter.late.o'

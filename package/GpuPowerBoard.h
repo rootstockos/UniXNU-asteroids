@@ -12,7 +12,7 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 14u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 15u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
                           // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
                           // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset; 8 then reads the GMU
@@ -22,7 +22,8 @@
                           // then asks the GMU for GX (gpb_gx_on) and reads RBBM; 12 then reads the SW fuse and CP state
                           // (gpb_gpu_survey), builds the GPU's own SMMU context and copies the SQE microcode into it; 13
                           // then runs a8xx hw_init's register writes up to the SQE base (gpb_hw_init); 14 then starts
-                          // the CP: ring, SQE, CP_ME_INIT and a first CP_MEM_WRITE
+                          // the CP: ring, SQE, CP_ME_INIT and a first CP_MEM_WRITE; 15 then loads the zap shader (PAS 13)
+                          // and leaves secure mode (CP_SET_SECURE_MODE 0), then writes a second word
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -869,5 +870,90 @@ static inline void gpb_hw_init(const struct gpb_gx_io *io, struct gpb_hw *h) {
 #undef GPB_GPU_W
 #undef GPB_HW_R
 #undef GPB_HW_W
+}
+
+// Mode 15 (T13): the zap shader as PAS image 13, then CP_SET_SECURE_MODE 0, as a8xx hw_init does after cp_init. On the
+// A840, pandora's level 11 had init_image, mem_setup and auth_and_reset all return 0, with the metadata in ordinary
+// contiguous memory. Secure monitor calls follow the SMC Calling Convention as Qualcomm's monitor takes them: a yielding
+// SMC64 SiP call, function (service << 8) | command, x1 the argument description (count in bits 0-3, then a 2-bit type
+// per argument from bit 4: 0 value, 2 read-write buffer), the arguments from x2; x0 = 1 (interrupted) asks for the call
+// again with x0 = 1 and the returned x6. Status in x0, the first result in x1.
+#define GPB_SCM_SVC_PIL 0x02u
+#define GPB_SCM_SVC_INFO 0x06u
+#define GPB_SCM_PAS_INIT_IMAGE 0x01u
+#define GPB_SCM_PAS_MEM_SETUP 0x02u
+#define GPB_SCM_PAS_AUTH_AND_RESET 0x05u
+#define GPB_SCM_PAS_IS_SUPPORTED 0x07u
+#define GPB_SCM_INFO_IS_CALL_AVAIL 0x01u
+#define GPB_SCM_INTERRUPTED 1u
+#define GPB_SCM_ARGS_1 0x01u                    // one value
+#define GPB_SCM_ARGS_3 0x03u                    // three values
+#define GPB_SCM_ARGS_INIT_IMAGE 0x82u           // a value, then a read-write buffer
+#define GPB_ZAP_PAS 13u                         // the GPU's PAS id (a6xx_zap_shader_init, pandora's level 11)
+#define GPB_ZAP_REGION 0x9ea9a000ULL            // the 3a DT's gpu_microcode_region (no-map), kgsl-3d0/zap-shader's region
+#define GPB_ZAP_REGION_BYTES 0x2000u
+#define GPB_CP_SET_SECURE_MODE 0x66u            // PM4 type 7 opcode, one dword: 0 leaves secure mode
+static inline uint32_t gpb_scm_fn(uint32_t svc, uint32_t cmd) {return 0x42000000u | (svc & 0xffu) << 8 | (cmd & 0xffu);}
+// is_call_avail's argument: the SiP-owned function number without the call-type bits.
+static inline uint32_t gpb_scm_query(uint32_t svc, uint32_t cmd) {return 0x02000000u | (svc & 0xffu) << 8 | (cmd & 0xffu);}
+
+// A Qualcomm signed image (mbn) is an ELF32 file: its program headers include one whose segment type (p_flags bits
+// 24-26) is 2, the hash table and signature, and PT_LOAD segments that are the image (relocatable when p_flags bit 27 is
+// set). The monitor takes the ELF and program headers followed by the hash segment as metadata; each load segment goes
+// into the region at its offset from the lowest load address.
+#define GPB_MDT_MAX_LOADS 4u
+struct gpb_mdt {
+    uint32_t header_bytes, hash_offset, hash_bytes, meta_bytes;
+    uint32_t min_addr, max_addr, loads, relocatable;
+    uint32_t offset[GPB_MDT_MAX_LOADS], file_bytes[GPB_MDT_MAX_LOADS], mem_bytes[GPB_MDT_MAX_LOADS], addr[GPB_MDT_MAX_LOADS];
+};
+static inline uint32_t gpb_le32(const uint8_t *p) {return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;}
+static inline uint32_t gpb_le16(const uint8_t *p) {return (uint32_t)p[0] | (uint32_t)p[1] << 8;}
+// 0 when the image fits a region of region_bytes, else the first rule it breaks: 1 not ELF, 2 not 32-bit little endian,
+// 3 program headers out of the file, 4 a segment out of the file, 5 two hash segments, 6 a bad or extra load segment,
+// 7 no hash segment, 8 no load segment, 9 the loads span more than the region.
+static inline unsigned gpb_mdt_parse(const uint8_t *img, uint32_t bytes, uint32_t region_bytes, struct gpb_mdt *m) {
+    __builtin_memset(m, 0, sizeof *m);
+    if (bytes < 0x34 || img[0] != 0x7f || img[1] != 'E' || img[2] != 'L' || img[3] != 'F') return 1;
+    if (img[4] != 1 || img[5] != 1) return 2;
+    const uint32_t phoff = gpb_le32(img + 0x1c), phentsize = gpb_le16(img + 0x2a), phnum = gpb_le16(img + 0x2c);
+    if (phentsize != 32 || !phnum || phnum > 16 || phoff > bytes || phnum * 32u > bytes - phoff) return 3;
+    m->header_bytes = phoff + phnum * 32u;
+    m->min_addr = ~0u;
+    for (uint32_t i = 0; i < phnum; ++i) {
+        const uint8_t *p = img + phoff + 32u * i;
+        const uint32_t type = gpb_le32(p), off = gpb_le32(p + 4), addr = gpb_le32(p + 12), file = gpb_le32(p + 16),
+                       mem = gpb_le32(p + 20), flags = gpb_le32(p + 24);
+        if (off > bytes || file > bytes - off) return 4;
+        if (((flags >> 24) & 7u) == 2u) {
+            if (m->hash_bytes) return 5;
+            m->hash_offset = off; m->hash_bytes = file;
+            continue;
+        }
+        if (type != 1u || !mem) continue;
+        if (file > mem || m->loads == GPB_MDT_MAX_LOADS || addr > ~0u - mem) return 6;
+        m->offset[m->loads] = off; m->file_bytes[m->loads] = file; m->mem_bytes[m->loads] = mem; m->addr[m->loads] = addr;
+        ++m->loads;
+        if (flags & (1u << 27)) m->relocatable = 1;
+        if (addr < m->min_addr) m->min_addr = addr;
+        if (addr + mem > m->max_addr) m->max_addr = addr + mem;
+    }
+    if (!m->hash_bytes) return 7;
+    if (!m->loads) return 8;
+    if (m->max_addr - m->min_addr > region_bytes) return 9;
+    m->meta_bytes = m->header_bytes + m->hash_bytes;
+    return 0;
+}
+// The metadata: headers, then the hash segment (m->meta_bytes into out).
+static inline void gpb_mdt_metadata(const uint8_t *img, const struct gpb_mdt *m, uint8_t *out) {
+    for (uint32_t i = 0; i < m->header_bytes; ++i) out[i] = img[i];
+    for (uint32_t i = 0; i < m->hash_bytes; ++i) out[m->header_bytes + i] = img[m->hash_offset + i];
+}
+// The load segments at their offsets in the region, the rest of each segment's memory size zeroed.
+static inline void gpb_mdt_place(const uint8_t *img, const struct gpb_mdt *m, volatile uint8_t *region) {
+    for (uint32_t s = 0; s < m->loads; ++s) {
+        volatile uint8_t *to = region + (m->addr[s] - m->min_addr);
+        for (uint32_t i = 0; i < m->mem_bytes[s]; ++i) to[i] = i < m->file_bytes[s] ? img[m->offset[s] + i] : 0;
+    }
 }
 #endif
