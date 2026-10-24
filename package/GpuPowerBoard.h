@@ -12,11 +12,13 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 8u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 10u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
                           // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
                           // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset; 8 then reads the GMU
-                          // core and RSCC state the cold start checks first (gpb_read_gmu_state), and writes nothing more
+                          // core and RSCC state the cold start checks first (gpb_read_gmu_state), and writes nothing more;
+                          // 9 loads the GMU firmware and waits for HFI ready (ShengGmuLoadAndStartHfi) when that state is
+                          // clean; 10 runs the whole cold start with the HFI startup messages (ShengGmuColdStart)
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -134,6 +136,7 @@ struct gpb_io {
     void (*stage)(void *cookie, unsigned window);
     void (*delay_us)(void *cookie, unsigned us);   // mode 3 only; may be NULL where no mode 3 runs
 };
+#define GPB_STAGE_CX_GDSC 0x20u   // io->stage marker for the CX power-up, apart from every window index
 enum {GPB_WIN_GCC_GPU = 0, GPB_WIN_GCC_VOTE = 1, GPB_WIN_GPUCC = 2, GPB_WIN_SMMU = 3, GPB_WIN_GPU = 4, GPB_WINDOWS = 5};
 
 struct gpb_result {
@@ -223,7 +226,7 @@ static inline void gpb_run(const struct gpb_io *io, unsigned mode, unsigned have
     if (mode >= 3 && r->cc == GPB_DONE && !gpb_gdsc_on(r->cx_gdscr) && !gpb_gdsc_on(r->cx_hwctrl)) {
         int bad = 0;
         uint32_t v = r->cx_gdscr;
-        if (io->stage) io->stage(io->cookie, GPB_WINDOWS);   // announce the CX power-up before its first write
+        if (io->stage) io->stage(io->cookie, GPB_STAGE_CX_GDSC);   // announce the CX power-up before its first write
         if (v & GPB_GDSC_HW_CONTROL) r->cx_refused = 1;   // gdsc_enable: "Invalid enable while ... under HW control"
         else {
             // Probe-time init: HW trigger and SW override off, the wait between states from qcom,clk-dis-wait-val.

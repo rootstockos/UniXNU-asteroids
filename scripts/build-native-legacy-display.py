@@ -240,10 +240,14 @@ def kernel_cxx(src,obj,extra):
 gmu_gen=ROOT/'build/sheng-gmu';hfi_kit=ROOT/'kits/AdrenoFirmware'
 for header in ('ShengGmuVotesSource.h','ShengGmuCommandDbSource.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu-votes.py --from-data first')
+# Modes 9-10 run the GMU cold start (ShengGmu.c over AdrenoFirmware.c) on the generated registers and firmware.
+for header in ('ShengGmuSource.h','ShengGmuFirmware.h'):
+    require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu.py first')
 vote_flags=['-I',str(ROOT/'kits/asteroids'),'-I',str(hfi_kit),'-I',str(gmu_gen)]
 run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags+vote_flags),cwd=r['directory'])
 gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuMemory','NativeAdrenoVm','NativeAdrenoGmuMemory',
-                                          'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu')]
+                                          'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu',
+                                          'NativeAdrenoSha256')]
 gmu_objs=[]
 for src in gmu_sources:
     gmu_objs.append(OUT/(src.stem+'.o'));run(kernel_cxx(src,gmu_objs[-1],adreno_flags),cwd=r['directory'])
@@ -276,7 +280,8 @@ for src in smmu_sources:
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
         ['-I',str(smmu4k)],cwd=pr['directory'])
 vote_sources=[ROOT/'kits/asteroids/ShengGmuVotes.c',ROOT/'kits/asteroids/ShengGmuCommandDb.c',
-              hfi_kit/'AdrenoHfiVotes.c',hfi_kit/'AdrenoHfiStartup.c',hfi_kit/'AdrenoHfi.c']
+              hfi_kit/'AdrenoHfiVotes.c',hfi_kit/'AdrenoHfiStartup.c',hfi_kit/'AdrenoHfi.c',
+              ROOT/'kits/asteroids/ShengGmu.c',hfi_kit/'AdrenoFirmware.c']
 for src in vote_sources:
     gmu_objs.append(OUT/(src.stem+'.kit.o'))
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
@@ -305,7 +310,8 @@ sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,gpupower_source,
          ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
          *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
-         gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h']
+         gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',
+         gmu_gen/'ShengGmuFirmware.h']
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeGOPPresenter'],text=True),end='')
 gop=ROOT/'build/native-gop-presenter';gop_late=gop/'NativeGOPPresenter.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp',

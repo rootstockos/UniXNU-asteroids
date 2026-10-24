@@ -134,6 +134,7 @@ int main(void) {
     CHECK(writes[4].offset == GPB_CC_SMMU_VOTE_CLK && (writes[4].value & GPB_CBCR_ENABLE));
     for (unsigned i = 0; i < nwrites; ++i) CHECK(writes[i].window == GPB_WIN_GPUCC && writes[i].offset != GPB_CC_GX_GDSCR);
     CHECK(r.cx_tries == 4 && r.powered_cx && r.powered_clocks && gpb_gdsc_on(r.cx_hwctrl_after));
+    {unsigned announced = 0; for (unsigned i = 0; i < nstages; ++i) announced += stages[i] == GPB_STAGE_CX_GDSC; CHECK(announced == 1);}
     CHECK(r.smmu == GPB_DONE && r.id0 == 0x4c017e18 && r.gpu == GPB_SKIPPED_PREREQ && !r.io_error);
     CHECK(delayed >= 1 + 3 + 2 + GPB_BRANCH_HALT_DELAY_US);   // 1 us before polling, 1 us per poll, 2 us after, halt delay
     // The exact value T2 read on the phone, 0x0022f801: RETAIN_FF (bit 11) is already set, so there are two GDSC writes, no third.
@@ -318,6 +319,7 @@ int main(void) {
         SAME(GPB_GMU_DTCM_VERSION, REG_GMU_CM3_DTCM_START + 0xff8);
 #undef SAME
 #endif
+        CHECK(GPB_STAGE_CX_GDSC >= GPB_ALL_WINDOWS);   // the CX power-up marker names no window (T10a logged it for the GMU)
         const struct gpb_io io8 = {mem, rd8, wr8, stage, delay};
         struct gpb_gmu_state g;
         reset(); ngmu_vals = 0; gmu_fail_at = 99; ao_tick = 0;
@@ -343,8 +345,8 @@ int main(void) {
         gmu_fail_at = 99;
     }
 
-    // Modes 0 and 9+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 12; m += (m == 0 ? 9 : 1)) {
+    // Modes 0 and 11+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 14; m += (m == 0 ? 11 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -359,6 +361,6 @@ int main(void) {
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
            "the mode 6 clock snapshot (reads only), the mode 7 clock bring-up (29 writes in Linux order, lock and update timeouts, "
-           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), modes 0 and 9+ refused\n");
+           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), modes 0 and 11+ refused (9-10 are the probe's cold start)\n");
     return 0;
 }

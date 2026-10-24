@@ -10,6 +10,9 @@ out=out/asteroids
 # The A810 firmware, from board.toml's one pinned source; checked against its pins. The workflow's last step deletes
 # device/.cache/firmware.
 python3 "$device/scripts/fetch-asteroids-gpu-firmware.py"
+# The pinned linux sources for the GMU register header (sparse checkout in device/.cache/linux-a8xx); the archive step
+# generates the tree's copy from the same inputs.
+python3 "$device/scripts/prepare-asteroids-gmu.py" --fetch
 ./unixnu defconfig bootstrap_defconfig -D "$device"
 ./unixnu build kernel -D "$device"
 mkdir -p "$out/tree/build/native-prelink"

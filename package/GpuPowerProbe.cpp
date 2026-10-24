@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // asteroids Adreno 810 power observation and CX power-up, modes 1-3, the GMU pool round trip, mode 4, the GMU's SMMU
 // context on that pool, mode 5, the read-only GMU clock and command-DB snapshot, mode 6, the GMU clock bring-up, mode 7,
-// and the first GMU and RSCC register reads, mode 8 (sheng-gpu-power=1..8; absent or 0 does nothing). The shape of
+// the first GMU and RSCC register reads, mode 8, the GMU firmware load to HFI ready, mode 9, and the whole cold start with
+// the HFI startup messages, mode 10 (sheng-gpu-power=1..10; absent or 0 does nothing). Modes 9-10 hand the device package's
+// ShengGmu.c (UniXNU-sheng's, with mainline's gen8 branches) its own uncached maps of the GMU, RSCC, GPU and CX_MISC
+// windows and Normal non-cacheable maps of the five payloads mode 5 placed in the pool; its writes go through its own
+// MMIO adapter (ShengGmuBindMmio), not this file's wr(). The shape of
 // UniXNU-sheng's and Allenwdk/UniXNU-uke's GpuPowerProbe.cpp (BSD-2-Clause-Patent) without their GMU, ring and Metal stages:
 // a kernel thread waits for the console, maps the five windows uncached, runs GpuPowerBoard.h's gated sequence and logs it.
 // Every block is announced in the log before its first access, so a read that hangs the bus leaves its name as the last line.
@@ -23,6 +27,11 @@ extern "C" {
 #include "NativeAdrenoGmuContext.h"
 #include "ShengGmuCommandDb.h"
 #include "ShengGmuCommandDbSource.h"
+#include "ShengGmu.h"
+#include "ShengGmuSource.h"     // build/sheng-gmu: generated registers and windows (prepare-asteroids-gmu.py)
+#include "ShengGmuFirmware.h"   // build/sheng-gmu: the pinned gen80300_gmu.bin as an array; never committed
+#include "NativeAdrenoSha256.h"
+#include <kern/clock.h>
 
 extern "C" {
 struct gpb_result native_gpu_power_result;
@@ -62,7 +71,7 @@ int wr(void *, unsigned w, uint32_t off, uint32_t value) {
 void delayUs(void *, unsigned us) {IODelay(us);}
 void stage(void *, unsigned w) {
     native_gpu_power_stage = 0x10 + w;
-    if (w == GPB_WINDOWS) {IOLog("ASTEROIDS GPU: powering the CX GDSC (GPUCC 0x9080)\n"); return;}
+    if (w == GPB_STAGE_CX_GDSC) {IOLog("ASTEROIDS GPU: powering the CX GDSC (GPUCC 0x9080)\n"); return;}
     IOLog("ASTEROIDS GPU: reading %s (0x%llx)\n", w < GPB_ALL_WINDOWS ? kName[w] : "?", w < GPB_ALL_WINDOWS ? kPhys[w] : 0ULL);
 }
 constexpr const char *kGmuStep[] = {"-", "allocate", "prepare", "program", "attach", "vm attach", "map", "ready"};
@@ -260,6 +269,117 @@ void gmuState(const gpb_result &r) {
     }
     native_gpu_power_stage = 0x82;
 }
+extern "C" {
+ShengGmuStartupResult native_gpu_gmu_start;
+uint32_t native_gpu_gmu_start_status = 0xffffffffu;
+}
+int gmuSha256(void *, const void *bytes, size_t length, uint8_t digest[32]) {
+    NativeAdrenoSha256::hash(static_cast<const uint8_t *>(bytes), length, digest);
+    return 0;
+}
+int gmuNowUs(void *, uint64_t *out) {
+    uint64_t ns = 0;
+    absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
+    *out = ns / 1000;
+    return 0;
+}
+int gmuWaitUs(void *, unsigned us) {IODelay(us); return 0;}
+constexpr const char *kShengStatus[] = {"ok", "argument", "firmware", "busy", "io", "state-mismatch", "timeout", "clock",
+                                        "poisoned", "fault", "protocol"};
+// Modes 9-10: only when mode 8 read a clean GMU (gate ok) on top of a ready GMU context, and for mode 10 a valid HFI
+// startup table from mode 6. Mode 9 stops at HFI ready (ShengGmuLoadAndStartHfi); mode 10 also exchanges the startup
+// messages (ShengGmuColdStart: perf table, bandwidth table, core start, start). Every map and the device stay alive:
+// the GMU keeps using them after this returns. On failure ShengGmu reasserts CM3 reset itself.
+void gmuColdStart() {
+    native_gpu_power_stage = 0x90;
+    const gpb_gmu_state &g = native_gpu_gmu_state;
+    NativeAdrenoGmuPayload payloads[5];
+    const bool ready = g.done && !g.gate && NativeAdrenoGmuContextPayloads(payloads) == kIOReturnSuccess;
+    // Mode 6 parsed the command DB (its magic read back) and built the startup table from it.
+    const bool table = native_gpu_cmd_db_status[1] == 0x0c0330dbu && native_gpu_cmd_db_status[2] == 0 &&
+                       native_gpu_cmd_db_status[3] == 0;
+    if (!ready || (gMode >= 10 && !table)) {
+        IOLog("ASTEROIDS GPU: gmuboot skipped: gate=%s context=%d table=%d\n", gpb_gmu_state_text(g.gate), ready, table);
+        return;
+    }
+    // GMU, RSCC (mode 8's maps), no PDC on A8xx, the GPU block (GBIF) and CX_MISC, in ShengGmu window order.
+    static OSSharedPtr<IOMemoryMap> gpuMap, cxMap, payloadMap[5];
+    static ShengGmuMmio mmio;
+    static ShengGmuDevice device;
+    const unsigned extra[2] = {ShengGmuGpu, ShengGmuCxMisc};
+    OSSharedPtr<IOMemoryMap> *extraMap[2] = {&gpuMap, &cxMap};
+    for (unsigned i = 0; i < 2; ++i) {
+        const unsigned w = extra[i];
+        IODeviceMemory *memory = IODeviceMemory::withRange(sheng_gmu_window_physical[w], sheng_gmu_window_bytes[w]);
+        if (memory) {
+            *extraMap[i] = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
+            memory->release();
+        }
+        if (!*extraMap[i]) {IOLog("ASTEROIDS GPU: gmuboot map of window %u failed\n", w); return;}
+        mmio.windows[w] = {reinterpret_cast<volatile unsigned char *>((*extraMap[i])->getVirtualAddress()),
+                           sheng_gmu_window_physical[w], static_cast<size_t>(sheng_gmu_window_bytes[w])};
+    }
+    mmio.windows[ShengGmuCore] = {reinterpret_cast<volatile unsigned char *>(gVa[GPB_WIN_GMU]), GPB_GMU_BASE,
+                                  static_cast<size_t>(GPB_GMU_SIZE)};
+    mmio.windows[ShengGmuRscc] = {reinterpret_cast<volatile unsigned char *>(gVa[GPB_WIN_RSCC]), GPB_RSCC_BASE,
+                                  static_cast<size_t>(GPB_RSCC_SIZE)};
+    const ShengGmuStatus bind = ShengGmuBindMmio(&mmio, &device.io);
+    if (bind != ShengGmuSuccess) {IOLog("ASTEROIDS GPU: gmuboot bind refused (%u)\n", bind); return;}
+    // The payloads, Normal non-cacheable like the GMU's MAIR index 0 (write-combined: mode 4's mapping of the pool).
+    ShengGmuMemory *memory[5];
+    ShengGmuConfig config{};
+    memory[0] = &config.icache; memory[1] = &config.dummy; memory[2] = &config.debug; memory[3] = &config.log;
+    memory[4] = &config.hfi;
+    for (unsigned i = 0; i < 5; ++i) {
+        IODeviceMemory *range = IODeviceMemory::withRange(payloads[i].physical, payloads[i].bytes);
+        if (range) {
+            payloadMap[i] = OSSharedPtr<IOMemoryMap>(range->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
+            range->release();
+        }
+        if (!payloadMap[i]) {IOLog("ASTEROIDS GPU: gmuboot payload %u map failed\n", i); return;}
+        *memory[i] = {reinterpret_cast<volatile uint32_t *>(payloadMap[i]->getVirtualAddress()),
+                      static_cast<size_t>(payloads[i].bytes), payloads[i].iova};
+    }
+    config.chip_id = SHENG_GMU_CHIP_ID;
+    config.firmware = sheng_gmu_firmware;
+    config.firmware_bytes = sizeof sheng_gmu_firmware;
+    config.poll_budget = 100;   // ShengGmu's poll: 100 us apart and at most 10 ms in all
+    device.services = {nullptr, gmuSha256, gmuNowUs, gmuWaitUs};
+    ShengGmuStartupResult &s = native_gpu_gmu_start;
+    ShengGmuStatus status;
+    IOLog("ASTEROIDS GPU: gmuboot %s: firmware %u bytes, hfi@%llx log@%llx\n",
+          gMode >= 10 ? "cold start with HFI startup" : "load to HFI ready", static_cast<unsigned>(sizeof sheng_gmu_firmware),
+          static_cast<unsigned long long>(config.hfi.iova), static_cast<unsigned long long>(config.log.iova));
+    native_gpu_power_stage = 0x91;
+    if (gMode >= 10) {
+        const ShengGmuStartupLimits limits = {1000, 100, 100000, 1000000};   // 100 ms per command, 1 s in all
+        status = ShengGmuColdStart(&device, &config, &gStartup, &limits, &s);
+    } else {
+        s = ShengGmuStartupResult{};
+        status = ShengGmuLoadAndStartHfi(&device, &config, &s.load);
+    }
+    native_gpu_gmu_start_status = status;
+    native_gpu_power_stage = 0x92;
+    const ShengGmuResult &l = s.load;
+    IOLog("ASTEROIDS GPU: gmuboot %s phase=%u hash=%u reset_ok=%u fw_ready=%u hfi_ready=%u init=%08x hfi=%08x\n",
+          status < 11 ? kShengStatus[status] : "?", l.phase, l.complete_hash_verified, l.reset_verified,
+          l.firmware_ready_observed, l.hfi_ready_observed, l.firmware_init_result, l.hfi_status);
+    IOLog("ASTEROIDS GPU: gmuboot writes=%u reads=%u polls=%u ao=%08x cm3=%08x\n", l.write_attempts, l.read_attempts,
+          l.poll_reads, l.ao_fault_status, l.cm3_fault_status);
+    if (gMode >= 10) {
+        const AdrenoHfiStartupResult &p = s.protocol;
+        IOLog("ASTEROIDS GPU: gmuboot hfi startup=%u stage=%u acked=%08x sent=%u polls=%u fw_err=%08x hdr=%08x t=%lluus "
+              "health=%u\n", s.protocol_status, p.stage, p.acknowledged_stages, p.published_commands, p.poll_reads,
+              p.firmware_error, p.wire_header, static_cast<unsigned long long>(p.elapsed_us), s.health_status);
+    }
+    // The GMU's own view afterwards: reset, FW_INIT_RESULT, HFI status, its always-on counter and its log's first words.
+    uint32_t after[4] = {};
+    const uint32_t regs[4] = {GPB_GMU_CM3_SYSRESET, GPB_GMU_CM3_FW_INIT_RESULT, GPB_GMU_HFI_CTRL_STATUS, GPB_GMU_AO_COUNTER_L};
+    for (unsigned i = 0; i < 4; ++i) rd(nullptr, GPB_WIN_GMU, regs[i], &after[i]);
+    IOLog("ASTEROIDS GPU: gmuboot after reset=%08x init=%08x hfi=%08x ao=%08x log %08x %08x %08x %08x\n", after[0],
+          after[1], after[2], after[3], config.log.cpu[0], config.log.cpu[1], config.log.cpu[2], config.log.cpu[3]);
+    native_gpu_power_stage = 0x93;
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -323,6 +443,7 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 6) gmuPrerequisites(r);
     if (gMode >= 7) gmuClocksOn(r);
     if (gMode >= 8) gmuState(r);
+    if (gMode >= 9) gmuColdStart();
     native_gpu_power_stage = 4;
 }
 }
