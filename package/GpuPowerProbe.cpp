@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// asteroids Adreno 810 power observation, modes 1 and 2 only (sheng-gpu-power=1 or 2; absent or 0 does nothing). The shape of
+// asteroids Adreno 810 power observation and CX power-up, modes 1-3 (sheng-gpu-power=1..3; absent or 0 does nothing). The shape of
 // UniXNU-sheng's and Allenwdk/UniXNU-uke's GpuPowerProbe.cpp (BSD-2-Clause-Patent) without their GMU, ring and Metal stages:
 // a kernel thread waits for the console, maps the five windows uncached, runs GpuPowerBoard.h's gated sequence and logs it.
 // Every block is announced in the log before its first access, so a read that hangs the bus leaves its name as the last line.
-// Writes are allowed to exactly one register (gcc_gpu_cfg_ahb_clk) and only in mode 2; anything else is refused here as well.
+// Writes are allowed only to gcc_gpu_cfg_ahb_clk (mode 2 and up) and to the CX GDSCR, gpu_cc_ahb_clk and
+// gpu_cc_hlos1_vote_gpu_smmu_clk (mode 3); anything else is refused here as well.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
@@ -33,13 +34,18 @@ int rd(void *, unsigned w, uint32_t off, uint32_t *out) {
     return 0;
 }
 int wr(void *, unsigned w, uint32_t off, uint32_t value) {
-    if (gMode < 2 || w != GPB_WIN_GCC_GPU || off != GPB_GCC_GPU_CFG_AHB || !gVa[w]) return -1;
+    const bool gcc = gMode >= 2 && w == GPB_WIN_GCC_GPU && off == GPB_GCC_GPU_CFG_AHB;
+    const bool cc = gMode >= 3 && w == GPB_WIN_GPUCC &&
+                    (off == GPB_CC_CX_GDSCR || off == GPB_CC_AHB_CLK || off == GPB_CC_SMMU_VOTE_CLK);
+    if (!(gcc || cc) || !gVa[w]) return -1;
     *reinterpret_cast<volatile uint32_t *>(gVa[w] + off) = value;
     __asm__ volatile("dsb sy" ::: "memory");
     return 0;
 }
+void delayUs(void *, unsigned us) {IODelay(us);}
 void stage(void *, unsigned w) {
     native_gpu_power_stage = 0x10 + w;
+    if (w == GPB_WINDOWS) {IOLog("ASTEROIDS GPU: powering the CX GDSC (GPUCC 0x9080)\n"); return;}
     IOLog("ASTEROIDS GPU: reading %s (0x%llx)\n", w < GPB_WINDOWS ? kName[w] : "?", w < GPB_WINDOWS ? kPhys[w] : 0ULL);
 }
 void probeThread(void *, wait_result_t) {
@@ -54,7 +60,7 @@ void probeThread(void *, wait_result_t) {
         if (gMaps[w]) {gVa[w] = static_cast<uintptr_t>(gMaps[w]->getVirtualAddress()); have |= 1u << w;}
     }
     IOLog("ASTEROIDS GPU: mode %u, windows mapped %02x\n", gMode, have);
-    gpb_io io{nullptr, rd, wr, stage};
+    gpb_io io{nullptr, rd, wr, stage, delayUs};
     gpb_result &r = native_gpu_power_result;
     gpb_run(&io, gMode, have, &r);
     native_gpu_power_stage = 3;
@@ -65,6 +71,10 @@ void probeThread(void *, wait_result_t) {
     IOLog("ASTEROIDS GPU: cc cx=%08x hw=%08x gx=%08x ahb=%08x smmu=%08x gmu=%08x\n", r.cx_gdscr, r.cx_hwctrl, r.gx_gdscr,
           r.cc_ahb, r.cc_smmu, r.cc_gmu);
     IOLog("ASTEROIDS GPU: smmu %08x %08x %08x %08x gfsr=%08x rbbm=%08x\n", r.scr0, r.id0, r.id1, r.id2, r.gfsr, r.rbbm_status);
+    if (gMode >= 3)
+        IOLog("ASTEROIDS GPU: m3 cx %08x>%08x>%08x hw=%08x tries=%u refused=%u pw%u%u ahb %08x>%08x smmu %08x>%08x\n",
+              r.cx_before, r.cx_init, r.cx_after, r.cx_hwctrl_after, r.cx_tries, r.cx_refused, r.powered_cx, r.powered_clocks,
+              r.cc_ahb_before, r.cc_ahb, r.cc_smmu_before, r.cc_smmu);
     native_gpu_power_stage = 4;
 }
 }

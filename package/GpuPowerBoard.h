@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// asteroids (SM7635, volcano) Adreno 810 power/clock observation, stages 1 and 2 only. From UniXNU-sheng package/GpuPowerBoard.h
+// asteroids (SM7635, volcano) Adreno 810 power/clock observation and the CX power-up, modes 1-3. From UniXNU-sheng package/GpuPowerBoard.h
 // and Allenwdk/UniXNU-uke's copy (BSD-2-Clause-Patent): the same staged, gated read sequence, with the 3a's facts. Every offset
 // names its source. Nothing here touches hardware; GpuPowerProbe.cpp owns the MMIO. Host-tested by GpuPowerBoardTests.c.
 //
 // Why staged: the GPU SMMU, GPUCC and the GPU register window sit behind clocks and power domains that Darwin has no driver for.
 // Reading a block whose clock or rail is off can hang the bus (a reset) instead of failing, so each block is read only when the
-// previous one shows its prerequisite on. Mode 1 only reads; mode 2 adds the one write Linux's GCC probe makes. Powering CX (sheng
-// and uke's mode 3) and everything after it are separate steps, each with its own facts and test.
+// previous one shows its prerequisite on. Mode 1 only reads; mode 2 adds the one write Linux's GCC probe makes; mode 3 powers the
+// CX domain as the 3a's downstream GDSC driver does and turns on the GPU SMMU's two GPU-CC clocks. GX and everything after it
+// are separate steps, each with its own facts and test.
 #ifndef ASTEROIDS_GPU_POWER_BOARD_H
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 2u
+#define GPB_MAX_MODE 3u
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -53,6 +54,23 @@
 #define GPB_CC_SMMU_VOTE_CLK 0x7000
 #define GPB_GDSC_PWR_ON (1u << 31)
 #define GPB_GDSC_SW_COLLAPSE (1u << 0)
+// Mode 3, from the 3a's drivers/clk/qcom/gdsc-regulator.c (qcom,gdsc, the downstream driver the live DT's GDSC nodes bind to;
+// not mainline gdsc.c, whose memory-retain writes it does not make): GDSCR HW_CONTROL BIT(1), SW_OVERRIDE BIT(2),
+// RETAIN_FF_ENABLE BIT(11), CLK_DIS_WAIT (0xF << 12). Probe: clear HW_CONTROL and SW_OVERRIDE, set CLK_DIS_WAIT to the node's
+// qcom,clk-dis-wait-val (8). Enable: refuse while HW_CONTROL is set, clear SW_COLLAPSE, wait 1 us, poll PWR_ON in the
+// hw-ctrl-addr register (no qcom,support-cfg-gdscr on the CX node) up to TIMEOUT_US 1500 times 1 us, then set RETAIN_FF
+// (qcom,retain-regs) if it is clear, then 2 us. The node needs gcc_gpu_cfg_ahb_clk (clocks = GCC 32), which stage 1 checks.
+#define GPB_GDSC_HW_CONTROL (1u << 1)
+#define GPB_GDSC_SW_OVERRIDE (1u << 2)
+#define GPB_GDSC_RETAIN_FF (1u << 11)
+#define GPB_GDSC_CLK_DIS_WAIT_MASK (0xFu << 12)
+#define GPB_GDSC_CLK_DIS_WAIT_VAL (8u << 12)
+#define GPB_GDSC_POLL_TRIES 1500u
+// The live DT's kgsl-smmu@3da0000 clocks: gpu_cc_hlos1_vote_gpu_smmu (GPUCC 20; BRANCH_HALT_VOTED: wait for CLK_OFF to clear),
+// gcc_gpu_memnoc_gfx, gcc_gpu_snoc_dvm_gfx (both on at boot, T2) and gpu_cc_ahb (GPUCC 2; BRANCH_HALT_DELAY: clk-branch.c waits
+// 10 us after enabling). gpu_cc_hlos1_vote_gpu_smmu_clk has no halt delay of its own; 500 us bounds its status wait.
+#define GPB_BRANCH_HALT_DELAY_US 10u
+#define GPB_VOTE_POLL_US 500u
 
 // ARM SMMUv2 global space 0 (IHI 0062D.c): sCR0 0x0, ID0 0x20, ID1 0x24, ID2 0x28, sGFSR 0x48.
 #define GPB_SMMU_SCR0 0x0
@@ -78,6 +96,7 @@ struct gpb_io {
     // Optional: called before each block is first touched (GPB_WIN_*), so a probe can log where it is before a read that could
     // hang the bus. NULL in tests that do not need it.
     void (*stage)(void *cookie, unsigned window);
+    void (*delay_us)(void *cookie, unsigned us);   // mode 3 only; may be NULL where no mode 3 runs
 };
 enum {GPB_WIN_GCC_GPU = 0, GPB_WIN_GCC_VOTE = 1, GPB_WIN_GPUCC = 2, GPB_WIN_SMMU = 3, GPB_WIN_GPU = 4, GPB_WINDOWS = 5};
 
@@ -88,6 +107,10 @@ struct gpb_result {
     uint32_t cx_gdscr, cx_hwctrl, gx_gdscr, cc_ahb, cc_smmu, cc_gmu;
     uint32_t scr0, id0, id1, id2, gfsr;
     uint32_t rbbm_status;
+    // Mode 3: the CX GDSCR before, after the probe-init write and after enabling; the hw-ctrl status it polled and the tries it
+    // took; the two clocks before. powered_cx and powered_clocks are 1 only when the status read confirmed them.
+    uint32_t cx_before, cx_init, cx_after, cx_hwctrl_after, cc_ahb_before, cc_smmu_before;
+    unsigned cx_tries, powered_cx, powered_clocks, cx_refused;
     unsigned enabled_ahb;                // 1 if mode 2 wrote the enable bit
     unsigned writes;                     // every write attempted (mode 1: always 0)
     int io_error;
@@ -142,9 +165,60 @@ static inline void gpb_run(const struct gpb_io *io, unsigned mode, unsigned have
         gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_CX_GMU_CLK, &r->cc_gmu);
         r->cc = GPB_DONE;
     }
-    // Stage 3: the GPU SMMU needs the CX domain and its vote clock (conservative, as sheng and uke gate it). Global space 0 only.
+    // Mode 3: power CX (downstream gdsc-regulator.c) when stage 2 read it collapsed, then the SMMU's two GPU-CC clocks.
+    r->cx_before = r->cx_gdscr; r->cc_ahb_before = r->cc_ahb; r->cc_smmu_before = r->cc_smmu;
+    if (mode >= 3 && r->cc == GPB_DONE && !gpb_gdsc_on(r->cx_gdscr) && !gpb_gdsc_on(r->cx_hwctrl)) {
+        int bad = 0;
+        uint32_t v = r->cx_gdscr;
+        if (io->stage) io->stage(io->cookie, GPB_WINDOWS);   // announce the CX power-up before its first write
+        if (v & GPB_GDSC_HW_CONTROL) r->cx_refused = 1;   // gdsc_enable: "Invalid enable while ... under HW control"
+        else {
+            // Probe-time init: HW trigger and SW override off, the wait between states from qcom,clk-dis-wait-val.
+            v = (v & ~(GPB_GDSC_HW_CONTROL | GPB_GDSC_SW_OVERRIDE | GPB_GDSC_CLK_DIS_WAIT_MASK)) | GPB_GDSC_CLK_DIS_WAIT_VAL;
+            ++r->writes; bad |= io->write32(io->cookie, GPB_WIN_GPUCC, GPB_CC_CX_GDSCR, v);
+            bad |= gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_CX_GDSCR, &r->cx_init);
+            if (!bad) {
+                v = r->cx_init & ~GPB_GDSC_SW_COLLAPSE;   // enable
+                ++r->writes; bad |= io->write32(io->cookie, GPB_WIN_GPUCC, GPB_CC_CX_GDSCR, v);
+                if (io->delay_us) io->delay_us(io->cookie, 1);
+                uint32_t st = 0;
+                for (r->cx_tries = 1; !bad && r->cx_tries <= GPB_GDSC_POLL_TRIES; ++r->cx_tries) {
+                    if (gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_CX_GDS_HW_CTRL, &st)) {bad = 1; break;}
+                    if (gpb_gdsc_on(st)) break;
+                    if (io->delay_us) io->delay_us(io->cookie, 1);
+                }
+                r->cx_hwctrl_after = st;
+                if (!bad && gpb_gdsc_on(st)) {
+                    if (!(v & GPB_GDSC_RETAIN_FF)) {++r->writes; bad |= io->write32(io->cookie, GPB_WIN_GPUCC, GPB_CC_CX_GDSCR, v | GPB_GDSC_RETAIN_FF);}
+                    if (io->delay_us) io->delay_us(io->cookie, 2);
+                    r->powered_cx = !bad;
+                }
+            }
+            gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_CX_GDSCR, &r->cx_after);
+            r->cx_gdscr = r->cx_after; r->cx_hwctrl = r->cx_hwctrl_after;
+        }
+        if (r->powered_cx) {
+            uint32_t a = 0, c = 0;
+            bad |= gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_AHB_CLK, &a);
+            ++r->writes; bad |= io->write32(io->cookie, GPB_WIN_GPUCC, GPB_CC_AHB_CLK, a | GPB_CBCR_ENABLE);
+            if (io->delay_us) io->delay_us(io->cookie, GPB_BRANCH_HALT_DELAY_US);
+            bad |= gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_SMMU_VOTE_CLK, &c);
+            ++r->writes; bad |= io->write32(io->cookie, GPB_WIN_GPUCC, GPB_CC_SMMU_VOTE_CLK, c | GPB_CBCR_ENABLE);
+            for (unsigned waited = 0; !bad; waited += 10) {
+                if (gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_SMMU_VOTE_CLK, &r->cc_smmu)) {bad = 1; break;}
+                if (gpb_clock_on(r->cc_smmu) || waited >= GPB_VOTE_POLL_US) break;
+                if (io->delay_us) io->delay_us(io->cookie, 10);
+            }
+            gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_AHB_CLK, &r->cc_ahb);
+            r->powered_clocks = !bad && gpb_clock_on(r->cc_smmu);
+        }
+        if (bad) r->io_error = 1;
+    }
+    // Stage 3: the GPU SMMU needs the CX domain and its vote clock (as sheng and uke gate it; the 3a's kgsl-smmu node lists that
+    // clock). CX counts as on when either GDSCR or its hw-ctrl status shows PWR_ON. Global space 0 only.
+    const int cx_on = gpb_gdsc_on(r->cx_gdscr) || gpb_gdsc_on(r->cx_hwctrl);
     if (!(have & (1u << GPB_WIN_SMMU))) r->smmu = GPB_NOMAP;
-    else if (r->cc != GPB_DONE || !gpb_gdsc_on(r->cx_gdscr) || !gpb_clock_on(r->cc_smmu)) r->smmu = GPB_SKIPPED_PREREQ;
+    else if (r->cc != GPB_DONE || !cx_on || !gpb_clock_on(r->cc_smmu)) r->smmu = GPB_SKIPPED_PREREQ;
     else {
         if (io->stage) io->stage(io->cookie, GPB_WIN_SMMU);
         gpb_rd(io, r, GPB_WIN_SMMU, GPB_SMMU_SCR0, &r->scr0);
@@ -156,7 +230,7 @@ static inline void gpb_run(const struct gpb_io *io, unsigned mode, unsigned have
     }
     // Stage 4: the GPU register window needs CX and GX on. GX is GMU-owned on gen8, so before the GMU runs this stays skipped.
     if (!(have & (1u << GPB_WIN_GPU))) r->gpu = GPB_NOMAP;
-    else if (r->cc != GPB_DONE || !gpb_gdsc_on(r->cx_gdscr) || !gpb_gdsc_on(r->gx_gdscr)) r->gpu = GPB_SKIPPED_PREREQ;
+    else if (r->cc != GPB_DONE || !cx_on || !gpb_gdsc_on(r->gx_gdscr)) r->gpu = GPB_SKIPPED_PREREQ;
     else {
         if (io->stage) io->stage(io->cookie, GPB_WIN_GPU);
         gpb_rd(io, r, GPB_WIN_GPU, GPB_RBBM_STATUS_BYTES, &r->rbbm_status);
