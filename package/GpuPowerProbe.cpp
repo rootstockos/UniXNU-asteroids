@@ -446,9 +446,10 @@ void gpuGx() {
 // Mode 12: after mode 11 left GX on. Reads only, then the GPU's own SMMU context and the SQE copy:
 //   1 gpb_gpu_survey: the SW fuse (a6xx_gmu_secure_init writes it itself when SCM is missing; this build has no SCM
 //     call and does not write it yet) and the CP/RBBM registers mode 13 is about to program
-//   2 NativeAdrenoGpuContextBringup: bank 0 (arm-smmu-qcom gives the GPU bank 0), ASID 2, the DT's SID 0 on SMR slot 0
-//     and SID 1 (mainline's second adreno stream, the one CP_SMMU_STREAM_ID_LPAC names) on slot 1; the secure SID 2 is
-//     left out as on uke, where its SMR write aborted. Mode 5's GMU context keeps bank 1 and slot 2.
+//   2 NativeAdrenoGpuContextBringup: bank 0 (arm-smmu-qcom gives the GPU bank 0), ASID 2, the DT's SID 0 alone on SMR
+//     slot 0 (GpuNoStream for the second). The hypervisor aborts an SMR write for SID 1 (the first T12a: a synchronous
+//     external abort reading SMR 1 back) as it does for the secure SID 2 on uke; pandora's A840 also runs on SID 0 alone.
+//     Mode 5's GMU context keeps bank 1 and slot 2.
 //   3 the five buffers mapped write-combined (Normal non-cacheable, as the GPU maps them), then the SQE image copied
 //     without its first dword (adreno_fw_create_bo) and read back
 extern "C" {
@@ -487,10 +488,10 @@ void gpuSurvey() {
         memory->release();
     }
     if (!gGpuSmmu) {IOLog("ASTEROIDS GPU: gpuctx SMMU map failed\n"); return;}
-    IOLog("ASTEROIDS GPU: gpuctx bank 0 asid 2, sid 0 on slot 0, sid 1 on slot 1\n");
+    IOLog("ASTEROIDS GPU: gpuctx bank 0 asid 2, sid 0 on slot 0 only\n");
     NativeAdrenoGmuContextReport &q = native_gpu_context;
     const IOReturn status = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gGpuSmmu->getVirtualAddress()),
-                                                          GPB_SMMU_WINDOW, 0, 2, 0, 0, 1, 1, gpuCtxProgress, &q);
+                                                          GPB_SMMU_WINDOW, 0, 2, 0, 0, 1, GpuNoStream, gpuCtxProgress, &q);
     IOLog("ASTEROIDS GPU: gpuctx s%u %s st=%x k%u/%u oas=%u p%uw%ur%ue%u r%uw%uv%u spans=%u mismatch=%03x\n", q.step,
           q.step < 8 ? kGmuStep[q.step] : "?", static_cast<unsigned>(status), q.program_status, q.route_status,
           q.output_bits, q.program_phase, q.program_writes, q.program_readback_valid, q.program_enabled, q.route_phase,
