@@ -44,10 +44,8 @@ boot_progress_stage (const char *text)
 __attribute__((weak)) char boot_progress_ext[8][48];
 __attribute__((weak)) char boot_progress_ext_wide[2][112];
 
-__attribute__((weak)) void
-sheng_gpu_power_probe (void)
-{
-}
+/* sheng_gpu_power_probe: GpuPowerProbe.cpp (asteroids modes 1-2) is always built; a weak stub here could be picked from the
+ * archive first and keep the real one out, so there is none. */
 
 /*
  * NativeLegacyDisplay always references the GPU hand-off hooks, even when

@@ -582,6 +582,7 @@ void native_legacy_display_probe(void) {
 void native_legacy_display_late_probe(void);
 extern void native_keystore_probe(void);
 extern void native_hid_input_probe(void);
+extern void sheng_gpu_power_probe(void);
 extern void native_virtio_input_probe(void);
 extern void native_shared_window_probe(void);
 extern void native_qemu_metal_publish(void);
@@ -627,6 +628,7 @@ void native_legacy_display_late_probe(void) {
     unsigned defaultSurface=0;
     PE_parse_boot_argn("offline-legacy-default-surface",&defaultSurface,sizeof(defaultSurface));
     native_keystore_probe();
+    sheng_gpu_power_probe();   // asteroids GPU power observation; nothing without sheng-gpu-power=1|2
     native_hid_input_probe();
     native_virtio_input_probe();
     native_shared_window_probe();
