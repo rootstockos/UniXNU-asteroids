@@ -549,7 +549,7 @@ int main(void) {
         for (uint32_t i = 0; i < 0xf38; ++i) img[0x2000 + i] = (uint8_t)(i * 3 + 5);
         CHECK(gpb_mdt_parse(img, sizeof img, GPB_ZAP_REGION_BYTES, &m) == 0);
         CHECK(m.header_bytes == 0x94 && m.hash_offset == 0x2000 && m.hash_bytes == 0xf38 && m.meta_bytes == 0xfcc);
-        CHECK(m.loads == 1 && m.relocatable && m.min_addr == 0x1000 && m.max_addr == 0x1378 && m.offset[0] == 0x1000);
+        CHECK(m.loads == 1 && m.relocatable && m.min_addr == 0x1000 && m.max_addr == 0x2000 && m.offset[0] == 0x1000);
         gpb_mdt_metadata(img, &m, meta);
         CHECK(!memcmp(meta, img, 0x94) && !memcmp(meta + 0x94, img + 0x2000, 0xf38));
         memset(region, 0xa5, sizeof region);

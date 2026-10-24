@@ -931,12 +931,13 @@ static inline unsigned gpb_mdt_parse(const uint8_t *img, uint32_t bytes, uint32_
             continue;
         }
         if (type != 1u || !mem) continue;
-        if (file > mem || m->loads == GPB_MDT_MAX_LOADS || addr > ~0u - mem) return 6;
+        if (file > mem || m->loads == GPB_MDT_MAX_LOADS || addr > ~0u - mem - 0xfffu) return 6;
         m->offset[m->loads] = off; m->file_bytes[m->loads] = file; m->mem_bytes[m->loads] = mem; m->addr[m->loads] = addr;
         ++m->loads;
         if (flags & (1u << 27)) m->relocatable = 1;
         if (addr < m->min_addr) m->min_addr = addr;
-        if (addr + mem > m->max_addr) m->max_addr = addr + mem;
+        /* The span ends on a 4K page (PAS mem_setup refuses 0x378 for the 3a's zap with 0xffcfffba). */
+        if (addr + mem > m->max_addr) m->max_addr = (addr + mem + 0xfffu) & ~0xfffu;
     }
     if (!m->hash_bytes) return 7;
     if (!m->loads) return 8;
