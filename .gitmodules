@@ -14,3 +14,6 @@
 	path = drivers/NativeAdreno
 	url = https://github.com/rootstockos/NativeAdreno.git
 	branch = asteroids-a810
+[submodule "drivers/ShengHidInput"]
+	path = drivers/ShengHidInput
+	url = https://github.com/UniXNU/ShengHidInput.git
