@@ -64,6 +64,35 @@ static int rd8(void *cookie, unsigned w, uint32_t off, uint32_t *out) {
 }
 static int wr8(void *cookie, unsigned w, uint32_t off, uint32_t v) {(void)cookie; (void)w; (void)off; (void)v; CHECK(0); return 1;}
 static void gmu_set(unsigned w, uint32_t off, uint32_t v) {gmu_vals[ngmu_vals].w = w; gmu_vals[ngmu_vals].off = off; gmu_vals[ngmu_vals++].v = v;}
+// Mode 11's fake GMU: the OOB ack and GX power follow the request, as configured per case.
+static struct {unsigned w; uint32_t off, v;} gx_writes[16];
+static unsigned ngx_writes, gx_reads, gx_ack = 1, gx_powers = 1, gx_vote_fail, gx_votes, gx_fail_read = ~0u;
+static uint32_t gx_info, gx_status = 3, gx_vote_perf, gx_vote_bw, gx_delayed;
+static int gx_rd(void *c, unsigned w, uint32_t off, uint32_t *out) {
+    CHECK(c == mem && (w == GPB_WIN_GMU || w == GPB_WIN_GPU) && !(off & 3));
+    CHECK(off + 4 <= (w == GPB_WIN_GMU ? GPB_GMU_SIZE : GPB_GPU_WINDOW));
+    if (gx_reads++ == gx_fail_read) return 1;
+    *out = w == GPB_WIN_GPU ? 0x1000 + off : off == GPB_GMU_PWR_CLK_STATUS ? gx_status :
+           off == GPB_GMU_GMU2HOST_INTR_INFO ? gx_info : 0;
+    return 0;
+}
+static int gx_wr(void *c, unsigned w, uint32_t off, uint32_t v) {
+    CHECK(c == mem && w == GPB_WIN_GMU && ngx_writes < 16);   // never the GPU block
+    gx_writes[ngx_writes].w = w; gx_writes[ngx_writes].off = off; gx_writes[ngx_writes++].v = v;
+    if (off == GPB_GMU_HOST2GMU_INTR_SET && v == GPB_OOB_GPU_SET_REQUEST) {
+        if (gx_ack) gx_info |= GPB_OOB_GPU_SET_ACK;
+        if (gx_powers) gx_status = 0;
+    }
+    if (off == GPB_GMU_GMU2HOST_INTR_CLR) gx_info &= ~v;
+    return 0;
+}
+static int gx_vote(void *c, uint32_t perf, uint32_t bw, uint32_t *fw) {
+    CHECK(c == mem); ++gx_votes; gx_vote_perf = perf; gx_vote_bw = bw; *fw = gx_vote_fail == 2 ? 7 : 0;
+    return gx_vote_fail == 1;
+}
+static void gx_delay(void *c, unsigned us) {CHECK(c == mem); gx_delayed += us;}
+static void gx_reset(void) {ngx_writes = gx_reads = gx_votes = gx_vote_fail = 0; gx_ack = gx_powers = 1; gx_info = 0x1;
+    gx_status = 3; gx_delayed = 0; gx_fail_read = ~0u;}
 int main(void) {
     struct gpb_result r;
     // The facts every read relies on.
@@ -345,8 +374,40 @@ int main(void) {
         gmu_fail_at = 99;
     }
 
-    // Modes 0 and 11+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 14; m += (m == 0 ? 11 : 1)) {
+    // Mode 11's GX request: the writes, the vote, the OOB handshake and the RBBM reads only once GX is on.
+    {
+        CHECK(GPB_GMU_PWR_CLK_STATUS == 0x46fa0 && GPB_GMU_GMU2HOST_INTR_CLR == 0x47644 &&
+              GPB_GMU_GMU2HOST_INTR_MASK == 0x4764c && GPB_GMU_HOST2GMU_INTR_SET == 0x47650 && GPB_RBBM_STATUS == 0x48);
+#ifdef GPB_HAVE_SHENG_SOURCE
+        CHECK(GPB_GMU_HOST2GMU_INTR_SET == REG_GMU_HOST2GMU_INTR_SET * 4u - SHENG_GMU_CORE_GPU_DELTA &&
+              GPB_GMU_GMU2HOST_INTR_INFO == REG_GMU_GMU2HOST_INTR_INFO * 4u - SHENG_GMU_CORE_GPU_DELTA);
+#endif
+        const struct gpb_gx_io gio = {mem, gx_rd, gx_wr, gx_vote, gx_delay};
+        struct gpb_gx x;
+        gx_reset(); gpb_gx_on(&gio, 1, 1, &x);
+        CHECK(!x.failed && x.step == 6 && x.gx_before == 3 && x.gx_after == 0 && x.gx_later == 0 && x.oob_polls == 1);
+        CHECK(gx_votes == 1 && gx_vote_perf == 1 && gx_vote_bw == 1 && x.rbbm == 0x1048 && x.gfx == 0x1054 &&
+              x.gfx_br == 0x1068 && x.gbif_halt == 0x1028 && gx_delayed == 100000);
+        CHECK(ngx_writes == 4 && x.writes == 4 &&
+              gx_writes[0].off == GPB_GMU_GMU2HOST_INTR_CLR && gx_writes[0].v == ~0u &&
+              gx_writes[1].off == GPB_GMU_GMU2HOST_INTR_MASK && gx_writes[1].v == ~(1u << 23) &&
+              gx_writes[2].off == GPB_GMU_HOST2GMU_INTR_SET && gx_writes[2].v == (1u << 30) &&
+              gx_writes[3].off == GPB_GMU_GMU2HOST_INTR_CLR && gx_writes[3].v == (1u << 31));
+        // A refused vote or a firmware error: no OOB request.
+        gx_reset(); gx_vote_fail = 1; gpb_gx_on(&gio, 1, 1, &x); CHECK(x.failed == 1 && x.step == 3 && ngx_writes == 2);
+        gx_reset(); gx_vote_fail = 2; gpb_gx_on(&gio, 1, 1, &x); CHECK(x.failed == 1 && x.fw_error == 7 && ngx_writes == 2);
+        // No ack within 100 polls: no clear, no RBBM read; GX status still read for the log.
+        gx_reset(); gx_ack = 0; gx_powers = 0; gpb_gx_on(&gio, 1, 1, &x);
+        CHECK(x.failed == 2 && x.oob_polls == GPB_OOB_TRIES && ngx_writes == 3 && x.gx_after == 3 && !x.rbbm &&
+              gx_delayed == 100 * (GPB_OOB_TRIES - 1));
+        // Acked but GX stays off: no RBBM read.
+        gx_reset(); gx_powers = 0; gpb_gx_on(&gio, 1, 1, &x); CHECK(x.failed == 4 && x.step == 5 && !x.rbbm);
+        // A failed read stops it.
+        gx_reset(); gx_fail_read = 0; gpb_gx_on(&gio, 1, 1, &x); CHECK(x.failed == 3 && x.step == 2 && !gx_votes);
+    }
+
+    // Modes 0 and 12+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 15; m += (m == 0 ? 12 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -361,6 +422,6 @@ int main(void) {
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
            "the mode 6 clock snapshot (reads only), the mode 7 clock bring-up (29 writes in Linux order, lock and update timeouts, "
-           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), modes 0 and 11+ refused (9-10 are the probe's cold start)\n");
+           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), modes 0 and 12+ refused (9-10 are the probe's cold start)\n");
     return 0;
 }

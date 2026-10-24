@@ -12,13 +12,14 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 10u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 11u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
                           // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
                           // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset; 8 then reads the GMU
                           // core and RSCC state the cold start checks first (gpb_read_gmu_state), and writes nothing more;
                           // 9 loads the GMU firmware and waits for HFI ready (ShengGmuLoadAndStartHfi) when that state is
-                          // clean; 10 runs the whole cold start with the HFI startup messages (ShengGmuColdStart)
+                          // clean; 10 runs the whole cold start with the HFI startup messages (ShengGmuColdStart); 11
+                          // then asks the GMU for GX (gpb_gx_on) and reads RBBM
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -599,5 +600,81 @@ static inline void gpb_read_gmu_state(const struct gpb_io *io, struct gpb_result
     if (gpb_rd(io, r, GPB_WIN_RSCC, GPB_RSCC_SEQ_BUSY_DRV0, &g->rscc_busy)) {g->io_error = 1; g->gate = 2; return;}
     g->gate = g->v[0] != 1 ? 3 : g->rscc_busy ? 4 : (g->v[1] & 1) ? 5 : (g->v[2] & GPB_GMU_AO_FATAL) ? 6 :
               (g->v[3] & GPB_GMU_CM3_FATAL) ? 7 : 0;
+}
+// Mode 11: GX, after a complete cold start (mode 10). The tail of a6xx_gmu_resume and the head of a8xx hw_init, as uke's
+// mode 8 ran them on its A732, with the gen8 offsets of the pinned a6xx_gmu.xml / a6xx.xml:
+//   1 GMU2HOST_INTR_CLR ~0, then GMU2HOST_INTR_MASK ~CM3_FAULT (A6XX_HFI_IRQ_MASK), as after a6xx_hfi_start
+//   2 GMU_PWR_CLK_STATUS (A8XX 0x1f7e8): GX_HM_GDSC_POWER_OFF bit 0, GX_HM_CLK_OFF bit 1, as a8xx_gmu_gx_is_on reads it
+//   3 the HFI GX_BW_PERF_VOTE (a6xx_hfi_set_freq: id 30, {ack_type 1, freq index, bw index}), at the lowest real level
+//     (ShengGmuPerfVote(1)) where Linux starts at the top one; the vote waits for its acknowledgement
+//   4 a6xx_gmu_set_oob(GMU_OOB_GPU_SET), non-legacy bits: HOST2GMU_INTR_SET bit 30, GMU2HOST_INTR_INFO bit 31 within
+//     100 x 100 us, then GMU2HOST_INTR_CLR bit 31. The request is held (not cleared), so GX stays on.
+//   5 GMU_PWR_CLK_STATUS again; only when GX reports on: RBBM_STATUS, RBBM_GFX_STATUS, RBBM_GFX_BR_STATUS and
+//     RBBM_GBIF_HALT (A8XX 0x12, 0x15, 0x1a, 0x0a) in the GPU block, then GX status once more after 100 ms
+// Writes: only those four GMU registers; nothing in the GPU block.
+#define GPB_GMU_GMU2HOST_INTR_CLR GPB_GMU_REG(0x1f991)
+#define GPB_GMU_GMU2HOST_INTR_MASK GPB_GMU_REG(0x1f993)
+#define GPB_GMU_HOST2GMU_INTR_SET GPB_GMU_REG(0x1f994)
+#define GPB_GMU_PWR_CLK_STATUS GPB_GMU_REG(0x1f7e8)
+#define GPB_GX_OFF_BITS 0x3u                  // GX_HM_GDSC_POWER_OFF | GX_HM_CLK_OFF
+#define GPB_OOB_GPU_SET_REQUEST (1u << 30)
+#define GPB_OOB_GPU_SET_ACK (1u << 31)
+#define GPB_OOB_TRIES 100u
+#define GPB_RBBM_STATUS (0x012u * 4u)
+#define GPB_RBBM_GFX_STATUS (0x015u * 4u)
+#define GPB_RBBM_GFX_BR_STATUS (0x01au * 4u)
+#define GPB_RBBM_GBIF_HALT (0x00au * 4u)
+struct gpb_gx_io {
+    void *cookie;
+    int (*read32)(void *, unsigned window, uint32_t off, uint32_t *out);   // GPB_WIN_GMU or GPB_WIN_GPU
+    int (*write32)(void *, unsigned window, uint32_t off, uint32_t value);
+    // The blocking HFI GX_BW_PERF_VOTE; 0 when acknowledged without a firmware error.
+    int (*perf_vote)(void *, uint32_t perf, uint32_t bw, uint32_t *firmware_error);
+    void (*delay_us)(void *, unsigned);
+};
+struct gpb_gx {
+    unsigned step;          // last step started, 1-5; 6 when all finished
+    unsigned failed;        // 0 ok, 1 vote refused, 2 no OOB ack, 3 I/O, 4 GX still off
+    uint32_t perf, bw, vote_status, fw_error, oob_polls;
+    uint32_t gx_before, gx_after, gx_later, info_after;
+    uint32_t rbbm, gfx, gfx_br, gbif_halt;
+    unsigned writes;
+};
+static inline void gpb_gx_on(const struct gpb_gx_io *io, uint32_t perf, uint32_t bw, struct gpb_gx *x) {
+    __builtin_memset(x, 0, sizeof *x);
+    x->perf = perf; x->bw = bw;
+#define GPB_GX_W(w, off, v) do {++x->writes; if (io->write32(io->cookie, (w), (off), (v))) {x->failed = 3; return;}} while (0)
+#define GPB_GX_R(w, off, p) do {if (io->read32(io->cookie, (w), (off), (p))) {x->failed = 3; return;}} while (0)
+    x->step = 1;
+    GPB_GX_W(GPB_WIN_GMU, GPB_GMU_GMU2HOST_INTR_CLR, ~0u);
+    GPB_GX_W(GPB_WIN_GMU, GPB_GMU_GMU2HOST_INTR_MASK, ~GPB_GMU_CM3_FATAL);
+    x->step = 2;
+    GPB_GX_R(GPB_WIN_GMU, GPB_GMU_PWR_CLK_STATUS, &x->gx_before);
+    x->step = 3;
+    x->vote_status = (uint32_t)io->perf_vote(io->cookie, perf, bw, &x->fw_error);
+    if (x->vote_status || x->fw_error) {x->failed = 1; return;}
+    x->step = 4;
+    GPB_GX_W(GPB_WIN_GMU, GPB_GMU_HOST2GMU_INTR_SET, GPB_OOB_GPU_SET_REQUEST);
+    uint32_t info = 0;
+    for (x->oob_polls = 1;; ++x->oob_polls) {
+        GPB_GX_R(GPB_WIN_GMU, GPB_GMU_GMU2HOST_INTR_INFO, &info);
+        if (info & GPB_OOB_GPU_SET_ACK) break;
+        if (x->oob_polls >= GPB_OOB_TRIES) {x->info_after = info; x->failed = 2; break;}
+        if (io->delay_us) io->delay_us(io->cookie, 100);
+    }
+    if (!x->failed) {x->info_after = info; GPB_GX_W(GPB_WIN_GMU, GPB_GMU_GMU2HOST_INTR_CLR, GPB_OOB_GPU_SET_ACK);}
+    x->step = 5;
+    GPB_GX_R(GPB_WIN_GMU, GPB_GMU_PWR_CLK_STATUS, &x->gx_after);
+    if (x->failed) return;
+    if (x->gx_after & GPB_GX_OFF_BITS) {x->failed = 4; return;}
+    GPB_GX_R(GPB_WIN_GPU, GPB_RBBM_STATUS, &x->rbbm);
+    GPB_GX_R(GPB_WIN_GPU, GPB_RBBM_GFX_STATUS, &x->gfx);
+    GPB_GX_R(GPB_WIN_GPU, GPB_RBBM_GFX_BR_STATUS, &x->gfx_br);
+    GPB_GX_R(GPB_WIN_GPU, GPB_RBBM_GBIF_HALT, &x->gbif_halt);
+    if (io->delay_us) io->delay_us(io->cookie, 100000);
+    GPB_GX_R(GPB_WIN_GMU, GPB_GMU_PWR_CLK_STATUS, &x->gx_later);
+    x->step = 6;
+#undef GPB_GX_W
+#undef GPB_GX_R
 }
 #endif

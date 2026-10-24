@@ -2,7 +2,8 @@
 // asteroids Adreno 810 power observation and CX power-up, modes 1-3, the GMU pool round trip, mode 4, the GMU's SMMU
 // context on that pool, mode 5, the read-only GMU clock and command-DB snapshot, mode 6, the GMU clock bring-up, mode 7,
 // the first GMU and RSCC register reads, mode 8, the GMU firmware load to HFI ready, mode 9, and the whole cold start with
-// the HFI startup messages, mode 10 (sheng-gpu-power=1..10; absent or 0 does nothing). Modes 9-10 hand the device package's
+// the HFI startup messages, mode 10, and the GX request with the first RBBM reads, mode 11 (sheng-gpu-power=1..11;
+// absent or 0 does nothing). Modes 9-10 hand the device package's
 // ShengGmu.c (UniXNU-sheng's, with mainline's gen8 branches) its own uncached maps of the GMU, RSCC, GPU and CX_MISC
 // windows and Normal non-cacheable maps of the five payloads mode 5 placed in the pool; its writes go through its own
 // MMIO adapter (ShengGmuBindMmio), not this file's wr(). The shape of
@@ -290,6 +291,8 @@ constexpr const char *kShengStatus[] = {"ok", "argument", "firmware", "busy", "i
 // startup table from mode 6. Mode 9 stops at HFI ready (ShengGmuLoadAndStartHfi); mode 10 also exchanges the startup
 // messages (ShengGmuColdStart: perf table, bandwidth table, core start, start). Every map and the device stay alive:
 // the GMU keeps using them after this returns. On failure ShengGmu reasserts CM3 reset itself.
+ShengGmuMmio gColdMmio;       // the cold start's windows and device; mode 11 keeps using them
+ShengGmuDevice gColdDevice;
 void gmuColdStart() {
     native_gpu_power_stage = 0x90;
     const gpb_gmu_state &g = native_gpu_gmu_state;
@@ -304,8 +307,8 @@ void gmuColdStart() {
     }
     // GMU, RSCC (mode 8's maps), no PDC on A8xx, the GPU block (GBIF) and CX_MISC, in ShengGmu window order.
     static OSSharedPtr<IOMemoryMap> gpuMap, cxMap, payloadMap[5];
-    static ShengGmuMmio mmio;
-    static ShengGmuDevice device;
+    ShengGmuMmio &mmio = gColdMmio;
+    ShengGmuDevice &device = gColdDevice;
     const unsigned extra[2] = {ShengGmuGpu, ShengGmuCxMisc};
     OSSharedPtr<IOMemoryMap> *extraMap[2] = {&gpuMap, &cxMap};
     for (unsigned i = 0; i < 2; ++i) {
@@ -380,6 +383,54 @@ void gmuColdStart() {
           after[1], after[2], after[3], config.log.cpu[0], config.log.cpu[1], config.log.cpu[2], config.log.cpu[3]);
     native_gpu_power_stage = 0x93;
 }
+extern "C" {
+struct gpb_gx native_gpu_gx;
+}
+// Mode 11's register access goes through the cold start's own MMIO adapter (ShengGmuBindMmio), as uke's mode 8 does.
+unsigned gxWindow(unsigned w) {return w == GPB_WIN_GMU ? ShengGmuCore : ShengGmuGpu;}
+int gxRead(void *, unsigned w, uint32_t off, uint32_t *out) {
+    ShengGmuIo &io = gColdDevice.io;
+    return io.read32(io.cookie, gxWindow(w), off, out);
+}
+int gxWrite(void *, unsigned w, uint32_t off, uint32_t value) {
+    ShengGmuIo &io = gColdDevice.io;
+    if (w != GPB_WIN_GMU) return 1;   // nothing in the GPU block
+    return io.write32(io.cookie, ShengGmuCore, off, value) || io.barrier(io.cookie);
+}
+int hfiWaitOnce(void *) {IODelay(100); return 0;}
+int gxVote(void *, uint32_t perf, uint32_t bw, uint32_t *firmware_error) {
+    const uint32_t vote[3] = {1, perf, bw};   // a6xx_hfi_gx_bw_perf_vote_cmd: ack_type 1 (blocking), freq, bw
+    uint32_t out[16];
+    size_t count = 0;
+    return AdrenoHfiExchange(&gColdDevice.hfi, 30, vote, 3, 1000, hfiWaitOnce, out, 16, &count, firmware_error);
+}
+void gxDelay(void *, unsigned us) {IODelay(us);}
+// Mode 11: only after mode 10 returned success.
+void gpuGx() {
+    native_gpu_power_stage = 0xa0;
+    if (native_gpu_gmu_start_status != ShengGmuSuccess) {
+        IOLog("ASTEROIDS GPU: gx skipped: cold start status %u\n", native_gpu_gmu_start_status);
+        return;
+    }
+    unsigned bw = 0;
+    const unsigned perf = ShengGmuPerfVote(1, &bw);
+    IOLog("ASTEROIDS GPU: gx vote perf %u bw %u (%lluk), then OOB GPU_SET\n", perf, bw,
+          static_cast<unsigned long long>(gStartup.gpu[perf].hz / 1000));
+    native_gpu_power_stage = 0xa1;
+    gpb_gx_io io{nullptr, gxRead, gxWrite, gxVote, gxDelay};
+    gpb_gx &x = native_gpu_gx;
+    gpb_gx_on(&io, perf, bw, &x);
+    native_gpu_power_stage = 0xa2;
+    static const char *const kFail[] = {"ok", "vote", "no-ack", "io", "gx-off"};
+    IOLog("ASTEROIDS GPU: gx %s step=%u vote=%u fw=%08x oob=%u info=%08x gx %08x>%08x later=%08x\n",
+          x.failed < 5 ? kFail[x.failed] : "?", x.step, x.vote_status, x.fw_error, x.oob_polls, x.info_after, x.gx_before,
+          x.gx_after, x.gx_later);
+    uint32_t gdscr = 0;
+    if (gVa[GPB_WIN_GPUCC]) gdscr = *reinterpret_cast<volatile uint32_t *>(gVa[GPB_WIN_GPUCC] + GPB_CC_GX_GDSCR);
+    IOLog("ASTEROIDS GPU: gx rbbm=%08x gfx=%08x br=%08x gbif_halt=%08x gx_gdscr=%08x writes=%u\n", x.rbbm, x.gfx, x.gfx_br,
+          x.gbif_halt, gdscr, x.writes);
+    native_gpu_power_stage = x.failed ? 0xaf : 0xa7;
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -444,6 +495,7 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 7) gmuClocksOn(r);
     if (gMode >= 8) gmuState(r);
     if (gMode >= 9) gmuColdStart();
+    if (gMode >= 11) gpuGx();
     native_gpu_power_stage = 4;
 }
 }
