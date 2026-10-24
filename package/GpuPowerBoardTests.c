@@ -103,6 +103,15 @@ int main(void) {
     CHECK(r.cx_tries == 4 && r.powered_cx && r.powered_clocks && gpb_gdsc_on(r.cx_hwctrl_after));
     CHECK(r.smmu == GPB_DONE && r.id0 == 0x00290406 && r.gpu == GPB_SKIPPED_PREREQ && !r.io_error);
     CHECK(delayed >= 1 + 3 + 2 + GPB_BRANCH_HALT_DELAY_US);   // 1 us before polling, 1 us per poll, 2 us after, halt delay
+    // The exact value T2 read on the phone, 0x0022f801: RETAIN_FF (bit 11) is already set, so there are two GDSC writes, no third.
+    reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = 0x0022f801;
+    mem[GPB_WIN_GPUCC][GPB_CC_CX_GDS_HW_CTRL / 4] = 0x2800010a; mem[GPB_WIN_GPUCC][GPB_CC_SMMU_VOTE_CLK / 4] = 0x80000000;
+    cx_on_after = 0;
+    gpb_run(&io, 3, all, &r);
+    CHECK(r.cx_before == 0x0022f801 && r.cx_init == 0x00228801 && r.cx_after == 0x00228800);
+    CHECK(nwrites == 4 && writes[0].value == 0x00228801 && writes[1].value == 0x00228800);
+    CHECK(writes[2].offset == GPB_CC_AHB_CLK && writes[3].offset == GPB_CC_SMMU_VOTE_CLK);
+    CHECK(r.powered_cx && r.powered_clocks && r.smmu == GPB_DONE);
     // Under hardware control: refused, nothing written.
     reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = 0x0022f003;
     gpb_run(&io, 3, all, &r);
@@ -136,7 +145,7 @@ int main(void) {
     reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; gpb_run(&io, 1, all & ~(1u << GPB_WIN_GPUCC), &r);
     CHECK(r.cc == GPB_NOMAP && r.smmu == GPB_SKIPPED_PREREQ && !reads_in(GPB_WIN_GPUCC));
     printf("PASS: asteroids GPU power modes 1-3: exact reads per mode, mode 1 never writes, mode 2 only the cfg_ahb enable, "
-           "mode 3 the downstream CX GDSC sequence (0x0022f001 -> 0x00228001 -> 0x00228000 -> 0x00228800) and the two SMMU "
+           "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, modes 0 and 4+ refused\n");
     return 0;
 }
