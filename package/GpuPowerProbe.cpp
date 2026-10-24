@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// asteroids Adreno 810 power observation and CX power-up, modes 1-3, and the GMU pool round trip, mode 4
-// (sheng-gpu-power=1..4; absent or 0 does nothing). The shape of
+// asteroids Adreno 810 power observation and CX power-up, modes 1-3, the GMU pool round trip, mode 4, and the GMU's SMMU
+// context on that pool, mode 5 (sheng-gpu-power=1..5; absent or 0 does nothing). The shape of
 // UniXNU-sheng's and Allenwdk/UniXNU-uke's GpuPowerProbe.cpp (BSD-2-Clause-Patent) without their GMU, ring and Metal stages:
 // a kernel thread waits for the console, maps the five windows uncached, runs GpuPowerBoard.h's gated sequence and logs it.
 // Every block is announced in the log before its first access, so a read that hangs the bus leaves its name as the last line.
 // Writes are allowed only to gcc_gpu_cfg_ahb_clk (mode 2 and up) and to the CX GDSCR, gpu_cc_ahb_clk and
-// gpu_cc_hlos1_vote_gpu_smmu_clk (mode 3); anything else is refused here as well.
+// gpu_cc_hlos1_vote_gpu_smmu_clk (mode 3); anything else is refused here as well. Mode 5 hands NativeAdreno's
+// NativeAdrenoGmuContextBringup (uke's mode 4) its own uncached map of the whole SMMU window, and only when
+// gpb_gmu_context_gate passes; the GMU itself stays in reset, so no transaction uses the context yet.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
@@ -15,9 +17,12 @@
 extern "C" {
 #include "GpuPowerBoard.h"
 }
+#include "NativeAdrenoGmuContext.h"
 
 extern "C" {
 struct gpb_result native_gpu_power_result;
+struct gpb_pool_result native_gpu_pool_result;
+struct NativeAdrenoGmuContextReport native_gpu_gmu_context;
 volatile uint32_t native_gpu_power_stage;
 }
 
@@ -48,6 +53,51 @@ void stage(void *, unsigned w) {
     native_gpu_power_stage = 0x10 + w;
     if (w == GPB_WINDOWS) {IOLog("ASTEROIDS GPU: powering the CX GDSC (GPUCC 0x9080)\n"); return;}
     IOLog("ASTEROIDS GPU: reading %s (0x%llx)\n", w < GPB_WINDOWS ? kName[w] : "?", w < GPB_WINDOWS ? kPhys[w] : 0ULL);
+}
+constexpr const char *kGmuStep[] = {"-", "allocate", "prepare", "program", "attach", "vm attach", "map", "ready"};
+void gmuProgress(uint32_t step) {
+    // Before each step, so a hang or abort leaves the step as the last line.
+    native_gpu_power_stage = 0x50 + step;
+    IOLog("ASTEROIDS GPU: gmuctx step %u %s\n", step, step < 8 ? kGmuStep[step] : "?");
+}
+void gmuContext(const gpb_result &r) {
+    const unsigned gate = gpb_gmu_context_gate(&r, &native_gpu_pool_result);
+    if (gate) {IOLog("ASTEROIDS GPU: gmuctx skipped: %s (%u)\n", gpb_gmu_gate_text(gate), gate); return;}
+    IOLog("ASTEROIDS GPU: gmuctx bank %u asid %u slot %u sid %u, mapping the SMMU 0x%llx + 0x%llx\n", GPB_GMU_BANK,
+          GPB_GMU_ASID, GPB_GMU_SLOT, GPB_GMU_SID, GPB_SMMU_BASE, GPB_SMMU_WINDOW);
+    native_gpu_power_stage = 0x50;
+    IODeviceMemory *memory = IODeviceMemory::withRange(GPB_SMMU_BASE, GPB_SMMU_WINDOW);
+    static OSSharedPtr<IOMemoryMap> smmu;   // the context bank points at tables in the pool for the rest of the boot
+    if (memory) {
+        smmu = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
+        memory->release();
+    }
+    if (!smmu) {IOLog("ASTEROIDS GPU: gmuctx SMMU map failed\n"); return;}
+    volatile uint8_t *va = reinterpret_cast<volatile uint8_t *>(smmu->getVirtualAddress());
+    NativeAdrenoGmuContextReport &g = native_gpu_gmu_context;
+    const IOReturn status = NativeAdrenoGmuContextBringup(va, GPB_SMMU_WINDOW, GPB_GMU_BANK, GPB_GMU_ASID, GPB_GMU_SLOT,
+                                                          GPB_GMU_SID, gmuProgress, &g);
+    // s<step> st<IOReturn> k<kit program status>/<attach status> p<phase>w<writes>r<readback>e<enabled> r<phase>w<writes>v<verified>
+    IOLog("ASTEROIDS GPU: gmuctx s%u %s st=%x k%u/%u id2=%x oas=%u p%uw%ur%ue%u r%uw%uv%u spans=%u mismatch=%03x\n", g.step,
+          g.step < 8 ? kGmuStep[g.step] : "?", static_cast<unsigned>(status), g.program_status, g.route_status, g.id2,
+          g.output_bits, g.program_phase, g.program_writes, g.program_readback_valid, g.program_enabled, g.route_phase,
+          g.route_writes, g.routes_verified, g.spans, g.mismatch);
+    IOLog("ASTEROIDS GPU: gmuctx ttbr0=%016llx sctlr=%08x cbar=%08x smr=%08x s2cr=%08x\n",
+          static_cast<unsigned long long>(g.ttbr0), g.sctlr, g.cbar, g.smr, g.s2cr);
+    if (g.mismatch) {
+        const ArmSmmu4KContextImage &v = g.image;
+        IOLog("ASTEROIDS GPU: gmuctx readback cbar=%08x cba2r=%08x tcr=%08x tcr2=%08x mair=%08x/%08x ttbr1=%016llx sctlr=%08x\n",
+              v.cbar, v.cba2r, v.tcr, v.tcr2, v.mair0, v.mair1, static_cast<unsigned long long>(v.ttbr1), v.sctlr);
+    }
+    // Fault status after the bring-up: global (sGFSR) and the GMU bank's FSR. Both should stay 0 with the GMU halted.
+    const uint32_t gfsr = *reinterpret_cast<volatile uint32_t *>(va + GPB_SMMU_GFSR);
+    const uint32_t fsr = *reinterpret_cast<volatile uint32_t *>(va + gpb_smmu_cb_offset(r.id1, GPB_GMU_BANK) + GPB_SMMU_CB_FSR);
+    IOLog("ASTEROIDS GPU: gmuctx after gfsr=%08x fsr=%08x\n", gfsr, fsr);
+    NativeAdrenoGmuPayload payloads[5];
+    if (NativeAdrenoGmuContextPayloads(payloads) == kIOReturnSuccess)
+        IOLog("ASTEROIDS GPU: gmuctx icache %llx+%llx@%llx hfi %llx+%llx@%llx (pool 0x%llx)\n", payloads[0].physical,
+              payloads[0].bytes, payloads[0].iova, payloads[4].physical, payloads[4].bytes, payloads[4].iova, GPB_GMU_POOL_BASE);
+    native_gpu_power_stage = status ? 0x5f : 0x57;
 }
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
@@ -98,14 +148,17 @@ void probeThread(void *, wait_result_t) {
         else {
             IOLog("ASTEROIDS GPU: pool mapped, writing\n");
             native_gpu_power_stage = 0x41;
-            gpb_pool_result p{};
+            gpb_pool_result &p = native_gpu_pool_result;
             gpb_pool_test(reinterpret_cast<volatile uint64_t *>(pool->getVirtualAddress()), GPB_GMU_POOL_BYTES, &p);
             __asm__ volatile("dsb sy" ::: "memory");
             IOLog("ASTEROIDS GPU: pool words=%llu pattern_bad=%llu zero_bad=%llu first_bad=%llx\n", p.words, p.pattern_bad,
                   p.zero_bad, p.first_bad);
             native_gpu_power_stage = 0x42;
         }
+        // The context adopts the same pages with a mapping of its own; this one goes first.
+        pool.reset();
     }
+    if (gMode >= 5) gmuContext(r);
     native_gpu_power_stage = 4;
 }
 }

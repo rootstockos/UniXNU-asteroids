@@ -211,7 +211,8 @@ kernel_args = [
   "offline-key-events=1",
   # GPU power observation (package/GpuPowerProbe.cpp), one stage per test boot: 1 reads the GCC GPU branches, then GPUCC,
   # SMMU and RBBM only where the previous block shows its clock or power on, and logs each block before touching it
-  # ("ASTEROIDS GPU: ..."). 2 adds the one write Linux makes (gcc_gpu_cfg_ahb_clk). Remove the line to turn it off.
+  # ("ASTEROIDS GPU: ..."). 2 adds the one write Linux makes (gcc_gpu_cfg_ahb_clk), 3 powers CX and the SMMU clocks, 4 tests
+  # the GMU pool, 5 builds the GMU's SMMU context on it (NativeAdrenoGmuContextBringup). Remove the line to turn it off.
   "sheng-gpu-power=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes

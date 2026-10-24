@@ -217,7 +217,29 @@ hid_cmd=[str(hid_source) if str(arg)==str(source) else str(hid_obj) if str(arg)=
 run(hid_cmd,cwd=r['directory'])
 gpupower_source=ROOT/'kits/asteroids/GpuPowerProbe.cpp'
 gpupower_obj=OUT/'GpuPowerProbe.o'
-run([str(gpupower_source) if str(arg)==str(source) else str(gpupower_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+# asteroids: GPU power mode 5 builds the GMU's SMMU context with NativeAdreno's NativeAdrenoGmuContextBringup (uke's mode 4),
+# so the probe links that class and what it needs: the memory, VM and SMMU-context classes, NativeAdrenoCpu.cpp's cache and
+# CPU queries, and UniXNU's ArmSmmu4K kit (as uke's build-native-adreno-kits.py takes them). The rest of NativeAdreno (its
+# service, GMU cold start, ring) stays out until a later stage; CONFIG_XNU_NATIVE_ADRENO stays off. The GMU pool comes
+# from board.toml [gpu] and must match the probe's GpuPowerBoard.h, so the context adopts the pages mode 4 tested.
+import re,tomllib
+gpu=tomllib.loads((ROOT/'kits/asteroids/../board.toml').resolve().read_text())['gpu']
+pool_base,pool_bytes=int(gpu['gmu_pool_base'],0),int(gpu['gmu_pool_bytes'],0)
+board_h=(ROOT/'kits/asteroids/GpuPowerBoard.h').read_text()
+require(int(re.search(r'#define GPB_GMU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_base and
+        int(re.search(r'#define GPB_GMU_POOL_BYTES (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_bytes,
+        'board.toml [gpu] gmu_pool_* and GpuPowerBoard.h GPB_GMU_POOL_* differ')
+adreno=ROOT/'drivers/NativeAdreno';smmu4k=ROOT/'kits/ArmSmmu4K'
+adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-Wno-incompatible-sysroot',
+              '-DSHENG_GMU_POOL_BASE=UINT64_C(%#x)'%pool_base,'-DSHENG_GMU_POOL_BYTES=%#xu'%pool_bytes]
+def kernel_cxx(src,obj,extra):
+    return [str(src) if str(arg)==str(source) else str(obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+extra
+run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags),cwd=r['directory'])
+gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuMemory','NativeAdrenoVm','NativeAdrenoGmuMemory',
+                                          'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu')]
+gmu_objs=[]
+for src in gmu_sources:
+    gmu_objs.append(OUT/(src.stem+'.o'));run(kernel_cxx(src,gmu_objs[-1],adreno_flags),cwd=r['directory'])
 touch_state_source=ROOT/'kits/asteroids/TouchState.cpp'
 touch_state_obj=OUT/'TouchState.o'
 run([str(touch_state_source) if str(arg)==str(source) else str(touch_state_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
@@ -241,6 +263,11 @@ while j<len(pa):
 process_cmd+=['-Wall','-Wextra','-Werror','-mgeneral-regs-only','-I',str(ROOT/'.cache/xnu-work/osfmk')]
 # asteroids: BootProcessProbe and BootUiTraceProbe (uke's boot diagnostics) are not built; process_cmd only serves as
 # the kernel C compile template for the stubs below.
+smmu_sources=sorted(smmu4k.glob('ArmSmmu4K*.c'))
+for src in smmu_sources:
+    gmu_objs.append(OUT/(src.stem+'.kit.o'))
+    run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
+        ['-I',str(smmu4k)],cwd=pr['directory'])
 stub_source=ROOT/'kits/asteroids/LegacyDisplayStubs.c'
 stub_obj=OUT/'LegacyDisplayStubs.o'
 run([str(stub_source) if arg==str(process_source) else str(stub_obj) if arg==str(process_obj) else arg for arg in process_cmd],cwd=pr['directory'])
@@ -258,12 +285,13 @@ run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
 require(code((keyevents/'NativeKeyStoreEvents.o').read_bytes(),macho((keyevents/'NativeKeyStoreEvents.o').read_bytes()))==
         code(keyevents_late.read_bytes(),macho(keyevents_late.read_bytes())),'Owned event-service instructions unchanged by late init staging')
 run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,keystore_obj,
-     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj,gpupower_obj])
+     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj,gpupower_obj,*gmu_objs])
 sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',source,hid_source,keystore_source,
          ROOT/'drivers/NativeHidInput/NativeHidInput.cpp',ROOT/'scripts/build-native-hid-input.py',
          ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,gpupower_source,
-         ROOT/'kits/asteroids/GpuPowerBoard.h']
+         ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
+         *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()]]
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeGOPPresenter'],text=True),end='')
 gop=ROOT/'build/native-gop-presenter';gop_late=gop/'NativeGOPPresenter.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp',

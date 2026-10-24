@@ -12,7 +12,8 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 4u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access)
+#define GPB_MAX_MODE 5u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+                          // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup)
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -24,6 +25,7 @@
 #define GPB_GPUCC_SIZE 0x9800ULL
 #define GPB_SMMU_BASE 0x03da0000ULL
 #define GPB_SMMU_GR0_SIZE 0x1000ULL       // global space 0 only
+#define GPB_SMMU_WINDOW 0x40000ULL        // the whole kgsl-smmu@3da0000 reg (mode 5): ID1 gives 2 x 32 pages of 4 KiB
 #define GPB_GPU_BASE 0x03d00000ULL
 #define GPB_GPU_WINDOW 0x1000ULL          // one page holds RBBM_STATUS
 
@@ -92,6 +94,23 @@
 #define GPB_SMMU_S2CR(n) (0xc00 + 4 * (n))
 #define GPB_SMMU_SMR_VALID (1u << 31)
 #define GPB_SMMU_MAX_SMR 32u
+
+// Mode 5: the GMU's own SMMU context, as uke's mode 4 builds it (NativeAdreno NativeAdrenoGmuContextBringup). The stream is the
+// live DT's qcom,gmu@3d37000 iommus = <&kgsl_smmu 0x5 0x0> (SID 5, mask 0). Bank 1, ASID 1 and SMR/S2CR slot 2 are uke's
+// choice (Linux gives bank 0 to the GPU and takes the first free SMR); T5b read all 24 SMRs invalid with S2CR 0x00020000
+// (FAULT). The kit writes only that bank's registers, its CBAR/CBA2R in global space 1 and the one SMR/S2CR pair; never sCR0.
+#define GPB_GMU_BANK 1u
+#define GPB_GMU_ASID 1u
+#define GPB_GMU_SLOT 2u
+#define GPB_GMU_SID 5u
+#define GPB_SMMU_S2CR_FAULT 0x00020000u   // S2CR TYPE 2 (fault), as T5b read every entry
+// Context bank n's page: after the global half, 2^(NUMPAGENDXB + 1) pages of 1 << (12 + 4 * PAGESIZE) bytes (ID1 bits 28-30
+// and 31). The phone's ID1 0x40000016 gives 32 pages of 4 KiB, so bank 1 is at 0x21000. FSR is +0x58 in the bank.
+static inline uint32_t gpb_smmu_cb_offset(uint32_t id1, unsigned bank) {
+    const uint32_t page = (id1 & (1u << 31)) ? 0x10000u : 0x1000u;
+    return page * ((2u << ((id1 >> 28) & 7)) + bank);
+}
+#define GPB_SMMU_CB_FSR 0x58
 
 // a6xx.xml (torvalds/linux 734bef548a96): RBBM_STATUS is dword 0x012 for A8XX- (0x210 is the A6XX-A7XX offset); NativeAdreno's
 // generated NativeAdrenoA810HwInit.h has the same A810_RBBM_STATUS. Byte offset = dword * 4.
@@ -275,5 +294,24 @@ static inline void gpb_run(const struct gpb_io *io, unsigned mode, unsigned have
         gpb_rd(io, r, GPB_WIN_GPU, GPB_RBBM_STATUS_BYTES, &r->rbbm_status);
         r->gpu = GPB_DONE;
     }
+}
+// Mode 5's gate. 0 when the GMU context may be built: the SMMU survey ran with no I/O error, CX was on, the vote clock ran, no
+// SMR was valid, the chosen slot read invalid with S2CR FAULT, the ID1 bank layout fits the window, and the pool round trip
+// (mode 4) was clean. Otherwise the first failed condition, 1-7, in that order, and the probe writes nothing more.
+static inline unsigned gpb_gmu_context_gate(const struct gpb_result *r, const struct gpb_pool_result *p) {
+    const int cx_on = gpb_gdsc_on(r->cx_gdscr) || gpb_gdsc_on(r->cx_hwctrl);
+    if (r->smmu != GPB_DONE || r->io_error) return 1;
+    if (!cx_on || !gpb_clock_on(r->cc_smmu)) return 2;
+    if (r->smr_valid) return 3;
+    if (r->num_smr <= GPB_GMU_SLOT || r->smr[GPB_GMU_SLOT] || r->s2cr[GPB_GMU_SLOT] != GPB_SMMU_S2CR_FAULT) return 4;
+    if (gpb_smmu_cb_offset(r->id1, GPB_GMU_BANK) + 0x1000u > GPB_SMMU_WINDOW || (r->id1 & 0xff) <= GPB_GMU_BANK) return 5;
+    if (!p || p->words != GPB_GMU_POOL_BYTES / 8) return 6;
+    if (p->pattern_bad || p->zero_bad) return 7;
+    return 0;
+}
+static inline const char *gpb_gmu_gate_text(unsigned gate) {
+    static const char *const text[] = {"ok", "smmu not read", "cx or vote clock off", "an smr is valid", "slot 2 not free",
+                                       "bank 1 outside the window", "pool not tested", "pool round trip failed"};
+    return gate < sizeof text / sizeof *text ? text[gate] : "?";
 }
 #endif

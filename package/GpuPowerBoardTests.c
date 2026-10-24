@@ -157,8 +157,36 @@ int main(void) {
         CHECK(GPB_GMU_POOL_BASE == 0xE6440000ULL && GPB_GMU_POOL_BYTES == 0x02000000ULL && !(GPB_GMU_POOL_BASE & 0xfff));
     }
 
-    // Modes 0 and 5+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 8; m += (m == 0 ? 5 : 1)) {
+    // Mode 5's gate, from the T5b survey (24 SMRs invalid, S2CR FAULT) and a clean pool round trip.
+    {
+        CHECK(gpb_smmu_cb_offset(0x40000016, 1) == 0x21000 && gpb_smmu_cb_offset(0x40000016, 0) == 0x20000);
+        CHECK(gpb_smmu_cb_offset(0xc0000016, 1) == 0x210000);   // 64 KiB pages
+        struct gpb_result g;
+        __builtin_memset(&g, 0, sizeof g);
+        g.smmu = GPB_DONE; g.cx_gdscr = 0xf8228800; g.cc_smmu = 0x00000001; g.id1 = 0x40000016; g.num_smr = 24;
+        for (unsigned i = 0; i < 24; ++i) g.s2cr[i] = 0x00020000;
+        struct gpb_pool_result p = {GPB_GMU_POOL_BYTES / 8, 0, 0, ~0ULL};
+        CHECK(gpb_gmu_context_gate(&g, &p) == 0 && !__builtin_strcmp(gpb_gmu_gate_text(0), "ok"));
+        struct gpb_result b = g; b.io_error = 1; CHECK(gpb_gmu_context_gate(&b, &p) == 1);
+        b = g; b.smmu = GPB_SKIPPED_PREREQ; CHECK(gpb_gmu_context_gate(&b, &p) == 1);
+        b = g; b.cx_gdscr = 0x0022f801; CHECK(gpb_gmu_context_gate(&b, &p) == 2);
+        b = g; b.cx_gdscr = 0x0022f801; b.cx_hwctrl = 0x80000202; CHECK(gpb_gmu_context_gate(&b, &p) == 0);
+        b = g; b.cc_smmu = 0x80000000; CHECK(gpb_gmu_context_gate(&b, &p) == 2);
+        b = g; b.smr_valid = 1; CHECK(gpb_gmu_context_gate(&b, &p) == 3);
+        b = g; b.smr[2] = 0x5; CHECK(gpb_gmu_context_gate(&b, &p) == 4);
+        b = g; b.s2cr[2] = 0x00010000; CHECK(gpb_gmu_context_gate(&b, &p) == 4);
+        b = g; b.num_smr = 2; CHECK(gpb_gmu_context_gate(&b, &p) == 4);
+        b = g; b.id1 = 0x40000001; CHECK(gpb_gmu_context_gate(&b, &p) == 5);   // one context bank only
+        b = g; b.id1 = 0xc0000016; CHECK(gpb_gmu_context_gate(&b, &p) == 5);   // 64 KiB pages: bank 1 outside 0x40000
+        CHECK(gpb_gmu_context_gate(&g, 0) == 6);
+        struct gpb_pool_result q = p; q.words = 4096; CHECK(gpb_gmu_context_gate(&g, &q) == 6);
+        q = p; q.zero_bad = 1; CHECK(gpb_gmu_context_gate(&g, &q) == 7);
+        q = p; q.pattern_bad = 3; CHECK(gpb_gmu_context_gate(&g, &q) == 7);
+        CHECK(GPB_GMU_BANK == 1 && GPB_GMU_ASID == 1 && GPB_GMU_SLOT == 2 && GPB_GMU_SID == 5 && GPB_SMMU_WINDOW == 0x40000);
+    }
+
+    // Modes 0 and 6+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 9; m += (m == 0 ? 6 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -171,6 +199,7 @@ int main(void) {
     CHECK(r.cc == GPB_NOMAP && r.smmu == GPB_SKIPPED_PREREQ && !reads_in(GPB_WIN_GPUCC));
     printf("PASS: asteroids GPU power modes 1-3: exact reads per mode, mode 1 never writes, mode 2 only the cfg_ahb enable, "
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
-           "clocks, refusal under HW control, poll timeout, gating, window bounds, modes 0 and 4+ refused\n");
+           "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
+           "modes 0 and 6+ refused\n");
     return 0;
 }
