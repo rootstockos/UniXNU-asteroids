@@ -246,8 +246,12 @@ ipad_identity = true                   # the userland is iPadOS (iPad7,1), as on
 # boot-set identity, not Apple data: uke's value (SHA-384 of "UkeBringup.BootSet.v1\0"), kept for parity with the port
 # that boots past this point.
 boot_manifest_hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
-# Dropped: owned_memory_size (sheng's 4.75 GiB is for userland; without it DarwinBoot takes its default 256 MiB window,
-# enough for the kernel and prelinked kexts: uke reached the XNU entry with 0x10000000). See the open questions.
+# The XNU VM is DarwinBoot's owned_memory_size window (boot_args memSize), not dram_size. Its 256 MiB default is enough
+# for the kernel but not for iPadOS userland: uke (2026-10-23) found the desktop dying in jetsam after a few minutes
+# with it. DarwinBoot places the window in UEFI conventional memory below 4 GiB (the firmware MMU map); the largest
+# such run in the 3a's map is DXE_Heap, 0xB8000000 + 0x1BA00000 (442 MiB), less what DXE takes from it. 384 MiB first;
+# DarwinBoot refuses a window it cannot place, visibly, before the hand-over, and then 320 MiB (uke's value) is next.
+owned_memory_size = "0x18000000"
 # Dropped: root_match_volume_uuid (no root this boot; without it XNU waits for a root device, which is an acceptable end).
 # Dropped: chip_id together with unique_chip_id = "required". They seed IOPlatformUUID, which only userland (configd)
 # waits for, and the tool refuses one without the other.
@@ -259,9 +263,8 @@ boot_manifest_hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5
 # 1. dram_size: the size of the contiguous DRAM run that starts at 0x80000000, from the UEFI memory map or the SMEM RAM
 #    partition table (sheng's 0x80000000 is its own first bank). Never the 12 GB total: the Qualcomm map has holes and
 #    carve-outs above the first bank.
-# 2. owned_memory_size: left at DarwinBoot's 256 MiB default. If the kernel runs out of memory before the platform expert,
-#    request more (2 MiB-aligned, at most the largest free run in the UEFI memory map; DarwinBoot refuses a window it
-#    cannot place, visibly, before the hand-over).
+# 2. owned_memory_size: 384 MiB, to be confirmed on the phone (see [payload.adt]). Above about 440 MiB needs the high
+#    DRAM range in the UEFI firmware's memory map.
 # 3. boot-progress: wanted, but its kit is sheng's package (kits/sheng/BootProgress.c and headers) and XNU_BOOT_PROGRESS
 #    requires XNU_NATIVE_UFS, XNU_OWNER_ROOT_AUDIT, XNU_NATIVE_VIRTIO_BLOCK and the supplied verified-root archive. Porting
 #    it (as fajita did, with weak stubs for the sheng-only symbols) is a separate step; until then -v plus panic_screen

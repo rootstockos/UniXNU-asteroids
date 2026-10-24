@@ -224,6 +224,14 @@ extern "C" unsigned native_legacy_prepare_report(char *out,unsigned cap) {
     return snprintf(out,cap,"prepare calls=%u failures=%u retried=%u max_attempts=%u waited_ms=%llu",native_legacy_prepare_calls,native_legacy_prepare_failures,
         native_legacy_prepare_retried,native_legacy_prepare_max_attempts,(unsigned long long)(native_legacy_prepare_wait_us/1000));
 }
+// UniXNU NativeMobileDisplay's display-refresh tick (sheng-vsync=<Hz>), from UniXNU-sheng's probe: 0 armed, 1 sent,
+// 2 idle (no client), 3 late, 4 started, 5 refresh properties reported.
+static volatile uint64_t vsyncEvents[6];
+static volatile unsigned vsyncHz;
+void native_legacy_vsync_observed(unsigned event,unsigned hz) {
+    if(event<6)vsyncEvents[event]=vsyncEvents[event]+1;
+    vsyncHz=hz;
+}
 void native_legacy_swap_validation_observed(bool accepted,unsigned reason,const void *request,const void *surface) {
     if(native_legacy_swap_validation_calls<8)
         printf("UKE: swap %u accepted=%u reason=%u surface=%p\n",

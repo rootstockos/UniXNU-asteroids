@@ -45,8 +45,10 @@ public:
  }
  // The real normal scanout backend removes its pending head before calling
  // slot 295. Slot 312 is a discard path (terminal state 8), not presentation.
- // Limit this offline adapter to the observed single-entry queue and retain
- // exactly the original queue's reference for the original completion body.
+ // The queue is a tail queue (head at +5480, tail pointer at +5488, each request's next at +2960 and previous-link at +2968): taking the head
+ // moves the next request, if a client already queued one behind it (int-132: swap 3 arrived during swap 2's GPU copy and the old
+ // single-entry form refused to retire swap 2, so every wait on it stayed busy), up to the head. The original queue's reference
+ // moves to the current-swap slot for the original completion body.
  bool activateOnlyPendingSwap(const OriginalLegacySwapRequest *request) {
   auto self=reinterpret_cast<unsigned char *>(this);
   auto bytes=reinterpret_cast<const unsigned char *>(request);
@@ -54,10 +56,15 @@ public:
   memcpy(&current,self+5472,8);memcpy(&head,self+5480,8);memcpy(&tail,self+5488,8);
   if(!request || current || head!=request)return false;
   memcpy(&next,bytes+2960,8);memcpy(&previous,bytes+2968,8);
-  if(next || previous!=self+5480 || tail!=bytes+2960)return false;
+  if(previous!=self+5480)return false;
+  if(next) {
+   const void *link=self+5480;
+   memcpy(const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(next))+2968,&link,8);
+  } else if(tail!=bytes+2960)return false;
   memcpy(self+5472,&request,8);
-  const void *empty=nullptr,*emptyTail=self+5480;
-  memcpy(self+5480,&empty,8);memcpy(self+5488,&emptyTail,8);return true;
+  if(next) {memcpy(self+5480,&next,8);}
+  else {const void *empty=nullptr,*emptyTail=self+5480;memcpy(self+5480,&empty,8);memcpy(self+5488,&emptyTail,8);}
+  return true;
  }
  void free() override;
  bool init(OSDictionary *properties=nullptr) override;
@@ -75,6 +82,7 @@ for i in range(168,358):
     elif i==188:header+=' virtual IOReturn getDotPitch(uint32_t *);\n'
     elif i==213:header+=' virtual IOReturn supportedFrameInfo(uint32_t,uint32_t *,char *,uint32_t *)=0;\n'
     elif i==242:header+=' virtual IOReturn copyDefaultSurfacePortName(task_t,uint32_t *);\n'
+    elif i==301:header+=' virtual bool getRefreshAttributes(uint64_t *,bool);\n'
     elif i==249:header+=' virtual void getDisplayDimensions(uint32_t *,uint32_t *);\n'
     elif i==290:header+=' virtual void kickSwapQueue();\n'
     elif i==296:header+=' virtual bool validateSwap(const OriginalLegacySwapRequest *);\n'
@@ -117,12 +125,12 @@ owned=[];native=[]
 for i,name in enumerate(compiled):
     expected=int(methods[i]['address'],16)
     if name.startswith(('__ZN19NativeLegacyDisplay','__ZNK19NativeLegacyDisplay')):
-        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,242,288,290,296) or i in pure,'Only qualified own methods and guarded leaves override')
+        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,242,288,290,296,301) or i in pure,'Only qualified own methods and guarded leaves override')
     elif '25IOMobileFramebufferLegacy' in name:
         require(i not in pure,'No unresolved original abstract backend target');bindings[name]=expected
     else:
         require(i<168 and names.get(name)==expected,'Actual inherited native base symbol '+str(i));native.append(i)
-require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,242,288,290,296]+pure),'Exact owned method set')
+require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,242,288,290,296,301]+pure),'Exact owned method set')
 undefined={n for n,_,k in symbols if k==1 and 'IOMobileFramebufferLegacy' in n}
 require(undefined==set(bindings),'All and only actual original-class imports qualified')
 # The default-surface port fallback calls the original slot242 and the original
@@ -130,6 +138,28 @@ require(undefined==set(bindings),'All and only actual original-class imports qua
 # their exact addresses after the class-import assertion.
 bindings['_uke_original_default_surface_port']=0xfffffff00578b390
 bindings['_uke_surface_copy_port_name']=0xfffffff004baa90c
+# From UniXNU-sheng's builder, for UniXNU NativeMobileDisplay's vsync tick and refresh properties (same 21H461 kernelcache).
+# The original display-refresh notification sender (self, timestamp, continuous host time, frame interval): it sends the six-word
+# vsync message (type 5) to every client entry queued at +5592, the tail queue that selector 72's registration (slot 208) fills at
+# +5512 + type*16. The platform subclass that normally calls it on each panel vblank is not part of this port.
+require(read(0xfffffff005796720,16)==bytes.fromhex('ff0302d1fd7b07a9fdc30191a0831ff8') and
+        read(0xfffffff005796830,4)==bytes.fromhex('08ed4af9') and
+        read(0xfffffff00579685c,16)==bytes.fromhex('e2230091c3008052240080521684ff97') and
+        read(0xfffffff005795fbc,4)==bytes.fromhex('0ab182d2'),
+        'Original vsync sender, its +5592 queue and six-word drop-allowed async send')
+bindings['_native_legacy_vsync_notify']=0xfffffff005796720
+# Slot 301 fills the six refresh words that setDisplayRefreshProperties publishes as IOMFBDisplayRefresh (minimum interval, its mach
+# time, maximum interval, its mach time, step, its mach time; intervals in 32.32 seconds): the generic body fixes the minimum at
+# 0x04444444 (1/60 s), and the render server paces its display timer by it.
+require(int(methods[301]['address'],16)==0xfffffff00579ea5c and read(0xfffffff00579ea68,8)==bytes.fromhex('888888d28888a0f2') and
+        read(0xfffffff00579ec54,4)==bytes.fromhex('08b544f9'),
+        'Original slot-301 refresh words with the 1/60 s minimum, called by setDisplayRefreshProperties')
+# setDisplayRefreshProperties itself (self): fills the six words through slot 301 and publishes them as IOMFBDisplayRefresh. Nothing in
+# the family calls it (the platform subclass does), so without it the render server falls back to its own 1/60 s heartbeat.
+require(read(0xfffffff00579ebb8,16)==bytes.fromhex('ff0302d1fd7b07a9fdc30191a0031ff8') and
+        read(0xfffffff00579ed54,16)==bytes.fromhex('086540f90173ff90218c0c9100013fd6'),
+        'Original setDisplayRefreshProperties publishing IOMFBDisplayRefresh through setProperty')
+bindings['_native_legacy_set_refresh_properties']=0xfffffff00579ebb8
 # Exact original IOSurface getters, independently observed through the real
 # original swap request. These aliases call original code; no object layout
 # is substituted and no original method/vtable is patched.

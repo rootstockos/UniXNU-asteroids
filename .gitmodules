@@ -4,7 +4,8 @@
 	branch = fix/unverified-build
 [submodule "drivers/NativeMobileDisplay"]
 	path = drivers/NativeMobileDisplay
-	url = https://github.com/Allenwdk/NativeMobileDisplay.git
+	url = https://github.com/rootstockos/NativeMobileDisplay.git
+	branch = asteroids
 [submodule "kits/AdrenoFirmware"]
 	path = kits/AdrenoFirmware
 	url = https://github.com/rootstockos/AdrenoFirmware.git

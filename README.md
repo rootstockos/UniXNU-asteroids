@@ -14,7 +14,7 @@ Drivers and kits, each its own repository, referenced as submodules:
 | Module | Repository | Use |
 |---|---|---|
 | `drivers/NativeUfs` | [rootstockos/NativeUfs](https://github.com/rootstockos/NativeUfs) (branch `fix/unverified-build`) | UFS root in `userdata` |
-| `drivers/NativeMobileDisplay` | [Allenwdk/NativeMobileDisplay](https://github.com/Allenwdk/NativeMobileDisplay) | uke's legacy (CPU) display |
+| `drivers/NativeMobileDisplay` | [rootstockos/NativeMobileDisplay](https://github.com/rootstockos/NativeMobileDisplay) (branch `asteroids`) | the legacy display: uke's driver merged with UniXNU's (refresh rate, GPU-copied swap retirement) |
 | `drivers/NativeAdreno` | [rootstockos/NativeAdreno](https://github.com/rootstockos/NativeAdreno) (branch `asteroids-a810`) | Adreno 810 (gen8) work; not built yet (`CONFIG_XNU_NATIVE_ADRENO` off) |
 | `kits/AdrenoFirmware` | [rootstockos/AdrenoFirmware](https://github.com/rootstockos/AdrenoFirmware) (branch `asteroids-a8xx`) | GMU/HFI kit with the A8xx performance table and votes |
 
