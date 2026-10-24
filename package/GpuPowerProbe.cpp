@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// asteroids Adreno 810 power observation and CX power-up, modes 1-3 (sheng-gpu-power=1..3; absent or 0 does nothing). The shape of
+// asteroids Adreno 810 power observation and CX power-up, modes 1-3, and the GMU pool round trip, mode 4
+// (sheng-gpu-power=1..4; absent or 0 does nothing). The shape of
 // UniXNU-sheng's and Allenwdk/UniXNU-uke's GpuPowerProbe.cpp (BSD-2-Clause-Patent) without their GMU, ring and Metal stages:
 // a kernel thread waits for the console, maps the five windows uncached, runs GpuPowerBoard.h's gated sequence and logs it.
 // Every block is announced in the log before its first access, so a read that hangs the bus leaves its name as the last line.
@@ -82,6 +83,29 @@ void probeThread(void *, wait_result_t) {
         IOLog("ASTEROIDS GPU: m3 cx %08x>%08x>%08x hw=%08x tries=%u refused=%u pw%u%u ahb %08x>%08x smmu %08x>%08x\n",
               r.cx_before, r.cx_init, r.cx_after, r.cx_hwctrl_after, r.cx_tries, r.cx_refused, r.powered_cx, r.powered_clocks,
               r.cc_ahb_before, r.cc_ahb, r.cc_smmu_before, r.cc_smmu);
+    if (gMode >= 4) {
+        // The GMU pool, reserved by the firmware (GMU_Pool): map it write-combined (uke's fix for the DC ZVA abort on the
+        // default mapping), fill and check it with plain 8-byte stores, then zero and check it. No SMMU or GMU access.
+        IOLog("ASTEROIDS GPU: mapping the GMU pool 0x%llx + 0x%llx\n", GPB_GMU_POOL_BASE, GPB_GMU_POOL_BYTES);
+        native_gpu_power_stage = 0x40;
+        IODeviceMemory *memory = IODeviceMemory::withRange(GPB_GMU_POOL_BASE, GPB_GMU_POOL_BYTES);
+        OSSharedPtr<IOMemoryMap> pool;
+        if (memory) {
+            pool = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
+            memory->release();
+        }
+        if (!pool) IOLog("ASTEROIDS GPU: pool map failed\n");
+        else {
+            IOLog("ASTEROIDS GPU: pool mapped, writing\n");
+            native_gpu_power_stage = 0x41;
+            gpb_pool_result p{};
+            gpb_pool_test(reinterpret_cast<volatile uint64_t *>(pool->getVirtualAddress()), GPB_GMU_POOL_BYTES, &p);
+            __asm__ volatile("dsb sy" ::: "memory");
+            IOLog("ASTEROIDS GPU: pool words=%llu pattern_bad=%llu zero_bad=%llu first_bad=%llx\n", p.words, p.pattern_bad,
+                  p.zero_bad, p.first_bad);
+            native_gpu_power_stage = 0x42;
+        }
+    }
     native_gpu_power_stage = 4;
 }
 }

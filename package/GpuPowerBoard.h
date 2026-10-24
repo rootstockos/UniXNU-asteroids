@@ -12,7 +12,7 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 3u
+#define GPB_MAX_MODE 4u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access)
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -71,6 +71,11 @@
 // 10 us after enabling). gpu_cc_hlos1_vote_gpu_smmu_clk has no halt delay of its own; 500 us bounds its status wait.
 #define GPB_BRANCH_HALT_DELAY_US 10u
 #define GPB_VOTE_POLL_US 500u
+
+// The GMU pool: uefi-asteroids 8a92c2c reserves GMU_Pool 0xE6440000 + 0x02000000 (the first 32 MiB of the stock map's
+// DXE_Heap1) for the GMU payloads and their SMMU tables, adopted over IODeviceMemory::withRange as uke's "GMU Pool" is.
+#define GPB_GMU_POOL_BASE 0xE6440000ULL
+#define GPB_GMU_POOL_BYTES 0x02000000ULL
 
 // ARM SMMUv2 global space 0 (IHI 0062D.c): sCR0 0x0, ID0 0x20, ID1 0x24, ID2 0x28, sGFSR 0x48.
 #define GPB_SMMU_SCR0 0x0
@@ -131,6 +136,21 @@ static inline int gpb_clock_on(uint32_t cbcr) {return (cbcr & GPB_CBCR_CLK_OFF) 
 // gcc_gpu_cfg_ahb_clk: the enable bit is the test (an idle branch with hardware clock gating can read CLK_OFF while enabled).
 static inline int gpb_cfg_ahb_enabled(uint32_t cbcr) {return (cbcr & GPB_CBCR_ENABLE) != 0;}
 static inline int gpb_gdsc_on(uint32_t gdscr) {return (gdscr & GPB_GDSC_PWR_ON) != 0;}
+
+// Mode 4: the pool round trip. Fills the mapped pool with an address-derived 64-bit pattern using plain stores (never
+// memset/bzero: uke's first pool mapping took an alignment abort in bzero's DC ZVA), reads it back, then zeroes it the same
+// way and reads that back. Counts mismatches; first_bad is the first wrong 8-byte index (~0 if none).
+struct gpb_pool_result {uint64_t words, pattern_bad, zero_bad, first_bad;};
+static inline uint64_t gpb_pool_pattern(uint64_t index) {return (index * 0x9e3779b97f4a7c15ULL) ^ 0xa5a5a5a55a5a5a5aULL;}
+static inline void gpb_pool_test(volatile uint64_t *pool, uint64_t bytes, struct gpb_pool_result *p) {
+    p->words = bytes / 8; p->pattern_bad = p->zero_bad = 0; p->first_bad = ~0ULL;
+    for (uint64_t i = 0; i < p->words; ++i) pool[i] = gpb_pool_pattern(i);
+    for (uint64_t i = 0; i < p->words; ++i)
+        if (pool[i] != gpb_pool_pattern(i)) {if (!p->pattern_bad++) p->first_bad = i;}
+    for (uint64_t i = 0; i < p->words; ++i) pool[i] = 0;
+    for (uint64_t i = 0; i < p->words; ++i)
+        if (pool[i]) {if (!p->zero_bad++ && p->first_bad == ~0ULL) p->first_bad = i;}
+}
 
 static inline int gpb_rd(const struct gpb_io *io, struct gpb_result *r, unsigned window, uint32_t offset, uint32_t *out) {
     uint32_t v = 0;

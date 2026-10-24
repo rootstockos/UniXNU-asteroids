@@ -318,6 +318,8 @@ sid_gmu = 0x05
 gpucc_base = "0x3d90000"               # qcom,volcano-gpucc
 gmem_bytes = "0x90000"                 # 512 KiB + 64 KiB
 gmu_chip_id = "0x8030000"
+gmu_pool_base = "0xE6440000"            # GMU_Pool in the UEFI memory map (uefi-asteroids 8a92c2c): the first 32 MiB of DXE_Heap1
+gmu_pool_bytes = "0x02000000"
 preempt_record_bytes = "0x473800"      # 4558 KiB
 ubwc_version = 4                       # mainline milos_data, and qcom,ubwc-mode = <4> in the DT
 highest_bank_bit = 14                  # LPDDR4X (the DT display node: DDR type 7 -> 14, type 8 -> 15)

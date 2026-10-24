@@ -142,8 +142,23 @@ int main(void) {
         CHECK(!nwrites && !r.powered_cx);
     }
 
-    // Modes 0 and 4+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 8; m += (m == 0 ? 4 : 1)) {
+    // Mode 4 runs exactly what mode 3 does in gpb_run (the pool test is separate).
+    reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 1; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = 0x0022f801;
+    cx_on_after = 0; gpb_run(&io, 4, all, &r);
+    CHECK(r.mode == 4 && r.powered_cx && nwrites == 4);
+    // The pool round trip: a clean pool, then one stuck bit, then a word that will not clear.
+    {
+        static uint64_t pool[4096];
+        struct gpb_pool_result p;
+        gpb_pool_test(pool, sizeof pool, &p);
+        CHECK(p.words == 4096 && !p.pattern_bad && !p.zero_bad && p.first_bad == ~0ULL);
+        for (unsigned i = 0; i < 4096; ++i) CHECK(pool[i] == 0);
+        CHECK(gpb_pool_pattern(0) != 0 && gpb_pool_pattern(1) != gpb_pool_pattern(0));
+        CHECK(GPB_GMU_POOL_BASE == 0xE6440000ULL && GPB_GMU_POOL_BYTES == 0x02000000ULL && !(GPB_GMU_POOL_BASE & 0xfff));
+    }
+
+    // Modes 0 and 5+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 8; m += (m == 0 ? 5 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
