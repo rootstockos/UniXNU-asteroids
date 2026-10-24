@@ -50,8 +50,11 @@ def fetch():
         subprocess.run(['git', '-C', str(SRC), 'remote', 'add', 'origin', PIN['repository']], check=True)
     subprocess.run(['git', '-C', str(SRC), 'sparse-checkout', 'set', '--no-cone',
                     '/drivers/gpu/drm/msm/adreno/', '/drivers/gpu/drm/msm/registers/adreno/'], check=True)
+    # The fetch takes all the commit's trees (minutes on a hosted runner) and the checkout the sparse paths' blobs.
+    print('fetching', PIN['repository'], PIN['commit'], 'trees only', flush=True)
     subprocess.run(['git', '-C', str(SRC), 'fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin',
                     PIN['commit']], check=True)
+    print('checking out the adreno sources', flush=True)
     subprocess.run(['git', '-C', str(SRC), 'checkout', '-q', 'FETCH_HEAD'], check=True)
 
 

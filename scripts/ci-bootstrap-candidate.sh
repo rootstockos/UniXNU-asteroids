@@ -7,12 +7,31 @@
 set -euo pipefail
 device=${DEVICE_DIR:?DEVICE_DIR is the device repository}
 out=out/asteroids
+# Status for the CI log: unixnu sends each command's output to $out/logs/*.log and Python block-buffers a pipe, so a
+# long stage otherwise shows nothing. Every stage prints a timestamped line, and a heartbeat prints the newest log's
+# last line once a minute.
+export PYTHONUNBUFFERED=1
+start=$(date +%s)
+stage() { printf '== [%s +%dm] %s\n' "$(date -u +%H:%M:%S)" $(( ($(date +%s) - start) / 60 )) "$*"; }
+heartbeat() {
+  while sleep 60; do
+    latest=$(ls -t "$out"/logs/*.log 2>/dev/null | head -1 || true)
+    line=$( { [ -n "$latest" ] && tail -n 1 "$latest" | cut -c1-160; } 2>/dev/null || true)
+    stage "still running${latest:+: $(basename "$latest"): $line}"
+  done
+}
+heartbeat &
+beat=$!
+trap 'kill "$beat" 2>/dev/null || true' EXIT
 # The A810 firmware, from board.toml's one pinned source; checked against its pins. The workflow's last step deletes
 # device/.cache/firmware.
+stage "fetch the A810 firmware"
 python3 "$device/scripts/fetch-asteroids-gpu-firmware.py"
 # The pinned linux sources for the GMU register header (sparse checkout in device/.cache/linux-a8xx); the archive step
 # generates the tree's copy from the same inputs.
+stage "fetch the pinned linux sources for the GMU header"
 python3 "$device/scripts/prepare-asteroids-gmu.py" --fetch
+stage "build and prelink the bootstrap kernel (from scratch: about an hour)"
 ./unixnu defconfig bootstrap_defconfig -D "$device"
 ./unixnu build kernel -D "$device"
 mkdir -p "$out/tree/build/xnu-prelink"
@@ -31,4 +50,6 @@ abi="$out/tree/build/display-analysis/mobile-graphics-legacy-abi.json"
 [ -f "$abi" ] || printf '{"runtime_metadata_checkpoint_sha256": "3044c2beff552911605994c0dc7aa73182066cbb5aed0b396999ceeb5a96da2b"}\n' > "$abi"
 # The bootstrap kernel must not be taken for the result.
 rm -f "$out/kernel/kernel.macho" "$out/kernel/kernel.json"
+stage "select asteroids_defconfig for the real build"
 ./unixnu defconfig asteroids_defconfig -D "$device"
+stage "bootstrap done"
