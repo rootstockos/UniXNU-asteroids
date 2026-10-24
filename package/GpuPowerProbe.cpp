@@ -489,6 +489,13 @@ void gpuSurvey() {
     }
     if (!gGpuSmmu) {IOLog("ASTEROIDS GPU: gpuctx SMMU map failed\n"); return;}
     IOLog("ASTEROIDS GPU: gpuctx bank 0 asid 2, sid 0 on slot 0 only\n");
+    const uint32_t id1 = native_gpu_power_result.id1;
+    const size_t cb0 = gpb_smmu_cb_offset(id1, 0);
+    // ACTLR before the kit programs and enables the bank, as arm-smmu-qcom and pandora's level 9 set it.
+    const uint32_t actlr_before = smmuRead(cb0 + GPB_SMMU_CB_ACTLR);
+    *reinterpret_cast<volatile uint32_t *>(gGpuSmmu->getVirtualAddress() + cb0 + GPB_SMMU_CB_ACTLR) = GPB_GPU_ACTLR;
+    gColdDevice.io.barrier(gColdDevice.io.cookie);
+    IOLog("ASTEROIDS GPU: gpuctx actlr %08x -> %08x\n", actlr_before, smmuRead(cb0 + GPB_SMMU_CB_ACTLR));
     NativeAdrenoGmuContextReport &q = native_gpu_context;
     const IOReturn status = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gGpuSmmu->getVirtualAddress()),
                                                           GPB_SMMU_WINDOW, 0, 2, 0, 0, 1, GpuNoStream, gpuCtxProgress, &q);
@@ -498,8 +505,6 @@ void gpuSurvey() {
           q.route_writes, q.routes_verified, q.spans, q.mismatch);
     IOLog("ASTEROIDS GPU: gpuctx ttbr0=%016llx sctlr=%08x cbar=%08x smr=%08x s2cr=%08x\n",
           static_cast<unsigned long long>(q.ttbr0), q.sctlr, q.cbar, q.smr, q.s2cr);
-    const uint32_t id1 = native_gpu_power_result.id1;
-    const size_t cb0 = gpb_smmu_cb_offset(id1, 0);
     IOLog("ASTEROIDS GPU: gpuctx after gfsr=%08x fsr=%08x actlr=%08x smr %08x %08x s2cr %08x %08x\n", smmuRead(GPB_SMMU_GFSR),
           smmuRead(cb0 + GPB_SMMU_CB_FSR), smmuRead(cb0 + 0x4), smmuRead(GPB_SMMU_SMR(0)), smmuRead(GPB_SMMU_SMR(1)),
           smmuRead(GPB_SMMU_S2CR(0)), smmuRead(GPB_SMMU_S2CR(1)));
@@ -556,8 +561,23 @@ void gpuHwInit() {
 //     sends it (a8xx_patch_pwrup_reglist runs after cp_init); the fence within 200 ms
 //   3 CP_MEM_WRITE (opcode 0x3d) of 0x5e9a810 into the scratch page, and its fence
 //   4 a8xx_patch_pwrup_reglist (NativeAdrenoPwrupList::buildA810) into the power-up page
+// pandora's level 10 ran CP_MEM_WRITE while still secure, so step 3 does not wait for the zap shader.
+// CP_RB_WPTR goes out as Linux's fenced write: GMU_AHB_FENCE_STATUS bit 0 means the GMU's AHB fence dropped it, so
+// write it again, for up to about 2 ms.
+uint32_t gWptrWrites, gWptrRetries, gWptrDropped, gWptrFence;
 int ringWrite(void *, uint32_t reg, uint32_t value) {
-    return gColdDevice.io.write32(gColdDevice.io.cookie, ShengGmuGpu, size_t(reg) * 4, value);
+    ShengGmuIo &io = gColdDevice.io;
+    if (reg != A810_CP_RB_WPTR) return io.write32(io.cookie, ShengGmuGpu, size_t(reg) * 4, value);
+    ++gWptrWrites;
+    for (unsigned tries = 0; tries < 200; ++tries) {
+        if (io.write32(io.cookie, ShengGmuGpu, size_t(reg) * 4, value) || io.barrier(io.cookie) ||
+            io.read32(io.cookie, ShengGmuCore, GPB_GMU_AHB_FENCE_STATUS, &gWptrFence)) return 1;
+        if (!(gWptrFence & 1)) return 0;
+        ++gWptrRetries;
+        IODelay(10);
+    }
+    ++gWptrDropped;
+    return 1;
 }
 int ringRead(void *, uint32_t reg, uint32_t *value) {
     return gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuGpu, size_t(reg) * 4, value);
@@ -586,6 +606,8 @@ void cpState(const char *when) {
           when, v[0], v[1], v[2], v[3], v[4], v[5], v[6], fault, status);
     IOLog("ASTEROIDS GPU: cp %s memptrs %08x %08x %08x %08x smmu fsr=%08x far=%08x%08x fsynr0=%08x\n", when, m[0], m[1], m[2],
           m[3], smmuRead(cb0 + GPB_SMMU_CB_FSR), smmuRead(cb0 + 0x64), smmuRead(cb0 + 0x60), smmuRead(cb0 + 0x68));
+    IOLog("ASTEROIDS GPU: cp %s wptr writes=%u retries=%u dropped=%u fence=%08x actlr=%08x\n", when, gWptrWrites, gWptrRetries,
+          gWptrDropped, gWptrFence, smmuRead(cb0 + GPB_SMMU_CB_ACTLR));
 }
 void cpStart() {
     native_gpu_power_stage = 0xd0;

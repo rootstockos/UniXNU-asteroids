@@ -120,6 +120,8 @@ static inline uint32_t gpb_smmu_cb_offset(uint32_t id1, unsigned bank) {
     return page * ((2u << ((id1 >> 28) & 7)) + bank);
 }
 #define GPB_SMMU_CB_FSR 0x58
+#define GPB_SMMU_CB_ACTLR 0x4
+#define GPB_GPU_ACTLR 0x32bu            // the 3a DT's kgsl-smmu qcom,actlr <0x0 0x3ff 0x32b>: every stream; the kit leaves ACTLR alone
 
 // a6xx.xml (torvalds/linux 734bef548a96): RBBM_STATUS is dword 0x012 for A8XX- (0x210 is the A6XX-A7XX offset); NativeAdreno's
 // generated NativeAdrenoA810HwInit.h has the same A810_RBBM_STATUS. Byte offset = dword * 4.
@@ -564,6 +566,7 @@ static inline void gpb_gmu_clocks_on(const struct gpb_io *io, struct gpb_result 
 #define GPB_GMU_GENERAL_10 GPB_GMU_REG(0x1f9ca)
 #define GPB_GMU_AO_HOST_INTERRUPT_STATUS GPB_GMU_REG(0x23b05)
 #define GPB_GMU_AHB_FENCE_RANGE_0 GPB_GMU_REG(0x23b11)
+#define GPB_GMU_AHB_FENCE_STATUS GPB_GMU_REG(0x23b13)      // bit 0: a write inside the fence range was dropped
 #define GPB_GMU_ITCM GPB_GMU_REG(0x1b400)
 #define GPB_GMU_DTCM_VERSION GPB_GMU_REG(0x1c400 + 0xff8)   // the word a6xx_gmu_start reads for the ready rule
 #define GPB_RSCC_SEQ_BUSY_DRV0 (0x101u * 4u)
