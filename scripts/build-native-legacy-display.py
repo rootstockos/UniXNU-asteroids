@@ -234,7 +234,14 @@ adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-Wno-incompatible-sysroot',
               '-DSHENG_GMU_POOL_BASE=UINT64_C(%#x)'%pool_base,'-DSHENG_GMU_POOL_BYTES=%#xu'%pool_bytes]
 def kernel_cxx(src,obj,extra):
     return [str(src) if str(arg)==str(source) else str(obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+extra
-run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags),cwd=r['directory'])
+# Mode 6 parses the command DB into the HFI startup table: the device package's ShengGmuVotes.c/ShengGmuCommandDb.c over the
+# headers prepare-asteroids-gmu-votes.py --from-data writes (an earlier archive entry), and the AdrenoFirmware kit's HFI
+# vote, startup and message code (its submodule, branch asteroids-a8xx).
+gmu_gen=ROOT/'build/sheng-gmu';hfi_kit=ROOT/'kits/AdrenoFirmware'
+for header in ('ShengGmuVotesSource.h','ShengGmuCommandDbSource.h'):
+    require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu-votes.py --from-data first')
+vote_flags=['-I',str(ROOT/'kits/asteroids'),'-I',str(hfi_kit),'-I',str(gmu_gen)]
+run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags+vote_flags),cwd=r['directory'])
 gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuMemory','NativeAdrenoVm','NativeAdrenoGmuMemory',
                                           'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu')]
 gmu_objs=[]
@@ -268,6 +275,12 @@ for src in smmu_sources:
     gmu_objs.append(OUT/(src.stem+'.kit.o'))
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
         ['-I',str(smmu4k)],cwd=pr['directory'])
+vote_sources=[ROOT/'kits/asteroids/ShengGmuVotes.c',ROOT/'kits/asteroids/ShengGmuCommandDb.c',
+              hfi_kit/'AdrenoHfiVotes.c',hfi_kit/'AdrenoHfiStartup.c',hfi_kit/'AdrenoHfi.c']
+for src in vote_sources:
+    gmu_objs.append(OUT/(src.stem+'.kit.o'))
+    run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
+        vote_flags,cwd=pr['directory'])
 stub_source=ROOT/'kits/asteroids/LegacyDisplayStubs.c'
 stub_obj=OUT/'LegacyDisplayStubs.o'
 run([str(stub_source) if arg==str(process_source) else str(stub_obj) if arg==str(process_obj) else arg for arg in process_cmd],cwd=pr['directory'])
@@ -291,7 +304,8 @@ sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'drivers/NativeHidInput/NativeHidInput.cpp',ROOT/'scripts/build-native-hid-input.py',
          ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,gpupower_source,
          ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
-         *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()]]
+         *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
+         gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h']
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeGOPPresenter'],text=True),end='')
 gop=ROOT/'build/native-gop-presenter';gop_late=gop/'NativeGOPPresenter.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp',

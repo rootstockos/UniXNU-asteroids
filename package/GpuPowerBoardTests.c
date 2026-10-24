@@ -185,8 +185,34 @@ int main(void) {
         CHECK(GPB_GMU_BANK == 1 && GPB_GMU_ASID == 1 && GPB_GMU_SLOT == 2 && GPB_GMU_SID == 5 && GPB_SMMU_WINDOW == 0x40000);
     }
 
-    // Modes 0 and 6+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 9; m += (m == 0 ? 6 : 1)) {
+    // Mode 6's clock snapshot: reads only, the gpucc-milos.c offsets, inside the GPUCC window, and only after stage 2.
+    {
+        CHECK(GPB_CC_GMU_RCGR == 0x9318 && GPB_CC_HUB_RCGR == 0x93ec && GPB_CC_HUB_DIV == 0x942c && GPB_CC_FF_RCGR == 0x9474);
+        CHECK(gpb_gmu_branch[0] == GPB_CC_CX_GMU_CLK && gpb_gmu_branch[2] == GPB_CC_AHB_CLK);
+        reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 0x00000001; mem[GPB_WIN_GPUCC][GPB_CC_CX_GDSCR / 4] = 0x0022f801;
+        mem[GPB_WIN_GPUCC][GPB_CC_GMU_RCGR / 4] = 0x80000000; mem[GPB_WIN_GPUCC][GPB_CC_CX_GMU_CLK / 4] = 0x80002001;
+        mem[GPB_WIN_GPUCC][0x10 / 4] = 0x24;
+        gpb_run(&io, 1, all, &r);
+        const unsigned before = nreads;
+        struct gpb_gmu_clocks k;
+        gpb_read_gmu_clocks(&io, &r, &k);
+        CHECK(k.done && !nwrites && !r.io_error && nreads - before == 6 + 7 + GPB_GMU_BRANCHES + GPB_CRITICAL_BRANCHES + 3);
+        CHECK(k.pll0_l == 0x24 && k.gmu_cmd == 0x80000000 && k.branch[0] == 0x80002001 && gpb_branch_digit(k.branch[0]) == 3);
+        for (unsigned i = before; i < nreads; ++i)
+            CHECK(reads[i].window == GPB_WIN_GPUCC || reads[i].window == GPB_WIN_GCC_GPU || reads[i].window == GPB_WIN_GCC_VOTE);
+        CHECK(was_read(GPB_WIN_GPUCC, 0x9318) && was_read(GPB_WIN_GPUCC, 0x931c) && was_read(GPB_WIN_GPUCC, 0x93ec) &&
+              was_read(GPB_WIN_GPUCC, 0x942c) && was_read(GPB_WIN_GPUCC, 0x93a4) && was_read(GPB_WIN_GPUCC, 0x90cc));
+        CHECK(gpb_branch_digit(0x00000001) == 1 && gpb_branch_digit(0x80000000) == 2);
+        // Not read without stage 2 (GPUCC unmapped).
+        reset(); mem[GPB_WIN_GCC_GPU][GPB_GCC_GPU_CFG_AHB / 4] = 0x00000001;
+        gpb_run(&io, 1, all & ~(1u << GPB_WIN_GPUCC), &r);
+        const unsigned skipped = nreads;
+        gpb_read_gmu_clocks(&io, &r, &k);
+        CHECK(!k.done && nreads == skipped);
+    }
+
+    // Modes 0 and 7+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 10; m += (m == 0 ? 7 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -200,6 +226,6 @@ int main(void) {
     printf("PASS: asteroids GPU power modes 1-3: exact reads per mode, mode 1 never writes, mode 2 only the cfg_ahb enable, "
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
-           "modes 0 and 6+ refused\n");
+           "the mode 6 clock snapshot (reads only), modes 0 and 7+ refused\n");
     return 0;
 }

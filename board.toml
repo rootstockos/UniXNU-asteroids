@@ -80,6 +80,9 @@ archives = [
   # Display, CPU-rendered: uke's display build (scripts/build-native-legacy-display.py, without uke's touch, CPU frequency
   # and boot-trace probes) with uke's board probe (package/LegacyDisplayProbe.cpp, HidInputProbe.cpp, KeyStoreProbe.cpp,
   # LegacyDisplayStubs.c). It binds UniXNU's NativeLegacyDisplay to the original IOMobileFramebufferLegacy.
+  # GPU power mode 6 (package/GpuPowerProbe.cpp) parses the command DB with the device package's vote builder; its headers
+  # come from scripts/data/a810-gmu-votes.json (derived locally from the phone's DT, which is not committed).
+  "prepare-asteroids-gmu-votes.py --from-data",
   "build-native-legacy-display.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
@@ -212,7 +215,8 @@ kernel_args = [
   # GPU power observation (package/GpuPowerProbe.cpp), one stage per test boot: 1 reads the GCC GPU branches, then GPUCC,
   # SMMU and RBBM only where the previous block shows its clock or power on, and logs each block before touching it
   # ("ASTEROIDS GPU: ..."). 2 adds the one write Linux makes (gcc_gpu_cfg_ahb_clk), 3 powers CX and the SMMU clocks, 4 tests
-  # the GMU pool, 5 builds the GMU's SMMU context on it (NativeAdrenoGmuContextBringup). Remove the line to turn it off.
+  # the GMU pool, 5 builds the GMU's SMMU context on it (NativeAdrenoGmuContextBringup), 6 reads the GMU clock tree and the
+  # command DB and builds the HFI table (no writes). Remove the line to turn it off.
   "sheng-gpu-power=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes

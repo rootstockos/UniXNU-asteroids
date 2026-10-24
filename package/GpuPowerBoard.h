@@ -12,8 +12,9 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 5u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
-                          // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup)
+#define GPB_MAX_MODE 6u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+                          // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
+                          // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -313,5 +314,72 @@ static inline const char *gpb_gmu_gate_text(unsigned gate) {
     static const char *const text[] = {"ok", "smmu not read", "cx or vote clock off", "an smr is valid", "slot 2 not free",
                                        "bank 1 outside the window", "pool not tested", "pool round trip failed"};
     return gate < sizeof text / sizeof *text ? text[gate] : "?";
+}
+// Mode 6 (read-only): the clocks a6xx_gmu_resume needs before a GMU cold start, and their sources. The live DT's
+// qcom,gmu@3d37000 clocks are gmu_clk = GPUCC 6, cxo_clk = GPUCC 8, axi_clk = GCC 0x14, memnoc_clk = GCC 0x23, ahb_clk =
+// GPUCC 2 and hub_clk = GPUCC 0x17 (23); its qcom,gmu-freq-table is 350 MHz (corner 0x40) and 650 MHz (0x80). Indices and
+// offsets: mainline gpucc-milos.c and qcom,milos-gpucc.h (torvalds/linux 734bef548a96; Milos is SM7635), identical in the
+// 3a's downstream gpucc-volcano.c. Only PLL0 exists (LUCID_OLE, 700 MHz: L 0x24, alpha 0x7555); gpu_cc_gmu_clk_src runs
+// from PLL0_OUT_EVEN (sel 2), gpu_cc_hub_clk_src from GPLL0 (sel 5, 200 MHz = div 3). LUCID_OLE registers (clk-alpha-pll.c):
+// MODE +0, OPMODE +4, STATUS +0xc, L_VAL +0x10, ALPHA +0x14, USER_CTL +0x18; RCG CMD +0, CFG +4 (clk-rcg2.c).
+#define GPB_CC_PLL0 0x0
+#define GPB_PLL_MODE 0x0
+#define GPB_PLL_OPMODE 0x4
+#define GPB_PLL_STATUS 0xc
+#define GPB_PLL_L_VAL 0x10
+#define GPB_PLL_ALPHA 0x14
+#define GPB_PLL_USER_CTL 0x18
+#define GPB_PLL_LOCK_DET (1u << 31)       // clk-alpha-pll.c PLL_LOCK_DET, in MODE
+#define GPB_CC_GMU_RCGR 0x9318            // gpu_cc_gmu_clk_src
+#define GPB_CC_HUB_RCGR 0x93ec            // gpu_cc_hub_clk_src
+#define GPB_CC_HUB_DIV 0x942c             // gpu_cc_hub_div_clk_src (divider, width 4)
+#define GPB_CC_FF_RCGR 0x9474             // gpu_cc_ff_clk_src
+#define GPB_RCG_ROOT_OFF (1u << 31)       // clk-rcg2.c CMD_ROOT_OFF
+// The GMU node's GPUCC branches, then the hub and memnoc branches (gpucc-milos.c) and the seven the probe keeps on
+// (gpu_cc_milos_critical_cbcrs / the volcano probe's regmap_update_bits list).
+#define GPB_GMU_BRANCHES 6u
+static const uint32_t gpb_gmu_branch[GPB_GMU_BRANCHES] = {
+    0x90d4,   // gpu_cc_cx_gmu_clk (gmu_clk)
+    0x90e4,   // gpu_cc_cxo_clk (cxo_clk)
+    0x90bc,   // gpu_cc_ahb_clk (ahb_clk)
+    0x90e8,   // gpu_cc_hub_cx_int_clk (hub_clk)
+    0x93e8,   // gpu_cc_hub_aon_clk
+    0x90f4,   // gpu_cc_memnoc_gfx_clk
+};
+#define GPB_CRITICAL_BRANCHES 7u
+static const uint32_t gpb_critical_branch[GPB_CRITICAL_BRANCHES] = {0x93a4, 0x9008, 0x9010, 0x9064, 0x93a8, 0x9004, 0x90cc};
+struct gpb_gmu_clocks {
+    uint32_t pll0_mode, pll0_opmode, pll0_status, pll0_l, pll0_alpha, pll0_user;
+    uint32_t gmu_cmd, gmu_cfg, hub_cmd, hub_cfg, hub_div, ff_cmd, ff_cfg;
+    uint32_t branch[GPB_GMU_BRANCHES], critical[GPB_CRITICAL_BRANCHES];
+    uint32_t axi, memnoc, gpll0_vote;
+    int done;                            // 0: GPUCC was not readable, nothing was read
+};
+// A branch digit for the log: bit 0 enable, bit 1 CLK_OFF (so 1 = on, 3 = enabled but off, 2 = off).
+static inline unsigned gpb_branch_digit(uint32_t cbcr) {return (cbcr & GPB_CBCR_ENABLE) | ((cbcr >> 30) & 2);}
+// Only reads, and only once stages 1-2 read GPUCC with cfg_ahb enabled. GCC words are read again (the stage-1 values can be
+// stale after modes 3-5).
+static inline void gpb_read_gmu_clocks(const struct gpb_io *io, struct gpb_result *r, struct gpb_gmu_clocks *k) {
+    __builtin_memset(k, 0, sizeof *k);
+    if (r->cc != GPB_DONE || !gpb_cfg_ahb_enabled(r->cfg_ahb_after)) return;
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_MODE, &k->pll0_mode);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_OPMODE, &k->pll0_opmode);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_STATUS, &k->pll0_status);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_L_VAL, &k->pll0_l);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_ALPHA, &k->pll0_alpha);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_PLL0 + GPB_PLL_USER_CTL, &k->pll0_user);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_GMU_RCGR, &k->gmu_cmd);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_GMU_RCGR + 4, &k->gmu_cfg);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_HUB_RCGR, &k->hub_cmd);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_HUB_RCGR + 4, &k->hub_cfg);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_HUB_DIV, &k->hub_div);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_FF_RCGR, &k->ff_cmd);
+    gpb_rd(io, r, GPB_WIN_GPUCC, GPB_CC_FF_RCGR + 4, &k->ff_cfg);
+    for (unsigned i = 0; i < GPB_GMU_BRANCHES; ++i) gpb_rd(io, r, GPB_WIN_GPUCC, gpb_gmu_branch[i], &k->branch[i]);
+    for (unsigned i = 0; i < GPB_CRITICAL_BRANCHES; ++i) gpb_rd(io, r, GPB_WIN_GPUCC, gpb_critical_branch[i], &k->critical[i]);
+    gpb_rd(io, r, GPB_WIN_GCC_GPU, GPB_GCC_DDRSS_GPU_AXI, &k->axi);
+    gpb_rd(io, r, GPB_WIN_GCC_GPU, GPB_GCC_GPU_MEMNOC_GFX, &k->memnoc);
+    gpb_rd(io, r, GPB_WIN_GCC_VOTE, GPB_GCC_PLL_VOTE, &k->gpll0_vote);
+    k->done = 1;
 }
 #endif

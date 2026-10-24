@@ -1,0 +1,253 @@
+{
+  "dtb_sha256": "ba754f16ebc15fd0674f118b844f4853a97bd860233d7e1d70265d0dab54fa00",
+  "linux_revision": "734bef548a96e8774d6eef5dfa2026c6edc4e80b",
+  "bins": [
+    {
+      "node": "/soc/qcom,kgsl-3d0@3d00000/qcom,gpu-pwrlevel-bins/qcom,gpu-pwrlevels-1",
+      "skus": [
+        2,
+        0
+      ],
+      "levels": [
+        {
+          "hz": 0,
+          "level": 0,
+          "kbps": 0,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 264000000,
+          "level": 56,
+          "kbps": 2136718,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 362000000,
+          "level": 64,
+          "kbps": 2136718,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 510000000,
+          "level": 128,
+          "kbps": 3972656,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 644000000,
+          "level": 192,
+          "kbps": 5285156,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 688000000,
+          "level": 224,
+          "kbps": 6074218,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 763000000,
+          "level": 256,
+          "kbps": 6671875,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 895000000,
+          "level": 320,
+          "kbps": 8171875,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 960000000,
+          "level": 384,
+          "kbps": 8171875,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 1050000000,
+          "level": 416,
+          "kbps": 18597656,
+          "acd_present": 0,
+          "acd": 0
+        }
+      ],
+      "bandwidths": [
+        0,
+        2136718,
+        3972656,
+        5285156,
+        6074218,
+        6671875,
+        8171875,
+        18597656
+      ]
+    },
+    {
+      "node": "/soc/qcom,kgsl-3d0@3d00000/qcom,gpu-pwrlevel-bins/qcom,gpu-pwrlevels-0",
+      "skus": [
+        3,
+        4,
+        131281,
+        131282,
+        196817,
+        196818,
+        262353,
+        262354,
+        65778,
+        65777
+      ],
+      "levels": [
+        {
+          "hz": 0,
+          "level": 0,
+          "kbps": 0,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 264000000,
+          "level": 56,
+          "kbps": 2136718,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 362000000,
+          "level": 64,
+          "kbps": 2136718,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 510000000,
+          "level": 128,
+          "kbps": 3972656,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 644000000,
+          "level": 192,
+          "kbps": 5285156,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 688000000,
+          "level": 224,
+          "kbps": 6074218,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 763000000,
+          "level": 256,
+          "kbps": 6671875,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 895000000,
+          "level": 320,
+          "kbps": 8171875,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 960000000,
+          "level": 384,
+          "kbps": 8171875,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 1050000000,
+          "level": 416,
+          "kbps": 18597656,
+          "acd_present": 0,
+          "acd": 0
+        },
+        {
+          "hz": 1150000000,
+          "level": 432,
+          "kbps": 18597656,
+          "acd_present": 0,
+          "acd": 0
+        }
+      ],
+      "bandwidths": [
+        0,
+        2136718,
+        3972656,
+        5285156,
+        6074218,
+        6671875,
+        8171875,
+        18597656
+      ]
+    }
+  ],
+  "gmu_opps": [
+    {
+      "hz": 0,
+      "level": 0,
+      "kbps": 0,
+      "acd_present": 0,
+      "acd": 0
+    },
+    {
+      "hz": 350000000,
+      "level": 64,
+      "kbps": 0,
+      "acd_present": 0,
+      "acd": 0
+    },
+    {
+      "hz": 650000000,
+      "level": 128,
+      "kbps": 0,
+      "acd_present": 0,
+      "acd": 0
+    }
+  ],
+  "bcms": [
+    {
+      "name": "SH0",
+      "buswidth": 16,
+      "fixed": 0,
+      "perfmode": 0,
+      "perfmode_kbps": 0,
+      "all": 0
+    },
+    {
+      "name": "MC0",
+      "buswidth": 4,
+      "fixed": 0,
+      "perfmode": 0,
+      "perfmode_kbps": 0,
+      "all": 0
+    },
+    {
+      "name": "ACV",
+      "buswidth": 0,
+      "fixed": 1,
+      "perfmode": 4,
+      "perfmode_kbps": 10687500,
+      "all": 1
+    }
+  ],
+  "command_db": {
+    "node": "/reserved-memory/aop_cmd_db_region@81c60000",
+    "base": "0x81c60000",
+    "bytes": 131072
+  }
+}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// asteroids Adreno 810 power observation and CX power-up, modes 1-3, the GMU pool round trip, mode 4, and the GMU's SMMU
-// context on that pool, mode 5 (sheng-gpu-power=1..5; absent or 0 does nothing). The shape of
+// asteroids Adreno 810 power observation and CX power-up, modes 1-3, the GMU pool round trip, mode 4, the GMU's SMMU
+// context on that pool, mode 5, and the read-only GMU clock and command-DB snapshot, mode 6 (sheng-gpu-power=1..6; absent
+// or 0 does nothing). The shape of
 // UniXNU-sheng's and Allenwdk/UniXNU-uke's GpuPowerProbe.cpp (BSD-2-Clause-Patent) without their GMU, ring and Metal stages:
 // a kernel thread waits for the console, maps the five windows uncached, runs GpuPowerBoard.h's gated sequence and logs it.
 // Every block is announced in the log before its first access, so a read that hangs the bus leaves its name as the last line.
@@ -14,10 +15,13 @@
 #include <libkern/c++/OSSharedPtr.h>
 #include <kern/thread.h>
 #include <pexpert/pexpert.h>
+#include <string.h>
 extern "C" {
 #include "GpuPowerBoard.h"
 }
 #include "NativeAdrenoGmuContext.h"
+#include "ShengGmuCommandDb.h"
+#include "ShengGmuCommandDbSource.h"
 
 extern "C" {
 struct gpb_result native_gpu_power_result;
@@ -99,6 +103,92 @@ void gmuContext(const gpb_result &r) {
               payloads[0].bytes, payloads[0].iova, payloads[4].physical, payloads[4].bytes, payloads[4].iova, GPB_GMU_POOL_BASE);
     native_gpu_power_stage = status ? 0x5f : 0x57;
 }
+// Mode 6 (read-only). The GMU clock tree (gpb_read_gmu_clocks), then the AOP command DB: the live DT's
+// /reserved-memory/aop_cmd_db_region@81c60000 (no-map, 128 KiB; the UEFI map's AOP region 0x81c00000 + 0xa0000, uncached),
+// copied with aligned 32-bit reads from a read-only uncached map and parsed by ShengGmuCommandDbInputs into the HFI startup
+// table by ShengGmuBuildStartup (the A8xx GPU_PERF table with dependency votes). The version passed to the parser is the
+// word just read, as uke does, so a pass shows the layout, not a qualified version. No GMU register is read: the GMU's
+// clock is off until mode 7 turns it on.
+constexpr const char *kDbStatus[] = {"ok", "argument", "version", "corrupt", "duplicate", "missing"};
+alignas(8) uint8_t gCmdDb[SHENG_GMU_COMMAND_DB_BYTES];
+ShengGmuVoteInputs gVoteInputs;
+AdrenoHfiStartupConfig gStartup;
+extern "C" {
+struct gpb_gmu_clocks native_gpu_gmu_clocks;
+uint32_t native_gpu_cmd_db_status[4];   // version, magic, parse status, build status
+}
+void gmuPrerequisites(const gpb_result &r) {
+    gpb_io io{nullptr, rd, wr, stage, delayUs};
+    gpb_result scratch = r;   // gpb_rd records io_error into this copy, not into the published result
+    gpb_gmu_clocks &k = native_gpu_gmu_clocks;
+    native_gpu_power_stage = 0x60;
+    IOLog("ASTEROIDS GPU: reading the GMU clock tree (GPUCC PLL0, RCGs, branches)\n");
+    gpb_read_gmu_clocks(&io, &scratch, &k);
+    if (!k.done) IOLog("ASTEROIDS GPU: gmuclk skipped (GPUCC not read)\n");
+    else {
+        IOLog("ASTEROIDS GPU: gmuclk pll0 mode=%08x op=%x st=%08x l=%08x a=%08x user=%08x io=%d\n", k.pll0_mode,
+              k.pll0_opmode, k.pll0_status, k.pll0_l, k.pll0_alpha, k.pll0_user, scratch.io_error);
+        IOLog("ASTEROIDS GPU: gmuclk rcg gmu=%08x/%08x hub=%08x/%08x div=%08x ff=%08x/%08x\n", k.gmu_cmd, k.gmu_cfg,
+              k.hub_cmd, k.hub_cfg, k.hub_div, k.ff_cmd, k.ff_cfg);
+        // Branch digits: 1 on, 3 enabled but off, 2 disabled and off, 0 disabled and on.
+        IOLog("ASTEROIDS GPU: gmuclk br gmu=%08x cxo=%08x ahb=%08x hubcx=%08x hubaon=%08x memnoc=%08x\n", k.branch[0],
+              k.branch[1], k.branch[2], k.branch[3], k.branch[4], k.branch[5]);
+        IOLog("ASTEROIDS GPU: gmuclk aon %u%u%u%u%u%u%u gcc axi=%08x mem=%08x vote=%08x\n",
+              gpb_branch_digit(k.critical[0]), gpb_branch_digit(k.critical[1]), gpb_branch_digit(k.critical[2]),
+              gpb_branch_digit(k.critical[3]), gpb_branch_digit(k.critical[4]), gpb_branch_digit(k.critical[5]),
+              gpb_branch_digit(k.critical[6]), k.axi, k.memnoc, k.gpll0_vote);
+    }
+    native_gpu_power_stage = 0x61;
+    IOLog("ASTEROIDS GPU: mapping the command DB 0x%llx + 0x%x\n", static_cast<unsigned long long>(SHENG_GMU_COMMAND_DB_BASE),
+          SHENG_GMU_COMMAND_DB_BYTES);
+    IODeviceMemory *memory = IODeviceMemory::withRange(SHENG_GMU_COMMAND_DB_BASE, SHENG_GMU_COMMAND_DB_BYTES);
+    OSSharedPtr<IOMemoryMap> map;
+    if (memory) {
+        map = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapInhibitCache | kIOMapReadOnly), OSNoRetain);
+        memory->release();
+    }
+    if (!map) {IOLog("ASTEROIDS GPU: cmddb map failed\n"); return;}
+    const volatile uint32_t *db = reinterpret_cast<const volatile uint32_t *>(map->getVirtualAddress());
+    for (uint32_t i = 0; i < SHENG_GMU_COMMAND_DB_BYTES / 4; ++i) {const uint32_t w = db[i]; memcpy(gCmdDb + 4 * i, &w, 4);}
+    map.reset();
+    uint32_t version = 0, magic = 0;
+    memcpy(&version, gCmdDb, 4);
+    memcpy(&magic, gCmdDb + 4, 4);
+    gVoteInputs = {};
+    gVoteInputs.chip_id = 0x44010000u;   // A810 (board.toml [gpu] chip_id); sku_present 0: the bin listing 0 (KGSL's rule)
+    const unsigned parse = ShengGmuCommandDbInputs(gCmdDb, SHENG_GMU_COMMAND_DB_BYTES, version, &gVoteInputs);
+    unsigned build = ~0u;
+    if (parse == ShengGmuDbSuccess) build = ShengGmuBuildStartup(&gVoteInputs, &gStartup);
+    native_gpu_cmd_db_status[0] = version; native_gpu_cmd_db_status[1] = magic;
+    native_gpu_cmd_db_status[2] = parse; native_gpu_cmd_db_status[3] = build;
+    IOLog("ASTEROIDS GPU: cmddb v=%x magic=%08x parse=%u %s build=%d gmxc=%u aux gfx=%u cx=%u mx=%u sh0=%u mc0=%u acv=%u "
+          "cn0=%x\n", version, magic, parse, parse < 6 ? kDbStatus[parse] : "?", static_cast<int>(build),
+          gVoteInputs.gmxc_present, unsigned(gVoteInputs.gfx.bytes), unsigned(gVoteInputs.cx.bytes),
+          unsigned(gVoteInputs.mx.bytes), unsigned(gVoteInputs.sh0.aux.bytes), unsigned(gVoteInputs.mc0.aux.bytes),
+          unsigned(gVoteInputs.acv.aux.bytes), gVoteInputs.cn0_address);
+    if (parse != ShengGmuDbSuccess) {
+        // The slave table (cmd_db_header.header[i], 16 bytes from offset 8: le16 slv_id, ..., le16 cnt at +6).
+        for (unsigned i = 0; i < 8; ++i) {
+            uint16_t id, cnt;
+            memcpy(&id, gCmdDb + 8 + 16 * i, 2);
+            memcpy(&cnt, gCmdDb + 8 + 16 * i + 6, 2);
+            if (!id) break;
+            IOLog("ASTEROIDS GPU: cmddb slave %u id=%x cnt=%u\n", i, id, cnt);
+        }
+        return;
+    }
+    if (build) return;
+    const AdrenoHfiStartupConfig &c = gStartup;
+    IOLog("ASTEROIDS GPU: hfi table=%u gpu=%u gmu=%u bw=%u cnoc=%u ddr=%u ifpc=%u\n", c.table_format, c.gpu_count,
+          c.gmu_count, c.bandwidth_count, c.cnoc_count, c.ddr_count, c.enable_ifpc);
+    for (unsigned i = 0; i < c.gpu_count && i < 16; ++i)
+        IOLog("ASTEROIDS GPU: hfi gpu%u %lluk vote=%08x dep=%08x\n", i, static_cast<unsigned long long>(c.gpu[i].hz / 1000),
+              c.gpu[i].vote, c.gpu_dependency[i]);
+    for (unsigned i = 0; i < c.gmu_count && i < 4; ++i)
+        IOLog("ASTEROIDS GPU: hfi gmu%u %lluk vote=%08x\n", i, static_cast<unsigned long long>(c.gmu[i].hz / 1000),
+              c.gmu[i].vote);
+    native_gpu_power_stage = 0x6f;
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -159,6 +249,7 @@ void probeThread(void *, wait_result_t) {
         pool.reset();
     }
     if (gMode >= 5) gmuContext(r);
+    if (gMode >= 6) gmuPrerequisites(r);
     native_gpu_power_stage = 4;
 }
 }
