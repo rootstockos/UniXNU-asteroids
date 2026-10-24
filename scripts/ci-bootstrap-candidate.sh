@@ -15,13 +15,13 @@ python3 "$device/scripts/fetch-asteroids-gpu-firmware.py"
 python3 "$device/scripts/prepare-asteroids-gmu.py" --fetch
 ./unixnu defconfig bootstrap_defconfig -D "$device"
 ./unixnu build kernel -D "$device"
-mkdir -p "$out/tree/build/native-prelink"
-cp "$out/kernel/kernel.macho" "$out/tree/build/native-prelink/bootstrap-candidate.macho"
-cp "$out/kernel/kernel.json" "$out/tree/build/native-prelink/bootstrap-candidate.json"
+mkdir -p "$out/tree/build/xnu-prelink"
+cp "$out/kernel/kernel.macho" "$out/tree/build/xnu-prelink/bootstrap-candidate.macho"
+cp "$out/kernel/kernel.json" "$out/tree/build/xnu-prelink/bootstrap-candidate.json"
 # The display and HID builds (uke's and UniXNU's scripts) read the same candidate under these names.
 for name in native-owner-mobile-graphics-candidate native-owner-ufs-cpu-desktop-v9-hid-init-candidate; do
-  cp "$out/kernel/kernel.macho" "$out/tree/build/native-prelink/$name.macho"
-  cp "$out/kernel/kernel.json" "$out/tree/build/native-prelink/$name.json"
+  cp "$out/kernel/kernel.macho" "$out/tree/build/xnu-prelink/$name.macho"
+  cp "$out/kernel/kernel.json" "$out/tree/build/xnu-prelink/$name.json"
 done
 # audit-mobile-graphics-legacy.py accepts the recorded runtime observation hash from its previous output when the live
 # (HVF) observation is absent. The observation is of the unchanged iPad7,1 IOMobileFramebufferLegacy class in the shared

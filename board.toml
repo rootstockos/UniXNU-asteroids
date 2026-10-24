@@ -66,7 +66,7 @@ archives = [
   "build-arm-driver.py NativeUfs",
   # NativeUfsBlock's IOBlockStorageDevice imports, bound to the original class in the prelinked bootstrap candidate
   # (uke's binder; CI makes the candidate with scripts/ci-bootstrap-candidate.sh as pre_build).
-  "build-ufs-original-bindings.py --candidate build/native-prelink/bootstrap-candidate.macho",
+  "build-ufs-original-bindings.py --candidate build/xnu-prelink/bootstrap-candidate.macho",
   # UFS root, step 2, as on uke: the Data volume (NativeRamBlock, which needs NativeAES; UniXNU binds NativeAES from
   # its recorded original addresses, scripts/data/native-aes-original-bindings.S) and the mockfs fixture.
   # NativeRamBlock's IOBlockStorageDevice imports resolve against NativeUfs's bindings.
@@ -104,7 +104,7 @@ archives = [
 # All values follow the kernelcache, not the board: the same iPad7,1 21H461 KernelCache as sheng ([ipsw] is identical),
 # so the pin, slide and AMFI early initializer stay as they are.
 [kernel.prelink]
-tool = "kits/NativePrelink/emit_prelink.py"
+tool = "kits/XnuPrelink/emit_prelink.py"
 kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
 kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"   # kept: same 21H461 kernelcache
 slide = "-0x1000000"                                                                         # kept: tied to the kernel link layout

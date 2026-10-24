@@ -10,7 +10,7 @@ import struct
 import subprocess
 import sys
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'build/native-legacy-display';OUT.mkdir(parents=True,exist_ok=True)
-sys.path.insert(0,str(ROOT/'kits/NativePrelink'))
+sys.path.insert(0,str(ROOT/'kits/XnuPrelink'))
 from native_prelink import macho,backed_offset,exports
 def run(cmd,**kw):return subprocess.check_output([str(x) for x in cmd],timeout=90,**kw)
 def require(v,why):
@@ -109,9 +109,9 @@ for segment in image['segments']:
                 if bits>>27&1 and bits>>28==0 and bits>>25&3==3:relocations[sec['va']+offset]=symbols[bits&0xffffff][0]
 compiled=[relocations.get(vtable+16+i*8) for i in range(358)]
 require(all(compiled) and vtable+16+358*8 not in relocations,'Exact owned 358-entry vtable')
-candidate=ROOT/'build/native-prelink/native-owner-mobile-graphics-candidate.macho'
+candidate=ROOT/'build/xnu-prelink/native-owner-mobile-graphics-candidate.macho'
 if not candidate.exists():  # pruned: same fallback as scripts/audit-mobile-graphics-legacy.py (identical original family executable)
-    later=sorted((ROOT/'build/native-prelink').glob('native-owner-ufs-cpu-desktop-*-candidate.macho'),key=lambda f:f.stat().st_mtime)
+    later=sorted((ROOT/'build/xnu-prelink').glob('native-owner-ufs-cpu-desktop-*-candidate.macho'),key=lambda f:f.stat().st_mtime)
     require(later,'No reference candidate available');candidate=later[-1]
 old=candidate.read_bytes();old_image=macho(old)
 names={n:v for v,group in exports(old,old_image).items() for n in group}
@@ -294,10 +294,10 @@ run([str(stub_source) if arg==str(process_source) else str(stub_obj) if arg==str
 # asteroids: uke's touch (Novatek over GENI SPI, firmware outside git) and CPU frequency probes are left out; the 3a
 # has FocalTech touch, and nothing on the display path calls them.
 archive=OUT/'libNativeLegacyDisplay.late.a';archive.unlink(missing_ok=True)
-print(run(['python3',ROOT/'scripts/build-native-hid-input.py'],text=True),end='')
-hid_dir=ROOT/'build/native-hid-input'
+print(run(['python3',ROOT/'scripts/build-sheng-hid-input.py'],text=True),end='')
+hid_dir=ROOT/'build/sheng-hid-input'
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeKeyStoreEvents'],text=True),end='')
-keyevents=ROOT/'build/native-keystore-events'
+keyevents=ROOT/'build/apple-key-store-state'
 keyevents_late=keyevents/'NativeKeyStoreEvents.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
      '--globalize-symbol=__GLOBAL__sub_I_NativeKeyStoreEvents.cpp',
@@ -308,8 +308,8 @@ run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDispla
      hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj,gpupower_obj,*gmu_objs])
 sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',source,hid_source,keystore_source,
-         ROOT/'drivers/NativeHidInput/NativeHidInput.cpp',ROOT/'scripts/build-native-hid-input.py',
-         ROOT/'drivers/NativeKeyStoreEvents/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,gpupower_source,
+         ROOT/'drivers/ShengHidInput/NativeHidInput.cpp',ROOT/'scripts/build-sheng-hid-input.py',
+         ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,gpupower_source,
          ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
          *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
          gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',

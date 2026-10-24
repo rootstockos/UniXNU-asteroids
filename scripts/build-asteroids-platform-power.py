@@ -20,7 +20,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'build/sheng-platform-power'
 OUT.mkdir(parents=True, exist_ok=True)
-sys.path.insert(0, str(ROOT / 'kits/NativePrelink'))
+sys.path.insert(0, str(ROOT / 'kits/XnuPrelink'))
 from native_prelink import macho, backed_offset, exports
 
 
@@ -34,7 +34,7 @@ def require(value, message):
 
 
 PINNED_AON = {320: 0xfffffff004a20fbc, 321: 0xfffffff004a20fc4}
-CANDIDATES = sorted((ROOT / 'build/native-prelink').glob('*-candidate.macho'), key=lambda f: f.stat().st_mtime)
+CANDIDATES = sorted((ROOT / 'build/xnu-prelink').glob('*-candidate.macho'), key=lambda f: f.stat().st_mtime)
 ORIGINAL = ROOT / '.cache/firmware/kernelcache.macho/kernelcache.release.ipad7.decompressed'
 if CANDIDATES and ORIGINAL.is_file():
     print(run(['python3', ROOT / 'scripts/audit-amfi-pmgr-contract.py', '--candidate', CANDIDATES[-1]], text=True), end='')

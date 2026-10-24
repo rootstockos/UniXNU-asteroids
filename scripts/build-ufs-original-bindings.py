@@ -21,18 +21,18 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'kits/NativePrelink'))
+sys.path.insert(0, str(ROOT / 'kits/XnuPrelink'))
 import native_prelink as np
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--candidate', type=Path,
-                    default=ROOT / 'build/native-prelink/native-owner-mobile-graphics-candidate.macho')
+                    default=ROOT / 'build/xnu-prelink/native-owner-mobile-graphics-candidate.macho')
 parser.add_argument('--component', choices=('NativeUfs', 'NativeRamBlock'), default='NativeUfs')
 parser.add_argument('--objects-dir', type=Path, default=None)
 args = parser.parse_args()
 component = args.component
 args.objects_dir = (args.objects_dir or
-                    ROOT / ('build/native-ufs' if component == 'NativeUfs' else 'build/native-ram-block'))
+                    ROOT / ('build/sheng-ufs' if component == 'NativeUfs' else 'build/ram-block'))
 
 KERNELCACHE_SHA256 = 'f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7'
 SOURCE_REVISION = 'e45fbe30a7879e0b16e26dddb78538f1b00e0bff'
@@ -185,7 +185,7 @@ assembly = out / 'original-bindings.S'
 assembly.write_text(''.join(f'.globl {name}\n.set {name}, {value:#x}\n' for name, value in sorted(bindings.items())))
 subprocess.run(['xcrun', 'clang', '-target', 'arm64-apple-ios17.0', '-Werror', '-Wno-incompatible-sysroot',
                 '-c', assembly, '-o', out / 'original-bindings.o'], check=True)
-archive = out / ('lib' + component + '.a')
+archive = out / ('lib' + {'NativeUfs': 'ShengUfs', 'NativeRamBlock': 'RamBlock'}[component] + '.a')
 archive.unlink(missing_ok=True)
 subprocess.run(['xcrun', 'ar', 'rcs', archive, object_path, out / 'original-bindings.o'], check=True)
 (out / 'bindings.json').write_text(json.dumps(dict(
