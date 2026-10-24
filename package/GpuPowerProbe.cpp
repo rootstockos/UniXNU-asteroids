@@ -4,7 +4,8 @@
 // the first GMU and RSCC register reads, mode 8, the GMU firmware load to HFI ready, mode 9, and the whole cold start with
 // the HFI startup messages, mode 10, the GX request with the first RBBM reads, mode 11, the SW fuse and CP survey with
 // the GPU's own SMMU context and the SQE copy, mode 12, a8xx hw_init's register writes, mode 13, and the CP start through
-// CP_ME_INIT and a first CP_MEM_WRITE, mode 14, and the zap shader with the secure-mode exit, mode 15 (sheng-gpu-power=1..15;
+// CP_ME_INIT and a first CP_MEM_WRITE, mode 14, the zap shader with the secure-mode exit, mode 15, and the first IBs with a
+// bar the GPU writes into the firmware framebuffer, mode 16 (sheng-gpu-power=1..16;
 // absent or 0 does nothing). Modes 9-10 hand the
 // device package's ShengGmu.c (UniXNU-sheng's, with mainline's gen8 branches) its own uncached maps of the GMU, RSCC, GPU and CX_MISC
 // windows and Normal non-cacheable maps of the five payloads mode 5 placed in the pool; its writes go through its own
@@ -791,6 +792,111 @@ void zapStart() {
     cpState("zap");
     native_gpu_power_stage = ok ? 0xe8 : 0xef;
 }
+// Mode 16 (T14): the first IBs and the first pixels the GPU writes. One boot; each step runs only when the one before it
+// passed, and is logged before it runs:
+//   1 a one-packet IB at 0x400000 (a CP_MEM_WRITE of 0x1b810014 into scratch+8), called from the ring with
+//     CP_INDIRECT_BUFFER, as pandora's level 12 did
+//   2 the console's framebuffer (PE_current_console) planned by gpb_bar_plan: the pages under a 48-row bar two thirds down
+//     are adopted (IODeviceMemory, write-combined, zeroed, so the band first goes black) and mapped read/write at 0x800000;
+//     the bar's IB (one CP_MEM_WRITE per row with its pixels: white edges, red, green and blue thirds) in scattered pages
+//     at 0x500000
+//   3 the bar IB from the ring, then three pixels of the middle row read back by the CPU; then again every 200 ms for 2
+//     minutes, so the console's scrolling cannot hide it
+// The rest of a8xx hw_init pandora's level 15 added (GMEM_PROTECT, the per-pipe masks) is already in mode 13's writes.
+// Every object stays mapped for good: nothing here is torn down.
+extern "C" {
+// step reached, IB status, IB fence, scratch word, plan rule, adopt, fb map, IB alloc, IB map, draws ok, draws failed,
+// first failure status
+uint32_t native_gpu_bar[12];
+}
+NativeAdrenoMemory gIb1, gBarIb, gFb;
+void barStart() {
+    native_gpu_power_stage = 0xf0;
+    uint32_t *g = native_gpu_bar;
+    if (native_gpu_zap[12] || native_gpu_zap[13] || native_gpu_zap[14] != 0x05ec0ff1) {IOLog("ASTEROIDS GPU: bar skipped: mode 15 did not finish\n"); return;}
+    NativeAdrenoVm *vm = NativeAdrenoGpuContextVm();
+    const unsigned bits = native_gpu_context.output_bits;
+    if (!vm || !bits) {IOLog("ASTEROIDS GPU: bar skipped: no GPU VM\n"); return;}
+    const NativeAdrenoRingClock clock{nullptr, ringNow, ringIdle};
+    static const char *const kFence[] = {"done", "timeout", "poisoned", "argument"};
+    uint64_t handle = 0;
+    uint32_t fence = 0, seen = 0, words[4] = {};
+    g[0] = 1;
+    native_gpu_power_stage = 0xf1;
+    IOLog("ASTEROIDS GPU: ib: CP_INDIRECT_BUFFER at %llx with one CP_MEM_WRITE into scratch+8\n", GPB_IB_IOVA);
+    IOReturn st = gIb1.allocate(0x1000, bits, true, 0x1000);
+    if (st) {IOLog("ASTEROIDS GPU: ib alloc %x\n", st); return;}
+    uint32_t *ib = static_cast<uint32_t *>(gIb1.mapping());
+    const uint64_t at = gGpuBuffers[4].iova + 8;
+    if (AdrenoPM4Type7(GPB_CP_MEM_WRITE, 3, &ib[0]) != AdrenoPM4Success ||
+        AdrenoPM4Type7(GPB_CP_INDIRECT_BUFFER, 3, &words[0]) != AdrenoPM4Success) {IOLog("ASTEROIDS GPU: ib pm4 refused\n"); return;}
+    ib[1] = uint32_t(at); ib[2] = uint32_t(at >> 32); ib[3] = 0x1b810014;
+    st = gIb1.publishForDevice(0, 0x1000, false);
+    if (!st) st = vm->map(&gIb1, 0, GPB_IB_IOVA, 1u, 0, 2, &handle);
+    if (st) {IOLog("ASTEROIDS GPU: ib publish/map %x\n", st); return;}
+    volatile uint32_t *scratch = reinterpret_cast<volatile uint32_t *>(gGpuCpu[4]);
+    scratch[2] = 0;
+    ringBarrier(nullptr);
+    words[1] = uint32_t(GPB_IB_IOVA); words[2] = uint32_t(GPB_IB_IOVA >> 32); words[3] = 4;
+    g[1] = uint32_t(gRing.submit(words, 4, &fence));
+    if (!g[1]) g[2] = gRing.wait(fence, &clock, 200000, &seen);
+    ringBarrier(nullptr);
+    g[3] = scratch[2];
+    const bool ib_ok = !g[1] && !g[2] && g[3] == 0x1b810014;
+    IOLog("ASTEROIDS GPU: ib st=%x fence %u %s seen=%u scratch=%08x %s\n", g[1], fence, g[1] ? "-" : g[2] < 4 ? kFence[g[2]] : "?",
+          seen, g[3], ib_ok ? "ok" : "miss");
+    cpState("ib");
+    if (!ib_ok) {native_gpu_power_stage = 0xf9; return;}
+    g[0] = 2;
+    native_gpu_power_stage = 0xf2;
+    PE_Video video{};
+    if (PE_current_console(&video)) {IOLog("ASTEROIDS GPU: bar: no console\n"); native_gpu_power_stage = 0xfa; return;}
+    struct gpb_bar b;
+    g[4] = uint32_t(gpb_bar_plan(video.v_baseAddr, uint32_t(video.v_width), uint32_t(video.v_height), uint32_t(video.v_rowBytes),
+                                 uint32_t(video.v_depth), &b));
+    IOLog("ASTEROIDS GPU: bar: console %lx %lux%lu row %lu depth %lu; rule=%u rows %u-%u span %llx+%llx at %llx, ib %u dwords\n",
+          video.v_baseAddr, video.v_width, video.v_height, video.v_rowBytes, video.v_depth, g[4], b.y0, b.y0 + b.rows - 1, b.page,
+          b.bytes, b.offset, b.ib_dwords);
+    if (g[4]) {native_gpu_power_stage = 0xfa; return;}
+    g[5] = gFb.adopt(b.page, size_t(b.bytes), bits, size_t(b.bytes));
+    if (!g[5]) g[6] = vm->map(&gFb, 0, GPB_FB_IOVA, 3u, 0, 2, &handle);
+    IOLog("ASTEROIDS GPU: bar: framebuffer pages adopt %x map %x at %llx\n", g[5], g[6], GPB_FB_IOVA);
+    if (g[5] || g[6]) {native_gpu_power_stage = 0xfb; return;}
+    uint32_t header = 0;
+    if (AdrenoPM4Type7(GPB_CP_MEM_WRITE, uint16_t(b.width + 2), &header) != AdrenoPM4Success) {IOLog("ASTEROIDS GPU: bar pm4 refused\n"); return;}
+    g[7] = gBarIb.allocate(b.ib_bytes, bits, false, b.ib_bytes);
+    if (!g[7]) {
+        gpb_bar_fill(&b, header, GPB_FB_IOVA, static_cast<uint32_t *>(gBarIb.mapping()));
+        g[7] = gBarIb.publishForDevice(0, b.ib_bytes, false);
+    }
+    if (!g[7]) g[8] = vm->map(&gBarIb, 0, GPB_BAR_IB_IOVA, 1u, 0, 2, &handle);
+    IOLog("ASTEROIDS GPU: bar: ib alloc %x (%u spans) map %x at %llx\n", g[7], unsigned(gBarIb.spanCount()), g[8], GPB_BAR_IB_IOVA);
+    if (g[7] || g[8]) {native_gpu_power_stage = 0xfb; return;}
+    g[0] = 3;
+    native_gpu_power_stage = 0xf3;
+    words[1] = uint32_t(GPB_BAR_IB_IOVA); words[2] = uint32_t(GPB_BAR_IB_IOVA >> 32); words[3] = b.ib_dwords;
+    const volatile uint32_t *fb = reinterpret_cast<const volatile uint32_t *>(static_cast<uint8_t *>(gFb.mapping()) + b.offset +
+                                                                              size_t(b.rows / 2) * b.row_bytes);
+    IOLog("ASTEROIDS GPU: bar: drawing from the IB, then every 200 ms for 2 minutes\n");
+    for (unsigned n = 0; n < 600; ++n) {
+        uint32_t w = 0;
+        st = gRing.submit(words, 4, &fence);
+        if (!st) w = gRing.wait(fence, &clock, 200000, &seen);
+        if (st || w) {++g[10]; if (!g[11]) g[11] = st ? uint32_t(st) : 0x100u | w; break;}
+        ++g[9];
+        if (!n) {
+            ringBarrier(nullptr);
+            const uint32_t px[3] = {fb[b.width / 6], fb[b.width / 2], fb[b.width * 5 / 6]};
+            const bool same = px[0] == 0x00ff0000u && px[1] == 0x0000ff00u && px[2] == 0x000000ffu;
+            IOLog("ASTEROIDS GPU: bar drawn fence %u seen=%u pixels %08x %08x %08x %s\n", fence, seen, px[0], px[1], px[2],
+                  same ? "ok" : "miss");
+            cpState("bar");
+        }
+        IOSleep(200);
+    }
+    IOLog("ASTEROIDS GPU: bar redraws ok=%u failed=%u first=%x %s\n", g[9], g[10], g[11], g[10] ? "stopped" : "done");
+    native_gpu_power_stage = g[10] ? 0xff : 0xf8;
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -860,6 +966,7 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 13) gpuHwInit();
     if (gMode >= 14) cpStart();
     if (gMode >= 15) zapStart();
+    if (gMode >= 16) barStart();
     native_gpu_power_stage = 4;
 }
 }

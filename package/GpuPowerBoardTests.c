@@ -578,8 +578,30 @@ int main(void) {
 #undef PHDR
 #undef PUT32
     }
-    // Modes 0 and 16+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 19; m += (m == 0 ? 16 : 1)) {
+    // Mode 16's bar: the 3a console (1080 x 2392, 4320-byte rows) and the refusals.
+    {
+        struct gpb_bar b;
+        CHECK(gpb_bar_plan(0xe1000000ULL, 1080, 2392, 4320, 32, &b) == 0);
+        CHECK(b.y0 == 1594 && b.rows == 48 && b.page == ((0xe1000000ULL + 1594ULL * 4320) & ~0xfffULL));
+        CHECK(b.offset == (0xe1000000ULL + 1594ULL * 4320) - b.page && !(b.page & 0xfff) && !(b.bytes & 0xfff));
+        CHECK(b.page + b.bytes >= 0xe1000000ULL + 1641ULL * 4320 + 4320 && b.bytes - b.offset < 49ULL * 4320 + 0x1000);
+        CHECK(b.ib_dwords == 48 * 1083 && b.ib_bytes == 0x33000);
+        static uint32_t ib[48 * 1083];
+        gpb_bar_fill(&b, 0x7abc0000u, GPB_FB_IOVA, ib);
+        const uint64_t row5 = GPB_FB_IOVA + b.offset + 5 * 4320ULL;
+        CHECK(ib[0] == 0x7abc0000u && ib[1] == (uint32_t)(GPB_FB_IOVA + b.offset) && ib[2] == 0);
+        CHECK(ib[5 * 1083] == 0x7abc0000u && ib[5 * 1083 + 1] == (uint32_t)row5);
+        CHECK(ib[3] == 0x00ffffffu && ib[5 * 1083 + 3] == 0x00ff0000u && ib[5 * 1083 + 3 + 539] == 0x0000ff00u);
+        CHECK(ib[5 * 1083 + 3 + 1079] == 0x000000ffu && ib[47 * 1083 + 3 + 540] == 0x00ffffffu);
+        CHECK(gpb_bar_pixel(&b, 359, 10) == 0x00ff0000u && gpb_bar_pixel(&b, 360, 10) == 0x0000ff00u &&
+              gpb_bar_pixel(&b, 720, 10) == 0x000000ffu && gpb_bar_pixel(&b, 0, 44) == 0x00ffffffu);
+        CHECK(gpb_bar_plan(0, 1080, 2392, 4320, 32, &b) == 1 && gpb_bar_plan(0xe1000000ULL, 1080, 2392, 4320, 16, &b) == 1);
+        CHECK(gpb_bar_plan(0xe1000000ULL, 2, 2392, 4320, 32, &b) == 2 && gpb_bar_plan(0xe1000000ULL, 16382, 2392, 65536, 32, &b) == 2);
+        CHECK(gpb_bar_plan(0xe1000000ULL, 1080, 100, 4320, 32, &b) == 3 && gpb_bar_plan(0xe1000000ULL, 1080, 2392, 4316, 32, &b) == 4);
+        CHECK(gpb_bar_plan(0xe1000000ULL, 1080, 2392, 200000, 32, &b) == 5 && gpb_bar_plan(0xe1000000ULL, 8000, 2392, 32000, 32, &b) == 6);
+    }
+    // Modes 0 and 17+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 20; m += (m == 0 ? 17 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -594,6 +616,6 @@ int main(void) {
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
            "the mode 6 clock snapshot (reads only), the mode 7 clock bring-up (29 writes in Linux order, lock and update timeouts, "
-           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), the mode 12 survey (reads only), mode 13's hw_init writes (Linux order, cached aperture, no CP start), mode 15's SCM encodings and mbn split (headers + hash as metadata, the relocatable load placed and zero-filled, 9 refusals), modes 0 and 16+ refused (9-10 and 14-15 are the probe's)\n");
+           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), the mode 12 survey (reads only), mode 13's hw_init writes (Linux order, cached aperture, no CP start), mode 15's SCM encodings and mbn split (headers + hash as metadata, the relocatable load placed and zero-filled, 9 refusals), mode 16's bar plan and IB (6 refusals), modes 0 and 17+ refused (9-10 and 14-16 are the probe's)\n");
     return 0;
 }

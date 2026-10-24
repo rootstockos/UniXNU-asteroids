@@ -12,7 +12,7 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 15u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 16u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
                           // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
                           // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset; 8 then reads the GMU
@@ -23,7 +23,8 @@
                           // (gpb_gpu_survey), builds the GPU's own SMMU context and copies the SQE microcode into it; 13
                           // then runs a8xx hw_init's register writes up to the SQE base (gpb_hw_init); 14 then starts
                           // the CP: ring, SQE, CP_ME_INIT and a first CP_MEM_WRITE; 15 then loads the zap shader (PAS 13)
-                          // and leaves secure mode (CP_SET_SECURE_MODE 0), then writes a second word
+                          // and leaves secure mode (CP_SET_SECURE_MODE 0), then writes a second word; 16 then runs a
+                          // one-packet IB and has the GPU write a bar into the firmware framebuffer from a second IB
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -955,6 +956,61 @@ static inline void gpb_mdt_place(const uint8_t *img, const struct gpb_mdt *m, vo
     for (uint32_t s = 0; s < m->loads; ++s) {
         volatile uint8_t *to = region + (m->addr[s] - m->min_addr);
         for (uint32_t i = 0; i < m->mem_bytes[s]; ++i) to[i] = i < m->file_bytes[s] ? img[m->offset[s] + i] : 0;
+    }
+}
+
+// Mode 16 (T14): the GPU writes a bar into the firmware framebuffer. One IB of CP_MEM_WRITE packets, one per row, each
+// carrying the row's pixels; the framebuffer pages under the bar are mapped into the GPU's context. GPU addresses stay below
+// the 16 MiB GMEM window, after the kernel buffers (0x100000-0x302fff).
+#define GPB_IB_IOVA 0x400000ULL          // the one-packet IB, at pandora level 12's address
+#define GPB_BAR_IB_IOVA 0x500000ULL      // the bar's IB
+#define GPB_BAR_IB_MAX 0x100000u
+#define GPB_FB_IOVA 0x800000ULL          // the framebuffer pages under the bar
+#define GPB_FB_MAX 0x800000u
+#define GPB_BAR_ROWS 48u
+#define GPB_BAR_EDGE 4u                  // white rows at the top and the bottom of the bar
+#define GPB_CP_MEM_WRITE 0x3du           // PM4 type 7: address lo, hi, then the dwords to write
+#define GPB_CP_INDIRECT_BUFFER 0x3fu     // PM4 type 7: address lo, hi, size in dwords
+struct gpb_bar {
+    uint64_t page, bytes, offset;        // page-aligned framebuffer span under the bar, and the bar's first byte in it
+    uint32_t y0, rows, width, row_bytes, ib_dwords, ib_bytes;
+};
+// 0, or the rule that refused: 1 not a 32-bit console, 2 width outside 3..16381 (one packet per row), 3 fewer rows than
+// the bar, 4 rows narrower than width pixels, 5 span over GPB_FB_MAX, 6 IB over GPB_BAR_IB_MAX. The bar starts two
+// thirds down the screen.
+static inline int gpb_bar_plan(uint64_t base, uint32_t width, uint32_t height, uint32_t row_bytes, uint32_t depth,
+                               struct gpb_bar *b) {
+    *b = (struct gpb_bar){0};
+    if (!base || depth != 32) return 1;
+    if (width < 3 || width > 16381) return 2;
+    if (height < GPB_BAR_ROWS * 3) return 3;
+    if (row_bytes < width * 4u) return 4;
+    b->y0 = height / 3 * 2; b->rows = GPB_BAR_ROWS; b->width = width; b->row_bytes = row_bytes;
+    const uint64_t first = base + (uint64_t)b->y0 * row_bytes;
+    const uint64_t end = first + (uint64_t)(b->rows - 1) * row_bytes + width * 4u;
+    b->page = first & ~0xfffULL;
+    b->bytes = ((end + 0xfffULL) & ~0xfffULL) - b->page;
+    b->offset = first - b->page;
+    if (b->bytes > GPB_FB_MAX) return 5;
+    b->ib_dwords = b->rows * (3u + width);
+    b->ib_bytes = (b->ib_dwords * 4u + 0xfffu) & ~0xfffu;
+    if (b->ib_bytes > GPB_BAR_IB_MAX) return 6;
+    return 0;
+}
+// The pixel at (x, row): white edge rows, else red, green and blue thirds (x8r8g8b8).
+static inline uint32_t gpb_bar_pixel(const struct gpb_bar *b, uint32_t x, uint32_t row) {
+    if (row < GPB_BAR_EDGE || row >= b->rows - GPB_BAR_EDGE) return 0x00ffffffu;
+    static const uint32_t thirds[3] = {0x00ff0000u, 0x0000ff00u, 0x000000ffu};
+    return thirds[(uint64_t)x * 3 / b->width];
+}
+// The bar's IB: per row the CP_MEM_WRITE header (the caller's PM4 encoding of opcode 0x3d with width + 2 dwords), the
+// row's GPU address in the mapped span at fb_iova, then its pixels.
+static inline void gpb_bar_fill(const struct gpb_bar *b, uint32_t header, uint64_t fb_iova, uint32_t *ib) {
+    uint32_t k = 0;
+    for (uint32_t row = 0; row < b->rows; ++row) {
+        const uint64_t at = fb_iova + b->offset + (uint64_t)row * b->row_bytes;
+        ib[k++] = header; ib[k++] = (uint32_t)at; ib[k++] = (uint32_t)(at >> 32);
+        for (uint32_t x = 0; x < b->width; ++x) ib[k++] = gpb_bar_pixel(b, x, row);
     }
 }
 #endif
