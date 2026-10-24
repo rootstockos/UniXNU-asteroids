@@ -12,14 +12,17 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 11u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 14u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
                           // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
                           // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset; 8 then reads the GMU
                           // core and RSCC state the cold start checks first (gpb_read_gmu_state), and writes nothing more;
                           // 9 loads the GMU firmware and waits for HFI ready (ShengGmuLoadAndStartHfi) when that state is
                           // clean; 10 runs the whole cold start with the HFI startup messages (ShengGmuColdStart); 11
-                          // then asks the GMU for GX (gpb_gx_on) and reads RBBM
+                          // then asks the GMU for GX (gpb_gx_on) and reads RBBM; 12 then reads the SW fuse and CP state
+                          // (gpb_gpu_survey), builds the GPU's own SMMU context and copies the SQE microcode into it; 13
+                          // then runs a8xx hw_init's register writes up to the SQE base (gpb_hw_init); 14 then starts
+                          // the CP: ring, SQE, CP_ME_INIT and a first CP_MEM_WRITE
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -676,5 +679,192 @@ static inline void gpb_gx_on(const struct gpb_gx_io *io, uint32_t perf, uint32_t
     x->step = 6;
 #undef GPB_GX_W
 #undef GPB_GX_R
+}
+// Modes 12-14 use the A810 register map NativeAdreno generates from the pinned a6xx.xml and a8xx_gpu.c
+// (drivers/NativeAdreno/NativeAdrenoA810HwInit.h, scripts/derive-a810-hwinit.py): dword offsets in the GPU block
+// (byte = dword * 4) and, for the GMU registers, GPB_GMU_REG. They reuse mode 11's gpb_gx_io, with one more window:
+// CX_MISC (0x3d9e000, ShengGmu's ShengGmuCxMisc), read only.
+#include "NativeAdrenoA810HwInit.h"
+#define GPB_WIN_CX 7u
+#define GPB_GPU_REG(dword) ((uint32_t)(dword) * 4u)
+// Mode 12 (reads only, GX on): the software fuse a6xx_gmu_secure_init writes when SCM is missing (CX_MISC_SW_FUSE_VALUE
+// 0x400: RAYTRACING bit 0, FASTBLEND bit 1, LPAC bit 2) and the A8XX frequency-limit status (0x405); the RBBM fuse
+// violation status (0x71); then the CP and RBBM registers hw_init is about to program, as reset left them.
+#define GPB_CX_SW_FUSE_VALUE (0x400u * 4u)
+#define GPB_CX_SW_FUSE_FREQ_LIMIT (0x405u * 4u)
+#define GPB_RBBM_SW_FUSE_INT_STATUS 0x071u
+#define GPB_SURVEY_GPU 14u
+static const uint32_t gpb_survey_gpu[GPB_SURVEY_GPU] = {
+    A810_RBBM_STATUS, A810_RBBM_INT_0_STATUS, GPB_RBBM_SW_FUSE_INT_STATUS, A810_RBBM_GBIF_HALT, A810_GBIF_HALT,
+    A810_RBBM_SECVID_TSB_CNTL, A810_CP_SQE_CNTL, A810_CP_SQE_INSTR_BASE, A810_CP_SQE_INSTR_BASE + 1, A810_CP_RB_BASE,
+    A810_CP_RB_RPTR, A810_CP_RB_WPTR, A810_CP_APERTURE_CNTL_HOST, A810_CP_INTERRUPT_STATUS_GLOBAL,
+};
+struct gpb_survey {
+    int done;               // 0: an access failed (io), nothing after it was read
+    uint32_t fuse, freq_limit, gpu[GPB_SURVEY_GPU];
+};
+static inline void gpb_gpu_survey(const struct gpb_gx_io *io, struct gpb_survey *v) {
+    __builtin_memset(v, 0, sizeof *v);
+    if (io->read32(io->cookie, GPB_WIN_CX, GPB_CX_SW_FUSE_VALUE, &v->fuse) ||
+        io->read32(io->cookie, GPB_WIN_CX, GPB_CX_SW_FUSE_FREQ_LIMIT, &v->freq_limit)) return;
+    for (unsigned i = 0; i < GPB_SURVEY_GPU; ++i)
+        if (io->read32(io->cookie, GPB_WIN_GPU, GPB_GPU_REG(gpb_survey_gpu[i]), &v->gpu[i])) return;
+    v->done = 1;
+}
+// Mode 13: a8xx hw_init (a8xx_gpu.c, torvalds/linux 734bef548a96) from the aperture clear to the interrupt masks, in its
+// order, with the OOB GPU_SET mode 11 holds; everything after (adreno_hw_init, the SQE base, the ring) is mode 14's.
+//   1 aperture clear (cached_aperture reset, so CP_APERTURE_CNTL_HOST 0 is written), GBIF_HALT 0 and RBBM_GBIF_HALT 0,
+//     each read back; SECVID TSB off, trusted base/size 0
+//   2 PERFCTR_GPU_BUSY_MASKED ~0; UCHE_CCHE and SP_HLSQ GMEM range min 64 MiB; the four UCHE trap/write-through bases
+//     0x1fffffffff000 (a6xx_gpu_init's uche_trap_base); PERFCTR_CNTL and SLICE_PERFCTR_CNTL 1; GMU XOCLK_1 countable 4;
+//     CP_PERFCTR_CP_SEL(0) 1
+//   3 a8xx_set_ubwc_config for milos_data (ubwc_config.c): UBWC 4.0, highest bank bit 15, and flags written as
+//     UBWC_SWIZZLE_ENABLE_LVL2|LVL3 (bits 1|2), which qcom_ubwc_swizzle reads as DISABLE_SWIZZLE_LVL3 (bit 1): level 2
+//     swizzling on, level 3 off. So hbb 2 (lo 2, hi 0), mode tag 2, rgba8888_lossless, fp16compoptdis,
+//     rgb565_predicator and amsbc on, ubwc_mode and min_acc_len_64b off, uavflagprd_inv 2
+//   4 the 20 bicubic weights; UCHE_CLIENT_PF BIT(7)|1; a8xx_nonctxt_config (a810_nonctxt_regs per pipe NONE..DDE_BV,
+//     LPAC skipped, RB_GC_GMEM_PROTECT included as Linux writes it here)
+//   5 hang detection (INTERFACE_HANG_INT_CNTL BIT(30)|0xcfffff, SLICE BIT(30)); GMU GPU_CX_BUSY_MASK 0xff000000, power
+//     counter XOCLK_0 countable BIT(5) (read-modify-write of the low byte) and POWER_COUNTER_ENABLE 1
+//   6 a8xx_set_cp_protect (CNTL 0xffff000b on BR and BV, the a810_protect list, its last value to CP_PROTECT_PIPE(15)
+//     on BR and BV); RB_CONTEXT_SWITCH_GMEM_SAVE_RESTORE_ENABLE 1 on BR
+//   7 per pipe BR, BV, AQE0, AQE1, DDE_BR, DDE_BV: APRIV (BR 0x6f, others 0xf), CP interrupt and HW fault masks
+//   8 aperture clear; CP_INTERRUPT_STATUS_MASK_GLOBAL 0x7f007f; RBBM_INT_0_MASK 0x33d283c2
+// The aperture is written only when it changes, as a8xx_aperture_slice_set caches it. Then it reads back a few written
+// registers (gpb_hw_check) and the status words.
+#define GPB_GMEM_RANGE_MIN 0x4000000ull         // SZ_64M
+#define GPB_UCHE_TRAP_BASE 0x1fffffffff000ull
+#define GPB_UBWC_GRAS 0x50u                     // hbb 2 << 5 | level3 off << 4
+#define GPB_UBWC_RB_CCU 0x24u                   // level3 off << 5 | hbb_lo 2 << 1
+#define GPB_UBWC_RB_CMP 0x1001eu                // mode 2 << 15 | rgba8888 << 4 | fp16 << 3 | rgb565 << 2 | amsbc << 1
+#define GPB_UBWC_SP 0x2024u                     // level3 off << 13 | uavflagprd_inv 2 << 4 | hbb_lo 2 << 1
+#define GPB_UBWC_TPL1 0x84u                     // level3 off << 7 | hbb_lo 2 << 1
+#define GPB_HW_CHECKS 8u
+struct gpb_hw {
+    unsigned step;          // last step started, 1-8; 9 when all finished
+    unsigned failed;        // 0 ok, 3 I/O
+    unsigned writes, aperture_writes, protect_writes, nonctxt_writes, mismatches;
+    uint32_t gbif_halt, rbbm_gbif_halt, xoclk0, protect_last;
+    uint32_t check[GPB_HW_CHECKS];   // read back, in gpb_hw_check order
+    uint32_t rbbm, int_status, cp_global;
+};
+// {window, offset, the value written}: registers outside the aperture, read back after step 8.
+static const uint32_t gpb_hw_check[GPB_HW_CHECKS][3] = {
+    {GPB_WIN_GPU, GPB_GPU_REG(A810_RBBM_PERFCTR_GPU_BUSY_MASKED), 0xffffffffu},
+    {GPB_WIN_GPU, GPB_GPU_REG(A810_UCHE_TRAP_BASE), 0xfffff000u},
+    {GPB_WIN_GPU, GPB_GPU_REG(A810_UCHE_TRAP_BASE + 1), 0x1ffffu},
+    {GPB_WIN_GPU, GPB_GPU_REG(A810_TPL1_BICUBIC_WEIGHTS_TABLE(1)), 0x3fe05ff4u},
+    {GPB_WIN_GPU, GPB_GPU_REG(A810_UCHE_CLIENT_PF), A810_INIT_UCHE_CLIENT_PF},
+    {GPB_WIN_GPU, GPB_GPU_REG(A810_CP_PROTECT_GLOBAL(0)), 0x0e8c0000u},
+    {GPB_WIN_GPU, GPB_GPU_REG(A810_RBBM_INT_0_MASK), A810_INIT_RBBM_INT_0_MASK},
+    {GPB_WIN_GMU, GPB_GMU_REG(A810_GPU_GMU_AO_GPU_CX_BUSY_MASK), A810_INIT_GPU_GMU_AO_GPU_CX_BUSY_MASK},
+};
+static inline void gpb_hw_init(const struct gpb_gx_io *io, struct gpb_hw *h) {
+    __builtin_memset(h, 0, sizeof *h);
+    uint32_t aperture = ~0u;   // cached_aperture = UINT_MAX
+#define GPB_HW_W(w, off, v) do {++h->writes; if (io->write32(io->cookie, (w), (off), (v))) {h->failed = 3; return;}} while (0)
+#define GPB_HW_R(w, off, p) do {if (io->read32(io->cookie, (w), (off), (p))) {h->failed = 3; return;}} while (0)
+#define GPB_GPU_W(dword, v) GPB_HW_W(GPB_WIN_GPU, GPB_GPU_REG(dword), (v))
+#define GPB_GPU_W64(dword, v) do {GPB_GPU_W((dword), (uint32_t)(v)); GPB_GPU_W((dword) + 1, (uint32_t)((v) >> 32));} while (0)
+#define GPB_PIPE(p) do {const uint32_t a_ = (uint32_t)(p) << A810_CP_APERTURE_CNTL_HOST_PIPEID_SHIFT; \
+    if (aperture != a_) {aperture = a_; ++h->aperture_writes; GPB_GPU_W(A810_CP_APERTURE_CNTL_HOST, a_);}} while (0)
+    h->step = 1;
+    GPB_PIPE(A810_PIPE_NONE);
+    GPB_GPU_W(A810_GBIF_HALT, A810_INIT_GBIF_HALT);
+    GPB_HW_R(GPB_WIN_GPU, GPB_GPU_REG(A810_GBIF_HALT), &h->gbif_halt);
+    GPB_GPU_W(A810_RBBM_GBIF_HALT, A810_INIT_RBBM_GBIF_HALT);
+    GPB_HW_R(GPB_WIN_GPU, GPB_GPU_REG(A810_RBBM_GBIF_HALT), &h->rbbm_gbif_halt);
+    GPB_GPU_W(A810_RBBM_SECVID_TSB_CNTL, A810_INIT_RBBM_SECVID_TSB_CNTL);
+    GPB_GPU_W64(A810_RBBM_SECVID_TSB_TRUSTED_BASE, 0ull);
+    GPB_GPU_W(A810_RBBM_SECVID_TSB_TRUSTED_SIZE, A810_INIT_RBBM_SECVID_TSB_TRUSTED_SIZE);
+    h->step = 2;
+    GPB_GPU_W(A810_RBBM_PERFCTR_GPU_BUSY_MASKED, A810_INIT_RBBM_PERFCTR_GPU_BUSY_MASKED);
+    GPB_GPU_W64(A810_UCHE_CCHE_GC_GMEM_RANGE_MIN, GPB_GMEM_RANGE_MIN);
+    GPB_GPU_W64(A810_SP_HLSQ_GC_GMEM_RANGE_MIN, GPB_GMEM_RANGE_MIN);
+    GPB_GPU_W64(A810_UCHE_TRAP_BASE, GPB_UCHE_TRAP_BASE);
+    GPB_GPU_W64(A810_UCHE_WRITE_THRU_BASE, GPB_UCHE_TRAP_BASE);
+    GPB_GPU_W64(A810_UCHE_CCHE_TRAP_BASE, GPB_UCHE_TRAP_BASE);
+    GPB_GPU_W64(A810_UCHE_CCHE_WRITE_THRU_BASE, GPB_UCHE_TRAP_BASE);
+    GPB_GPU_W(A810_RBBM_PERFCTR_CNTL, A810_INIT_RBBM_PERFCTR_CNTL);
+    GPB_GPU_W(A810_RBBM_SLICE_PERFCTR_CNTL, A810_INIT_RBBM_SLICE_PERFCTR_CNTL);
+    GPB_HW_W(GPB_WIN_GMU, GPB_GMU_REG(A810_GMU_CX_GMU_POWER_COUNTER_SELECT_XOCLK_1), 0x4u);
+    GPB_GPU_W(A810_CP_PERFCTR_CP_SEL(0), 1u);
+    h->step = 3;
+    GPB_PIPE(A810_PIPE_BV);
+    GPB_GPU_W(A810_GRAS_NC_MODE_CNTL, GPB_UBWC_GRAS);
+    GPB_PIPE(A810_PIPE_BR);
+    GPB_GPU_W(A810_GRAS_NC_MODE_CNTL, GPB_UBWC_GRAS);
+    GPB_PIPE(A810_PIPE_BR);
+    GPB_GPU_W(A810_RB_CCU_NC_MODE_CNTL, GPB_UBWC_RB_CCU);
+    GPB_PIPE(A810_PIPE_BR);
+    GPB_GPU_W(A810_RB_CMP_NC_MODE_CNTL, GPB_UBWC_RB_CMP);
+    GPB_PIPE(A810_PIPE_NONE);
+    GPB_GPU_W(A810_SP_NC_MODE_CNTL, GPB_UBWC_SP);
+    GPB_GPU_W(A810_TPL1_NC_MODE_CNTL, GPB_UBWC_TPL1);
+    h->step = 4;
+    for (unsigned i = 0; i < NATIVE_ADRENO_A810_BICUBIC_COUNT; ++i)
+        GPB_GPU_W(A810_TPL1_BICUBIC_WEIGHTS_TABLE(i), NativeAdrenoA810Bicubic[i]);
+    GPB_GPU_W(A810_UCHE_CLIENT_PF, A810_INIT_UCHE_CLIENT_PF);
+    for (unsigned pipe = A810_PIPE_NONE; pipe <= A810_PIPE_DDE_BV; ++pipe) {
+        if (pipe == A810_PIPE_LPAC) continue;
+        GPB_PIPE(pipe);
+        for (unsigned i = 0; i < NATIVE_ADRENO_A810_NONCTXT_COUNT; ++i) {
+            if (!((1u << pipe) & NativeAdrenoA810NonCtxt[i][2])) continue;
+            ++h->nonctxt_writes;
+            GPB_GPU_W(NativeAdrenoA810NonCtxt[i][0], NativeAdrenoA810NonCtxt[i][1]);
+        }
+    }
+    GPB_PIPE(A810_PIPE_NONE);
+    h->step = 5;
+    GPB_GPU_W(A810_RBBM_INTERFACE_HANG_INT_CNTL, A810_INIT_RBBM_INTERFACE_HANG_INT_CNTL);
+    GPB_GPU_W(A810_RBBM_SLICE_INTERFACE_HANG_INT_CNTL, A810_INIT_RBBM_SLICE_INTERFACE_HANG_INT_CNTL);
+    GPB_HW_W(GPB_WIN_GMU, GPB_GMU_REG(A810_GPU_GMU_AO_GPU_CX_BUSY_MASK), A810_INIT_GPU_GMU_AO_GPU_CX_BUSY_MASK);
+    GPB_HW_R(GPB_WIN_GMU, GPB_GMU_REG(A810_GMU_CX_GMU_POWER_COUNTER_SELECT_XOCLK_0), &h->xoclk0);
+    GPB_HW_W(GPB_WIN_GMU, GPB_GMU_REG(A810_GMU_CX_GMU_POWER_COUNTER_SELECT_XOCLK_0), (h->xoclk0 & ~0xffu) | (1u << 5));
+    GPB_HW_W(GPB_WIN_GMU, GPB_GMU_REG(A810_GMU_CX_GMU_POWER_COUNTER_ENABLE), A810_INIT_GMU_CX_GMU_POWER_COUNTER_ENABLE);
+    h->step = 6;
+    GPB_PIPE(A810_PIPE_BR);
+    GPB_GPU_W(A810_CP_PROTECT_CNTL_PIPE, A810_CP_PROTECT_CNTL_PIPE_VALUE);
+    GPB_PIPE(A810_PIPE_BV);
+    GPB_GPU_W(A810_CP_PROTECT_CNTL_PIPE, A810_CP_PROTECT_CNTL_PIPE_VALUE);
+    GPB_PIPE(A810_PIPE_NONE);
+    for (unsigned i = 0; i < NATIVE_ADRENO_A810_PROTECT_COUNT; ++i) {
+        if (!NativeAdrenoA810Protect[i][1]) continue;   // "Intentionally skip writing to some registers"
+        ++h->protect_writes;
+        GPB_GPU_W(A810_CP_PROTECT_GLOBAL(NativeAdrenoA810Protect[i][0]), NativeAdrenoA810Protect[i][1]);
+        h->protect_last = NativeAdrenoA810Protect[i][1];
+    }
+    GPB_PIPE(A810_PIPE_BR);
+    GPB_GPU_W(A810_CP_PROTECT_PIPE(15), h->protect_last);
+    GPB_PIPE(A810_PIPE_BV);
+    GPB_GPU_W(A810_CP_PROTECT_PIPE(15), h->protect_last);
+    GPB_PIPE(A810_PIPE_NONE);
+    GPB_PIPE(A810_PIPE_BR);
+    GPB_GPU_W(A810_RB_CONTEXT_SWITCH_GMEM_SAVE_RESTORE_ENABLE, 1u);
+    h->step = 7;
+    for (unsigned pipe = A810_PIPE_BR; pipe <= A810_PIPE_DDE_BV; ++pipe) {
+        if (pipe == A810_PIPE_LPAC) continue;
+        GPB_PIPE(pipe);
+        GPB_GPU_W(A810_CP_APRIV_CNTL_PIPE, pipe == A810_PIPE_BR ? A810_BR_APRIV_MASK_VALUE : A810_APRIV_MASK_VALUE);
+        GPB_GPU_W(A810_CP_INTERRUPT_STATUS_MASK_PIPE, A810_INIT_CP_INTERRUPT_STATUS_MASK_PIPE);
+        GPB_GPU_W(A810_CP_HW_FAULT_STATUS_MASK_PIPE, A810_INIT_CP_HW_FAULT_STATUS_MASK_PIPE);
+    }
+    h->step = 8;
+    GPB_PIPE(A810_PIPE_NONE);
+    GPB_GPU_W(A810_CP_INTERRUPT_STATUS_MASK_GLOBAL, A810_INIT_CP_INTERRUPT_STATUS_MASK_GLOBAL);
+    GPB_GPU_W(A810_RBBM_INT_0_MASK, A810_INIT_RBBM_INT_0_MASK);
+    for (unsigned i = 0; i < GPB_HW_CHECKS; ++i) {
+        GPB_HW_R(gpb_hw_check[i][0], gpb_hw_check[i][1], &h->check[i]);
+        if (h->check[i] != gpb_hw_check[i][2]) ++h->mismatches;
+    }
+    GPB_HW_R(GPB_WIN_GPU, GPB_GPU_REG(A810_RBBM_STATUS), &h->rbbm);
+    GPB_HW_R(GPB_WIN_GPU, GPB_GPU_REG(A810_RBBM_INT_0_STATUS), &h->int_status);
+    GPB_HW_R(GPB_WIN_GPU, GPB_GPU_REG(A810_CP_INTERRUPT_STATUS_GLOBAL), &h->cp_global);
+    h->step = 9;
+#undef GPB_PIPE
+#undef GPB_GPU_W64
+#undef GPB_GPU_W
+#undef GPB_HW_R
+#undef GPB_HW_W
 }
 #endif

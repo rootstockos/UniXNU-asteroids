@@ -219,8 +219,9 @@ gpupower_source=ROOT/'kits/asteroids/GpuPowerProbe.cpp'
 gpupower_obj=OUT/'GpuPowerProbe.o'
 # asteroids: GPU power mode 5 builds the GMU's SMMU context with NativeAdreno's NativeAdrenoGmuContextBringup (uke's mode 4),
 # so the probe links that class and what it needs: the memory, VM and SMMU-context classes, NativeAdrenoCpu.cpp's cache and
-# CPU queries, and UniXNU's ArmSmmu4K kit (as uke's build-native-adreno-kits.py takes them). The rest of NativeAdreno (its
-# service, GMU cold start, ring) stays out until a later stage; CONFIG_XNU_NATIVE_ADRENO stays off. The GMU pool comes
+# CPU queries, and UniXNU's ArmSmmu4K kit (as uke's build-native-adreno-kits.py takes them). Modes 12-14 add the GPU's own
+# context, the ring, CP init and the power-up list, and UniXNU's AdrenoPM4 kit for their packets. The rest of NativeAdreno
+# (its service, IRQ, user clients) stays out; CONFIG_XNU_NATIVE_ADRENO stays off. The GMU pool comes
 # from board.toml [gpu] and must match the probe's GpuPowerBoard.h, so the context adopts the pages mode 4 tested.
 import re,tomllib
 gpu=tomllib.loads((ROOT/'kits/asteroids/../board.toml').resolve().read_text())['gpu']
@@ -229,8 +230,8 @@ board_h=(ROOT/'kits/asteroids/GpuPowerBoard.h').read_text()
 require(int(re.search(r'#define GPB_GMU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_base and
         int(re.search(r'#define GPB_GMU_POOL_BYTES (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_bytes,
         'board.toml [gpu] gmu_pool_* and GpuPowerBoard.h GPB_GMU_POOL_* differ')
-adreno=ROOT/'drivers/NativeAdreno';smmu4k=ROOT/'kits/ArmSmmu4K'
-adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-Wno-incompatible-sysroot',
+adreno=ROOT/'drivers/NativeAdreno';smmu4k=ROOT/'kits/ArmSmmu4K';pm4=ROOT/'kits/AdrenoPM4'
+adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-I',str(pm4),'-Wno-incompatible-sysroot',
               '-DSHENG_GMU_POOL_BASE=UINT64_C(%#x)'%pool_base,'-DSHENG_GMU_POOL_BYTES=%#xu'%pool_bytes]
 def kernel_cxx(src,obj,extra):
     return [str(src) if str(arg)==str(source) else str(obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+extra
@@ -241,13 +242,14 @@ gmu_gen=ROOT/'build/sheng-gmu';hfi_kit=ROOT/'kits/AdrenoFirmware'
 for header in ('ShengGmuVotesSource.h','ShengGmuCommandDbSource.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu-votes.py --from-data first')
 # Modes 9-10 run the GMU cold start (ShengGmu.c over AdrenoFirmware.c) on the generated registers and firmware.
-for header in ('ShengGmuSource.h','ShengGmuFirmware.h'):
+for header in ('ShengGmuSource.h','ShengGmuFirmware.h','ShengSqeFirmware.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu.py first')
 vote_flags=['-I',str(ROOT/'kits/asteroids'),'-I',str(hfi_kit),'-I',str(gmu_gen)]
 run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags+vote_flags),cwd=r['directory'])
 gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuMemory','NativeAdrenoVm','NativeAdrenoGmuMemory',
                                           'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu',
-                                          'NativeAdrenoSha256')]
+                                          'NativeAdrenoSha256','NativeAdrenoGpuContext','NativeAdrenoRing',
+                                          'NativeAdrenoCpInit','NativeAdrenoPwrup')]
 gmu_objs=[]
 for src in gmu_sources:
     gmu_objs.append(OUT/(src.stem+'.o'));run(kernel_cxx(src,gmu_objs[-1],adreno_flags),cwd=r['directory'])
@@ -274,11 +276,11 @@ while j<len(pa):
 process_cmd+=['-Wall','-Wextra','-Werror','-mgeneral-regs-only','-I',str(ROOT/'.cache/xnu-work/osfmk')]
 # asteroids: BootProcessProbe and BootUiTraceProbe (uke's boot diagnostics) are not built; process_cmd only serves as
 # the kernel C compile template for the stubs below.
-smmu_sources=sorted(smmu4k.glob('ArmSmmu4K*.c'))
+smmu_sources=sorted(smmu4k.glob('ArmSmmu4K*.c'))+[pm4/'AdrenoPM4.c']
 for src in smmu_sources:
     gmu_objs.append(OUT/(src.stem+'.kit.o'))
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
-        ['-I',str(smmu4k)],cwd=pr['directory'])
+        ['-I',str(smmu4k),'-I',str(pm4)],cwd=pr['directory'])
 vote_sources=[ROOT/'kits/asteroids/ShengGmuVotes.c',ROOT/'kits/asteroids/ShengGmuCommandDb.c',
               hfi_kit/'AdrenoHfiVotes.c',hfi_kit/'AdrenoHfiStartup.c',hfi_kit/'AdrenoHfi.c',
               ROOT/'kits/asteroids/ShengGmu.c',hfi_kit/'AdrenoFirmware.c']
@@ -311,7 +313,8 @@ sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
          *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
          gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',
-         gmu_gen/'ShengGmuFirmware.h']
+         gmu_gen/'ShengGmuFirmware.h',gmu_gen/'ShengSqeFirmware.h',adreno/'NativeAdrenoA810HwInit.h',
+         adreno/'NativeAdrenoRegisters.h',pm4/'AdrenoPM4.h']
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeGOPPresenter'],text=True),end='')
 gop=ROOT/'build/native-gop-presenter';gop_late=gop/'NativeGOPPresenter.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp',

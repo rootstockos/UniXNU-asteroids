@@ -2,9 +2,10 @@
 // asteroids Adreno 810 power observation and CX power-up, modes 1-3, the GMU pool round trip, mode 4, the GMU's SMMU
 // context on that pool, mode 5, the read-only GMU clock and command-DB snapshot, mode 6, the GMU clock bring-up, mode 7,
 // the first GMU and RSCC register reads, mode 8, the GMU firmware load to HFI ready, mode 9, and the whole cold start with
-// the HFI startup messages, mode 10, and the GX request with the first RBBM reads, mode 11 (sheng-gpu-power=1..11;
-// absent or 0 does nothing). Modes 9-10 hand the device package's
-// ShengGmu.c (UniXNU-sheng's, with mainline's gen8 branches) its own uncached maps of the GMU, RSCC, GPU and CX_MISC
+// the HFI startup messages, mode 10, the GX request with the first RBBM reads, mode 11, the SW fuse and CP survey with
+// the GPU's own SMMU context and the SQE copy, mode 12, a8xx hw_init's register writes, mode 13, and the CP start through
+// CP_ME_INIT and a first CP_MEM_WRITE, mode 14 (sheng-gpu-power=1..14; absent or 0 does nothing). Modes 9-10 hand the
+// device package's ShengGmu.c (UniXNU-sheng's, with mainline's gen8 branches) its own uncached maps of the GMU, RSCC, GPU and CX_MISC
 // windows and Normal non-cacheable maps of the five payloads mode 5 placed in the pool; its writes go through its own
 // MMIO adapter (ShengGmuBindMmio), not this file's wr(). The shape of
 // UniXNU-sheng's and Allenwdk/UniXNU-uke's GpuPowerProbe.cpp (BSD-2-Clause-Patent) without their GMU, ring and Metal stages:
@@ -14,7 +15,8 @@
 // gpu_cc_hlos1_vote_gpu_smmu_clk (mode 3), and, only while mode 7's gpb_gmu_clocks_on runs, to gpb_mode7_writable's
 // GPLL0 vote, PLL0, two RCGs and branches; anything else is refused here as well. Mode 5 hands NativeAdreno's
 // NativeAdrenoGmuContextBringup (uke's mode 4) its own uncached map of the whole SMMU window, and only when
-// gpb_gmu_context_gate passes; the GMU itself stays in reset, so no transaction uses the context yet.
+// gpb_gmu_context_gate passes; the GMU itself stays in reset, so no transaction uses the context yet. Modes 9-14 write
+// through ShengGmu's adapter instead: the GMU from mode 9, the GPU block only from mode 13 (gGpuWrites), CX_MISC never.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
@@ -32,6 +34,12 @@ extern "C" {
 #include "ShengGmuSource.h"     // build/sheng-gmu: generated registers and windows (prepare-asteroids-gmu.py)
 #include "ShengGmuFirmware.h"   // build/sheng-gmu: the pinned gen80300_gmu.bin as an array; never committed
 #include "NativeAdrenoSha256.h"
+#include "NativeAdrenoGpuContext.h"
+#include "NativeAdrenoRing.h"
+#include "NativeAdrenoCpInit.h"
+#include "NativeAdrenoPwrup.h"
+#include "AdrenoPM4.h"
+#include "ShengSqeFirmware.h"   // build/sheng-gmu: the pinned gen80300_sqe.fw as an array; never committed
 #include <kern/clock.h>
 
 extern "C" {
@@ -39,6 +47,8 @@ struct gpb_result native_gpu_power_result;
 struct gpb_pool_result native_gpu_pool_result;
 struct NativeAdrenoGmuContextReport native_gpu_gmu_context;
 volatile uint32_t native_gpu_power_stage;
+// NativeAdrenoGpuContext.cpp reads it; its owner, NativeAdrenoUserClient.cpp, is not linked here. 0: no pool remap.
+volatile uint32_t native_adreno_wc_enabled;
 }
 
 namespace {
@@ -387,15 +397,17 @@ extern "C" {
 struct gpb_gx native_gpu_gx;
 }
 // Mode 11's register access goes through the cold start's own MMIO adapter (ShengGmuBindMmio), as uke's mode 8 does.
-unsigned gxWindow(unsigned w) {return w == GPB_WIN_GMU ? ShengGmuCore : ShengGmuGpu;}
+// Modes 12-14 add the CX_MISC window (reads only) and, from mode 13's hw_init on, writes to the GPU block.
+bool gGpuWrites;
+unsigned gxWindow(unsigned w) {return w == GPB_WIN_GMU ? ShengGmuCore : w == GPB_WIN_CX ? ShengGmuCxMisc : ShengGmuGpu;}
 int gxRead(void *, unsigned w, uint32_t off, uint32_t *out) {
     ShengGmuIo &io = gColdDevice.io;
     return io.read32(io.cookie, gxWindow(w), off, out);
 }
 int gxWrite(void *, unsigned w, uint32_t off, uint32_t value) {
     ShengGmuIo &io = gColdDevice.io;
-    if (w != GPB_WIN_GMU) return 1;   // nothing in the GPU block
-    return io.write32(io.cookie, ShengGmuCore, off, value) || io.barrier(io.cookie);
+    if (w == GPB_WIN_CX || (w != GPB_WIN_GMU && !gGpuWrites)) return 1;
+    return io.write32(io.cookie, gxWindow(w), off, value) || io.barrier(io.cookie);
 }
 int hfiWaitOnce(void *) {IODelay(100); return 0;}
 int gxVote(void *, uint32_t perf, uint32_t bw, uint32_t *firmware_error) {
@@ -430,6 +442,205 @@ void gpuGx() {
     IOLog("ASTEROIDS GPU: gx rbbm=%08x gfx=%08x br=%08x gbif_halt=%08x gx_gdscr=%08x writes=%u\n", x.rbbm, x.gfx, x.gfx_br,
           x.gbif_halt, gdscr, x.writes);
     native_gpu_power_stage = x.failed ? 0xaf : 0xa7;
+}
+// Mode 12: after mode 11 left GX on. Reads only, then the GPU's own SMMU context and the SQE copy:
+//   1 gpb_gpu_survey: the SW fuse (a6xx_gmu_secure_init writes it itself when SCM is missing; this build has no SCM
+//     call and does not write it yet) and the CP/RBBM registers mode 13 is about to program
+//   2 NativeAdrenoGpuContextBringup: bank 0 (arm-smmu-qcom gives the GPU bank 0), ASID 2, the DT's SID 0 on SMR slot 0
+//     and SID 1 (mainline's second adreno stream, the one CP_SMMU_STREAM_ID_LPAC names) on slot 1; the secure SID 2 is
+//     left out as on uke, where its SMR write aborted. Mode 5's GMU context keeps bank 1 and slot 2.
+//   3 the five buffers mapped write-combined (Normal non-cacheable, as the GPU maps them), then the SQE image copied
+//     without its first dword (adreno_fw_create_bo) and read back
+extern "C" {
+struct gpb_survey native_gpu_survey;
+struct NativeAdrenoGmuContextReport native_gpu_context;
+struct gpb_hw native_gpu_hw;
+// cp init status, fence result, fence seen, mem-write status, its fence result, scratch word, pwrup bytes, pwrup status
+uint32_t native_gpu_cp[8];
+}
+OSSharedPtr<IOMemoryMap> gGpuSmmu, gGpuMaps[GpuBufferCount];
+volatile uint8_t *gGpuCpu[GpuBufferCount];
+NativeAdrenoGpuBuffer gGpuBuffers[GpuBufferCount];
+bool gGpuReady;
+void gpuCtxProgress(uint32_t step) {
+    native_gpu_power_stage = 0xb0 + step;
+    IOLog("ASTEROIDS GPU: gpuctx step %u %s\n", step, step < 8 ? kGmuStep[step] : "?");
+}
+uint32_t smmuRead(size_t off) {return *reinterpret_cast<volatile uint32_t *>(gGpuSmmu->getVirtualAddress() + off);}
+void gpuSurvey() {
+    native_gpu_power_stage = 0xb0;
+    const gpb_gx &x = native_gpu_gx;
+    if (x.failed || x.step != 6) {IOLog("ASTEROIDS GPU: survey skipped: gx failed=%u step=%u\n", x.failed, x.step); return;}
+    IOLog("ASTEROIDS GPU: survey: CX_MISC SW fuse, then CP and RBBM registers\n");
+    gpb_gx_io io{nullptr, gxRead, gxWrite, gxVote, gxDelay};
+    gpb_survey &v = native_gpu_survey;
+    gpb_gpu_survey(&io, &v);
+    IOLog("ASTEROIDS GPU: survey done=%d fuse=%08x freq=%08x rbbm=%08x int=%08x fuse_int=%08x halt=%08x/%08x tsb=%08x\n", v.done,
+          v.fuse, v.freq_limit, v.gpu[0], v.gpu[1], v.gpu[2], v.gpu[3], v.gpu[4], v.gpu[5]);
+    IOLog("ASTEROIDS GPU: survey sqe cntl=%08x base=%08x%08x rb=%08x rptr=%08x wptr=%08x aperture=%08x cp_int=%08x\n",
+          v.gpu[6], v.gpu[8], v.gpu[7], v.gpu[9], v.gpu[10], v.gpu[11], v.gpu[12], v.gpu[13]);
+    if (!v.done) return;
+    native_gpu_power_stage = 0xb1;
+    IODeviceMemory *memory = IODeviceMemory::withRange(GPB_SMMU_BASE, GPB_SMMU_WINDOW);
+    if (memory) {
+        gGpuSmmu = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapInhibitCache), OSNoRetain);
+        memory->release();
+    }
+    if (!gGpuSmmu) {IOLog("ASTEROIDS GPU: gpuctx SMMU map failed\n"); return;}
+    IOLog("ASTEROIDS GPU: gpuctx bank 0 asid 2, sid 0 on slot 0, sid 1 on slot 1\n");
+    NativeAdrenoGmuContextReport &q = native_gpu_context;
+    const IOReturn status = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gGpuSmmu->getVirtualAddress()),
+                                                          GPB_SMMU_WINDOW, 0, 2, 0, 0, 1, 1, gpuCtxProgress, &q);
+    IOLog("ASTEROIDS GPU: gpuctx s%u %s st=%x k%u/%u oas=%u p%uw%ur%ue%u r%uw%uv%u spans=%u mismatch=%03x\n", q.step,
+          q.step < 8 ? kGmuStep[q.step] : "?", static_cast<unsigned>(status), q.program_status, q.route_status,
+          q.output_bits, q.program_phase, q.program_writes, q.program_readback_valid, q.program_enabled, q.route_phase,
+          q.route_writes, q.routes_verified, q.spans, q.mismatch);
+    IOLog("ASTEROIDS GPU: gpuctx ttbr0=%016llx sctlr=%08x cbar=%08x smr=%08x s2cr=%08x\n",
+          static_cast<unsigned long long>(q.ttbr0), q.sctlr, q.cbar, q.smr, q.s2cr);
+    const uint32_t id1 = native_gpu_power_result.id1;
+    const size_t cb0 = gpb_smmu_cb_offset(id1, 0);
+    IOLog("ASTEROIDS GPU: gpuctx after gfsr=%08x fsr=%08x actlr=%08x smr %08x %08x s2cr %08x %08x\n", smmuRead(GPB_SMMU_GFSR),
+          smmuRead(cb0 + GPB_SMMU_CB_FSR), smmuRead(cb0 + 0x4), smmuRead(GPB_SMMU_SMR(0)), smmuRead(GPB_SMMU_SMR(1)),
+          smmuRead(GPB_SMMU_S2CR(0)), smmuRead(GPB_SMMU_S2CR(1)));
+    if (status) return;
+    native_gpu_power_stage = 0xb8;
+    if (NativeAdrenoGpuContextBuffers(gGpuBuffers)) {IOLog("ASTEROIDS GPU: gpuctx buffers refused\n"); return;}
+    for (unsigned i = 0; i < GpuBufferCount; ++i) {
+        IODeviceMemory *m = IODeviceMemory::withRange(gGpuBuffers[i].physical, gGpuBuffers[i].bytes);
+        if (m) {
+            gGpuMaps[i] = OSSharedPtr<IOMemoryMap>(m->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
+            m->release();
+        }
+        if (!gGpuMaps[i]) {IOLog("ASTEROIDS GPU: gpuctx buffer %u map failed\n", i); return;}
+        gGpuCpu[i] = reinterpret_cast<volatile uint8_t *>(gGpuMaps[i]->getVirtualAddress());
+    }
+    IOLog("ASTEROIDS GPU: gpuctx sqe %llx+%llx@%llx ring %llx@%llx memptrs %llx@%llx\n", gGpuBuffers[0].physical,
+          gGpuBuffers[0].bytes, gGpuBuffers[0].iova, gGpuBuffers[1].physical, gGpuBuffers[1].iova, gGpuBuffers[2].physical,
+          gGpuBuffers[2].iova);
+    native_gpu_power_stage = 0xb9;
+    const size_t sqe = sizeof sheng_sqe_firmware;
+    if (sqe - 4 > gGpuBuffers[0].bytes) {IOLog("ASTEROIDS GPU: sqe %u bytes do not fit\n", static_cast<unsigned>(sqe)); return;}
+    for (size_t i = 4; i < sqe; ++i) gGpuCpu[0][i - 4] = sheng_sqe_firmware[i];
+    gColdDevice.io.barrier(gColdDevice.io.cookie);
+    size_t bad = 0;
+    for (size_t i = 4; i < sqe; ++i) bad += gGpuCpu[0][i - 4] != sheng_sqe_firmware[i];
+    const volatile uint32_t *w = reinterpret_cast<const volatile uint32_t *>(gGpuCpu[0]);
+    IOLog("ASTEROIDS GPU: sqe copied %u bytes, %u differ, words %08x %08x %08x\n", static_cast<unsigned>(sqe - 4),
+          static_cast<unsigned>(bad), w[0], w[1], w[2]);
+    gGpuReady = !bad;
+    native_gpu_power_stage = gGpuReady ? 0xbb : 0xbf;
+}
+// Mode 13: gpb_hw_init over the same adapter, now allowed to write the GPU block. Nothing starts the CP.
+void gpuHwInit() {
+    native_gpu_power_stage = 0xc0;
+    if (!gGpuReady) {IOLog("ASTEROIDS GPU: hw_init skipped: mode 12 did not finish\n"); return;}
+    IOLog("ASTEROIDS GPU: hw_init: a8xx register writes up to the SQE base\n");
+    gGpuWrites = true;
+    gpb_gx_io io{nullptr, gxRead, gxWrite, gxVote, gxDelay};
+    gpb_hw &h = native_gpu_hw;
+    gpb_hw_init(&io, &h);
+    IOLog("ASTEROIDS GPU: hw_init %s step=%u writes=%u aperture=%u protect=%u nonctxt=%u mismatches=%u halt=%08x/%08x\n",
+          h.failed ? "io" : "ok", h.step, h.writes, h.aperture_writes, h.protect_writes, h.nonctxt_writes, h.mismatches,
+          h.gbif_halt, h.rbbm_gbif_halt);
+    IOLog("ASTEROIDS GPU: hw_init check %08x %08x %08x %08x %08x %08x %08x %08x\n", h.check[0], h.check[1], h.check[2],
+          h.check[3], h.check[4], h.check[5], h.check[6], h.check[7]);
+    IOLog("ASTEROIDS GPU: hw_init rbbm=%08x int=%08x cp_int=%08x xoclk0=%08x\n", h.rbbm, h.int_status, h.cp_global, h.xoclk0);
+    native_gpu_power_stage = h.failed ? 0xcf : 0xc9;
+}
+// Mode 14: the rest of a8xx hw_init through cp_init, then one command. The secure-mode exit (zap shader or
+// SECVID_TRUST_CNTL), GMEM_PROTECT after it, hwcg and the OOB clear are later stages.
+//   1 CP_SQE_INSTR_BASE; the ring (NativeAdrenoRing on the gen8 table: RB_BASE, RB_CNTL 32 KiB / block 32, RPTR shadow
+//     at memptrs+0, WPTR 0, the fence scratch); CP_RB_RPTR_ADDR_BV at memptrs+8; one ring, so no preemption setup
+//   2 CP_SQE_CNTL 1, then a8xx_cp_init (CP_THREAD_CONTROL, CP_ME_INIT) with the power-up list still zero, as Linux
+//     sends it (a8xx_patch_pwrup_reglist runs after cp_init); the fence within 200 ms
+//   3 CP_MEM_WRITE (opcode 0x3d) of 0x5e9a810 into the scratch page, and its fence
+//   4 a8xx_patch_pwrup_reglist (NativeAdrenoPwrupList::buildA810) into the power-up page
+int ringWrite(void *, uint32_t reg, uint32_t value) {
+    return gColdDevice.io.write32(gColdDevice.io.cookie, ShengGmuGpu, size_t(reg) * 4, value);
+}
+int ringRead(void *, uint32_t reg, uint32_t *value) {
+    return gColdDevice.io.read32(gColdDevice.io.cookie, ShengGmuGpu, size_t(reg) * 4, value);
+}
+int ringBarrier(void *) {return gColdDevice.io.barrier(gColdDevice.io.cookie);}
+// Ring, memptrs and lists are Normal non-cacheable on both sides (GPU MAIR 0, CPU write-combine): ordering only.
+int ringPublish(void *, const volatile uint32_t *, size_t) {return ringBarrier(nullptr);}
+int ringAcquire(void *, volatile uint32_t *, size_t) {return ringBarrier(nullptr);}
+uint64_t ringNow(void *) {uint64_t us = 0; gmuNowUs(nullptr, &us); return us;}
+int ringIdle(void *) {IODelay(20); return 0;}
+NativeAdrenoRing gRing;
+NativeAdrenoCpInit gCpInit;
+void cpState(const char *when) {
+    uint32_t v[7] = {};
+    const uint32_t regs[7] = {A810_CP_RB_RPTR, A810_CP_RB_WPTR, A810_RBBM_STATUS, A810_RBBM_INT_0_STATUS,
+                              A810_CP_INTERRUPT_STATUS_GLOBAL, A810_CP_SQE_CNTL, A810_CP_APERTURE_CNTL_HOST};
+    for (unsigned i = 0; i < 7; ++i) ringRead(nullptr, regs[i], &v[i]);
+    uint32_t fault = 0, status = 0;   // BR's HW fault and interrupt status, through the aperture, which is then cleared
+    ringWrite(nullptr, A810_CP_APERTURE_CNTL_HOST, A810_PIPE_BR << A810_CP_APERTURE_CNTL_HOST_PIPEID_SHIFT);
+    ringRead(nullptr, A810_CP_HW_FAULT_STATUS_PIPE, &fault);
+    ringRead(nullptr, A810_CP_INTERRUPT_STATUS_PIPE, &status);
+    ringWrite(nullptr, A810_CP_APERTURE_CNTL_HOST, 0);
+    const volatile uint32_t *m = reinterpret_cast<const volatile uint32_t *>(gGpuCpu[2]);
+    const size_t cb0 = gpb_smmu_cb_offset(native_gpu_power_result.id1, 0);
+    IOLog("ASTEROIDS GPU: cp %s rptr=%x wptr=%x rbbm=%08x int=%08x cp_int=%08x sqe=%x ap=%x br_fault=%08x br_int=%08x\n",
+          when, v[0], v[1], v[2], v[3], v[4], v[5], v[6], fault, status);
+    IOLog("ASTEROIDS GPU: cp %s memptrs %08x %08x %08x %08x smmu fsr=%08x far=%08x%08x fsynr0=%08x\n", when, m[0], m[1], m[2],
+          m[3], smmuRead(cb0 + GPB_SMMU_CB_FSR), smmuRead(cb0 + 0x64), smmuRead(cb0 + 0x60), smmuRead(cb0 + 0x68));
+}
+void cpStart() {
+    native_gpu_power_stage = 0xd0;
+    const gpb_hw &h = native_gpu_hw;
+    if (h.failed || h.step != 9) {IOLog("ASTEROIDS GPU: cp skipped: hw_init failed=%u step=%u\n", h.failed, h.step); return;}
+    uint32_t *c = native_gpu_cp;
+    const NativeAdrenoRegisters *gen8 = NativeAdrenoRegisterTable::gen8();
+    if (gRing.setRegisters(gen8) || gCpInit.setRegisters(gen8)) {IOLog("ASTEROIDS GPU: cp gen8 table refused\n"); return;}
+    IOLog("ASTEROIDS GPU: cp: SQE base %llx, ring %llx, then SQE_CNTL and CP_ME_INIT\n", gGpuBuffers[0].iova,
+          gGpuBuffers[1].iova);
+    native_gpu_power_stage = 0xd1;
+    const uint64_t sqe = gGpuBuffers[0].iova, bv_rptr = gGpuBuffers[2].iova + 8;   // rbmemptr(bv_rptr)
+    if (ringWrite(nullptr, A810_CP_SQE_INSTR_BASE, uint32_t(sqe)) || ringWrite(nullptr, A810_CP_SQE_INSTR_BASE + 1, uint32_t(sqe >> 32))) {
+        IOLog("ASTEROIDS GPU: cp SQE base write failed\n"); return;
+    }
+    const NativeAdrenoRingIo rio{nullptr, ringWrite, ringRead, ringBarrier};
+    const NativeAdrenoRingCache cache{nullptr, ringPublish, ringAcquire};
+    const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
+        gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
+    if (attached) {IOLog("ASTEROIDS GPU: cp ring attach %x\n", static_cast<unsigned>(attached)); return;}
+    if (ringWrite(nullptr, A810_CP_RB_RPTR_ADDR_BV, uint32_t(bv_rptr)) ||
+        ringWrite(nullptr, A810_CP_RB_RPTR_ADDR_BV + 1, uint32_t(bv_rptr >> 32))) {IOLog("ASTEROIDS GPU: cp BV rptr write failed\n"); return;}
+    cpState("before");
+    native_gpu_power_stage = 0xd2;
+    if (ringWrite(nullptr, A810_CP_SQE_CNTL, A810_INIT_CP_SQE_CNTL)) {IOLog("ASTEROIDS GPU: cp SQE_CNTL write failed\n"); return;}
+    const NativeAdrenoCpInitConfig config{gGpuBuffers[0].iova, gGpuBuffers[3].iova, 1};
+    uint32_t fence = 0;
+    c[0] = uint32_t(gCpInit.run(&rio, &gRing, &config, &fence));
+    const NativeAdrenoRingClock clock{nullptr, ringNow, ringIdle};
+    if (!c[0]) c[1] = gRing.wait(fence, &clock, 200000, &c[2]);
+    static const char *const kFence[] = {"done", "timeout", "poisoned", "argument"};
+    IOLog("ASTEROIDS GPU: cp init st=%x fence %u %s seen=%u\n", c[0], fence, c[0] ? "-" : c[1] < 4 ? kFence[c[1]] : "?", c[2]);
+    cpState("init");
+    native_gpu_power_stage = 0xd3;
+    if (c[0] || c[1]) {native_gpu_power_stage = 0xde; return;}
+    volatile uint32_t *scratch = reinterpret_cast<volatile uint32_t *>(gGpuCpu[4]);
+    scratch[0] = 0;
+    ringBarrier(nullptr);
+    uint32_t words[4] = {};
+    if (AdrenoPM4Type7(0x3d, 3, &words[0]) != AdrenoPM4Success) {IOLog("ASTEROIDS GPU: cp pm4 refused\n"); return;}
+    words[1] = uint32_t(gGpuBuffers[4].iova); words[2] = uint32_t(gGpuBuffers[4].iova >> 32); words[3] = 0x5e9a810;
+    c[3] = uint32_t(gRing.submit(words, 4, &fence));
+    if (!c[3]) c[4] = gRing.wait(fence, &clock, 200000, &c[2]);
+    ringBarrier(nullptr);
+    c[5] = scratch[0];
+    IOLog("ASTEROIDS GPU: cp write st=%x fence %u %s seen=%u scratch=%08x %s\n", c[3], fence, c[3] ? "-" : c[4] < 4 ? kFence[c[4]] : "?",
+          c[2], c[5], !c[3] && !c[4] && c[5] == 0x5e9a810 ? "ok" : "miss");
+    cpState("write");
+    native_gpu_power_stage = 0xd4;
+    size_t written = 0;
+    c[7] = uint32_t(NativeAdrenoPwrupList::buildA810(ringRead, ringWrite, nullptr, const_cast<uint8_t *>(gGpuCpu[3]),
+                                                     gGpuBuffers[3].bytes, &written));
+    c[6] = uint32_t(written);
+    ringBarrier(nullptr);
+    IOLog("ASTEROIDS GPU: cp pwrup st=%x bytes=%u\n", c[7], c[6]);
+    native_gpu_power_stage = !c[3] && !c[4] && c[5] == 0x5e9a810 ? 0xd7 : 0xdf;
 }
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
@@ -496,6 +707,9 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 8) gmuState(r);
     if (gMode >= 9) gmuColdStart();
     if (gMode >= 11) gpuGx();
+    if (gMode >= 12) gpuSurvey();
+    if (gMode >= 13) gpuHwInit();
+    if (gMode >= 14) cpStart();
     native_gpu_power_stage = 4;
 }
 }

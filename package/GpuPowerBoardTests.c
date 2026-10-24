@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Host test of GpuPowerBoard.h (asteroids, modes 1-3) over fake register windows: which registers each mode reads, that mode 1
+// Host test of GpuPowerBoard.h (asteroids, modes 1-13) over fake register windows: which registers each mode reads, that mode 1
 // never writes, that mode 2 writes only the gcc_gpu_cfg_ahb_clk enable and only when it is off, the gating, and that every access
 // stays inside its window. Build: scripts/check-asteroids-gpu-power.py.
 #include "GpuPowerBoard.h"
@@ -93,6 +93,44 @@ static int gx_vote(void *c, uint32_t perf, uint32_t bw, uint32_t *fw) {
 static void gx_delay(void *c, unsigned us) {CHECK(c == mem); gx_delayed += us;}
 static void gx_reset(void) {ngx_writes = gx_reads = gx_votes = gx_vote_fail = 0; gx_ack = gx_powers = 1; gx_info = 0x1;
     gx_status = 3; gx_delayed = 0; gx_fail_read = ~0u;}
+// Modes 12-13: GPU, GMU and CX_MISC as plain register files; every write is logged with the aperture it went through.
+static uint32_t hw_gpu[0x40000 / 4], hw_gmu[GPB_GMU_SIZE / 4], hw_cx[0x2000 / 4];
+static struct {unsigned w; uint32_t off, v, aperture;} hw_log[1024];
+static unsigned nhw, hw_fail_at = ~0u, hw_ops, hw_cx_writes;
+static uint32_t *hw_reg(unsigned w, uint32_t off) {
+    CHECK(!(off & 3));
+    if (w == GPB_WIN_GPU) {CHECK(off < sizeof hw_gpu); return &hw_gpu[off / 4];}
+    if (w == GPB_WIN_GMU) {CHECK(off < sizeof hw_gmu); return &hw_gmu[off / 4];}
+    CHECK(w == GPB_WIN_CX && off < sizeof hw_cx); return &hw_cx[off / 4];
+}
+static int hw_rd(void *c, unsigned w, uint32_t off, uint32_t *out) {
+    CHECK(c == hw_gpu);
+    if (hw_ops++ == hw_fail_at) return 1;
+    *out = *hw_reg(w, off); return 0;
+}
+static int hw_wr(void *c, unsigned w, uint32_t off, uint32_t v) {
+    CHECK(c == hw_gpu && nhw < 1024);
+    if (hw_ops++ == hw_fail_at) return 1;
+    if (w == GPB_WIN_CX) ++hw_cx_writes;
+    hw_log[nhw].w = w; hw_log[nhw].off = off; hw_log[nhw].v = v;
+    hw_log[nhw++].aperture = hw_gpu[A810_CP_APERTURE_CNTL_HOST];
+    *hw_reg(w, off) = v; return 0;
+}
+static void hw_reset(void) {memset(hw_gpu, 0, sizeof hw_gpu); memset(hw_gmu, 0, sizeof hw_gmu); memset(hw_cx, 0, sizeof hw_cx);
+    nhw = hw_ops = hw_cx_writes = 0; hw_fail_at = ~0u;}
+// How many logged writes match {window, offset, value, aperture pipe}; value ~0u matches any.
+static unsigned hw_count(unsigned w, uint32_t dword_or_off, uint32_t v, unsigned pipe) {
+    const uint32_t off = w == GPB_WIN_GPU ? GPB_GPU_REG(dword_or_off) : dword_or_off;
+    unsigned n = 0;
+    for (unsigned i = 0; i < nhw; ++i)
+        if (hw_log[i].w == w && hw_log[i].off == off && (v == ~0u || hw_log[i].v == v) &&
+            hw_log[i].aperture == pipe << 12) ++n;
+    return n;
+}
+static int hw_written(uint32_t dword) {
+    for (unsigned i = 0; i < nhw; ++i) if (hw_log[i].w == GPB_WIN_GPU && hw_log[i].off == GPB_GPU_REG(dword)) return 1;
+    return 0;
+}
 int main(void) {
     struct gpb_result r;
     // The facts every read relies on.
@@ -406,8 +444,91 @@ int main(void) {
         gx_reset(); gx_fail_read = 0; gpb_gx_on(&gio, 1, 1, &x); CHECK(x.failed == 3 && x.step == 2 && !gx_votes);
     }
 
-    // Modes 0 and 12+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
-    for (unsigned m = 0; m < 15; m += (m == 0 ? 12 : 1)) {
+    {   // Mode 12: the survey reads CX_MISC first, then the GPU block, and writes nothing.
+        const struct gpb_gx_io hio = {hw_gpu, hw_rd, hw_wr, gx_vote, gx_delay};
+        struct gpb_survey v;
+        CHECK(GPB_CX_SW_FUSE_VALUE == 0x1000 && GPB_CX_SW_FUSE_FREQ_LIMIT == 0x1014 && GPB_WIN_CX == GPB_ALL_WINDOWS);
+        hw_reset(); hw_cx[0x400] = 0x7; hw_cx[0x405] = 0x55; hw_gpu[A810_RBBM_STATUS] = 1; hw_gpu[A810_CP_SQE_CNTL] = 9;
+        gpb_gpu_survey(&hio, &v);
+        CHECK(v.done && v.fuse == 7 && v.freq_limit == 0x55 && v.gpu[0] == 1 && v.gpu[6] == 9 && !nhw &&
+              hw_ops == 2 + GPB_SURVEY_GPU && gpb_survey_gpu[7] == 0x816 && gpb_survey_gpu[12] == 0x81c);
+        hw_reset(); hw_fail_at = 0; gpb_gpu_survey(&hio, &v); CHECK(!v.done && hw_ops == 1);
+    }
+    {   // Mode 13: a8xx hw_init's writes, in order, through the cached aperture.
+        const struct gpb_gx_io hio = {hw_gpu, hw_rd, hw_wr, gx_vote, gx_delay};
+        struct gpb_hw h;
+        // The UBWC words from milos_data by a8xx_set_ubwc_config's formulas: hbb 15 - 13, swizzle LVL2 only.
+        const uint32_t hbb = 15 - 13, lo = hbb & 3, hi = hbb >> 2, l2 = 0, l3 = 1, mode = 2;
+        CHECK(GPB_UBWC_GRAS == (hbb << 5 | l3 << 4 | l2 << 3) &&
+              GPB_UBWC_RB_CCU == (l3 << 5 | l2 << 4 | hi << 3 | lo << 1) &&
+              GPB_UBWC_RB_CMP == (mode << 15 | 1u << 4 | 1u << 3 | 1u << 2 | 1u << 1) &&
+              GPB_UBWC_SP == (l3 << 13 | l2 << 12 | hi << 10 | 2u << 4 | lo << 1) &&
+              GPB_UBWC_TPL1 == (l3 << 7 | l2 << 6 | hi << 4 | lo << 1));
+        hw_reset(); hw_gpu[A810_GBIF_HALT] = 1; hw_gmu[GPB_GMU_REG(A810_GMU_CX_GMU_POWER_COUNTER_SELECT_XOCLK_0) / 4] = 0xabcd12;
+        gpb_hw_init(&hio, &h);
+        CHECK(!h.failed && h.step == 9 && !h.mismatches && h.writes == nhw && !hw_cx_writes && !h.gbif_halt &&
+              !h.rbbm_gbif_halt && h.protect_last == NATIVE_ADRENO_A810_PROTECT_LAST && h.protect_writes == 47);
+        // The first write clears the aperture (cached_aperture starts at UINT_MAX); then GBIF_HALT and RBBM_GBIF_HALT.
+        CHECK(hw_log[0].off == GPB_GPU_REG(A810_CP_APERTURE_CNTL_HOST) && hw_log[0].v == 0 &&
+              hw_log[1].off == GPB_GPU_REG(A810_GBIF_HALT) && hw_log[2].off == GPB_GPU_REG(A810_RBBM_GBIF_HALT));
+        // Never the CP start, the ring, the trust control or the SQE base: those are mode 14's (or later).
+        CHECK(!hw_written(A810_CP_SQE_CNTL) && !hw_written(A810_CP_SQE_INSTR_BASE) && !hw_written(A810_CP_RB_BASE) &&
+              !hw_written(A810_CP_RB_CNTL) && !hw_written(A810_CP_RB_WPTR) && !hw_written(A810_RBBM_SECVID_TRUST_CNTL) &&
+              !hw_written(A810_CP_RB_RPTR_ADDR_BV));
+        // 64-bit writes, low word first; the trap base in all four.
+        CHECK(hw_gpu[A810_UCHE_TRAP_BASE] == 0xfffff000u && hw_gpu[A810_UCHE_TRAP_BASE + 1] == 0x1ffff &&
+              hw_gpu[A810_UCHE_CCHE_WRITE_THRU_BASE + 1] == 0x1ffff && hw_gpu[A810_SP_HLSQ_GC_GMEM_RANGE_MIN] == 0x4000000 &&
+              hw_gpu[A810_UCHE_CCHE_GC_GMEM_RANGE_MIN + 1] == 0);
+        // UBWC: GRAS on BV then BR, RB words on BR, SP and TPL1 with the aperture cleared.
+        CHECK(hw_count(GPB_WIN_GPU, A810_GRAS_NC_MODE_CNTL, 0x50, A810_PIPE_BV) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_GRAS_NC_MODE_CNTL, 0x50, A810_PIPE_BR) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_RB_CCU_NC_MODE_CNTL, 0x24, A810_PIPE_BR) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_RB_CMP_NC_MODE_CNTL, 0x1001e, A810_PIPE_BR) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_SP_NC_MODE_CNTL, 0x2024, A810_PIPE_NONE) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_TPL1_NC_MODE_CNTL, 0x84, A810_PIPE_NONE) == 1);
+        // Non-context registers: PC_CHICKEN_BITS_1 differs per pipe; LPAC is skipped; GMEM_PROTECT on BR only.
+        CHECK(hw_count(GPB_WIN_GPU, A810_PC_CHICKEN_BITS_1, 0x3, A810_PIPE_BR) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_PC_CHICKEN_BITS_1, 0x23, A810_PIPE_BV) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_CP_SMMU_STREAM_ID_LPAC, 0x101, A810_PIPE_NONE) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_RB_GC_GMEM_PROTECT, 0x00900000, A810_PIPE_BR) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_RB_GC_GMEM_PROTECT, ~0u, A810_PIPE_NONE) == 0);
+        unsigned nonctxt = 0;
+        for (unsigned i = 0; i < NATIVE_ADRENO_A810_NONCTXT_COUNT; ++i)
+            nonctxt += __builtin_popcount(NativeAdrenoA810NonCtxt[i][2] & 0xf7u);
+        CHECK(h.nonctxt_writes == nonctxt && nonctxt == 52);
+        // Hang detection, the GMU counters (XOCLK_0 keeps its upper bits) and the protect list.
+        CHECK(hw_gpu[A810_RBBM_INTERFACE_HANG_INT_CNTL] == 0x40cfffff && hw_gpu[A810_RBBM_SLICE_INTERFACE_HANG_INT_CNTL] == 1u << 30 &&
+              hw_gmu[GPB_GMU_REG(A810_GMU_CX_GMU_POWER_COUNTER_SELECT_XOCLK_0) / 4] == 0xabcd20 &&
+              hw_gmu[GPB_GMU_REG(A810_GMU_CX_GMU_POWER_COUNTER_SELECT_XOCLK_1) / 4] == 4 &&
+              hw_gmu[GPB_GMU_REG(A810_GMU_CX_GMU_POWER_COUNTER_ENABLE) / 4] == 1 &&
+              hw_gmu[GPB_GMU_REG(A810_GPU_GMU_AO_GPU_CX_BUSY_MASK) / 4] == 0xff000000u);
+        CHECK(hw_count(GPB_WIN_GPU, A810_CP_PROTECT_CNTL_PIPE, 0xffff000b, A810_PIPE_BR) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_CP_PROTECT_CNTL_PIPE, 0xffff000b, A810_PIPE_BV) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_CP_PROTECT_PIPE(15), 0x80027c02, A810_PIPE_BR) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_CP_PROTECT_PIPE(15), 0x80027c02, A810_PIPE_BV) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_CP_PROTECT_GLOBAL(46), 0x80027c02, A810_PIPE_NONE) == 1 &&
+              hw_count(GPB_WIN_GPU, A810_RB_CONTEXT_SWITCH_GMEM_SAVE_RESTORE_ENABLE, 1, A810_PIPE_BR) == 1);
+        // APRIV and the CP masks on the six pipes, none on LPAC; the global masks last, with the aperture cleared.
+        for (unsigned pipe = A810_PIPE_BR; pipe <= A810_PIPE_DDE_BV; ++pipe)
+            CHECK(hw_count(GPB_WIN_GPU, A810_CP_APRIV_CNTL_PIPE, pipe == A810_PIPE_BR ? 0x6f : 0xf, pipe) ==
+                      (pipe != A810_PIPE_LPAC) &&
+                  hw_count(GPB_WIN_GPU, A810_CP_INTERRUPT_STATUS_MASK_PIPE, 0x07e83f7f, pipe) == (pipe != A810_PIPE_LPAC) &&
+                  hw_count(GPB_WIN_GPU, A810_CP_HW_FAULT_STATUS_MASK_PIPE, 0x77f, pipe) == (pipe != A810_PIPE_LPAC));
+        CHECK(hw_log[nhw - 1].off == GPB_GPU_REG(A810_RBBM_INT_0_MASK) && hw_log[nhw - 1].v == 0x33d283c2 &&
+              hw_log[nhw - 1].aperture == 0 && hw_log[nhw - 2].off == GPB_GPU_REG(A810_CP_INTERRUPT_STATUS_MASK_GLOBAL) &&
+              hw_gpu[A810_CP_APERTURE_CNTL_HOST] == 0);
+        // The aperture is written only on a change: 24 times.
+        unsigned apertures = 0;
+        for (unsigned i = 0; i < nhw; ++i) apertures += hw_log[i].off == GPB_GPU_REG(A810_CP_APERTURE_CNTL_HOST);
+        CHECK(apertures == h.aperture_writes && apertures == 24);
+        const unsigned total = nhw;
+        // Steps 1-8 without the aperture: 6, 17, 6, 20 + 1 + 52, 5, 2 + 47 + 2 + 1, 18, 2.
+        CHECK(total == 6 + 17 + 6 + 21 + nonctxt + 5 + 52 + 18 + 2 + apertures);
+        // A failed access stops it and says so.
+        hw_reset(); hw_fail_at = 5; gpb_hw_init(&hio, &h); CHECK(h.failed == 3 && h.step == 1 && nhw == 3);   // op 5 is the TSB_CNTL write
+    }
+    // Modes 0 and 15+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
+    for (unsigned m = 0; m < 18; m += (m == 0 ? 15 : 1)) {
         reset(); gpb_run(&io, m, all, &r);
         CHECK(!nreads && !nwrites && r.gcc == GPB_SKIPPED_MODE && r.gpu == GPB_SKIPPED_MODE);
     }
@@ -422,6 +543,6 @@ int main(void) {
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
            "the mode 6 clock snapshot (reads only), the mode 7 clock bring-up (29 writes in Linux order, lock and update timeouts, "
-           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), modes 0 and 12+ refused (9-10 are the probe's cold start)\n");
+           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), the mode 12 survey (reads only), mode 13's hw_init writes (Linux order, cached aperture, no CP start), modes 0 and 15+ refused (9-10 and 14 are the probe's)\n");
     return 0;
 }

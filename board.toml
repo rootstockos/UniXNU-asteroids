@@ -222,7 +222,9 @@ kernel_args = [
   # command DB and builds the HFI table (no writes), 7 brings up the GMU clocks (GPLL0 vote, PLL0, hub and gmu RCGs,
   # gpu_cc_ahb) with the GMU still in reset, 8 then reads the GMU and RSCC state the cold start checks (no writes),
   # 9 loads gen80300_gmu.bin and releases the GMU to HFI ready, 10 also sends the HFI startup messages, 11 then votes
-  # the lowest GPU level over HFI, asks the GMU for GX (OOB GPU_SET) and reads RBBM once GX is on.
+  # the lowest GPU level over HFI, asks the GMU for GX (OOB GPU_SET) and reads RBBM once GX is on, 12 then reads the SW
+  # fuse and CP state, builds the GPU's SMMU context (bank 0, SIDs 0 and 1) and copies gen80300_sqe.fw into it, 13 runs
+  # a8xx hw_init's register writes, 14 starts the CP (ring, SQE, CP_ME_INIT) and has it write one word.
   # Remove the line to turn it off.
   "sheng-gpu-power=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
