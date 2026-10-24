@@ -9,3 +9,7 @@
 	path = kits/AdrenoFirmware
 	url = https://github.com/rootstockos/AdrenoFirmware.git
 	branch = asteroids-a8xx
+[submodule "drivers/NativeAdreno"]
+	path = drivers/NativeAdreno
+	url = https://github.com/rootstockos/NativeAdreno.git
+	branch = asteroids-a810

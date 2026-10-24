@@ -6,16 +6,33 @@ SM7635 "Volcano"). Work in progress: not hardware-complete, and nothing here is 
 | Repository | Contents |
 |---|---|
 | [rootstockos/uefi-asteroids](https://github.com/rootstockos/uefi-asteroids) (branch `asteroids`) | Mu-Silicium UEFI port: `VolcanoPkg` and `asteroidsPkg` |
-| this repository | `board.toml`, kernel defconfig, device package |
+| [rootstockos/UniXNU](https://github.com/rootstockos/UniXNU) (branch `asteroids-dev`) | the UniXNU core fork the port builds with: v3/v4 boot images, the payload carried in the kernel image, CI |
+| this repository | `board.toml`, kernel defconfigs, device package (`kits/asteroids`), device scripts |
 
-## State (2026-10-22)
+Drivers and kits, each its own repository, referenced as submodules:
 
-Booted from RAM with `fastboot boot`, nothing flashed:
+| Module | Repository | Use |
+|---|---|---|
+| `drivers/NativeUfs` | [rootstockos/NativeUfs](https://github.com/rootstockos/NativeUfs) (branch `fix/unverified-build`) | UFS root in `userdata` |
+| `drivers/NativeMobileDisplay` | [Allenwdk/NativeMobileDisplay](https://github.com/Allenwdk/NativeMobileDisplay) | uke's legacy (CPU) display |
+| `drivers/NativeAdreno` | [rootstockos/NativeAdreno](https://github.com/rootstockos/NativeAdreno) (branch `asteroids-a810`) | Adreno 810 (gen8) work; not built yet (`CONFIG_XNU_NATIVE_ADRENO` off) |
+| `kits/AdrenoFirmware` | [rootstockos/AdrenoFirmware](https://github.com/rootstockos/AdrenoFirmware) (branch `asteroids-a8xx`) | GMU/HFI kit with the A8xx performance table and votes |
 
-- the UEFI port reaches DXE and BDS with the correct display;
-- the UniXNU menu shows and stays up (empty payload, so no `xnu` entry yet).
+## State (2026-10-24)
 
-Several vendor drivers are disabled for bring-up; `Platforms/Nothing/asteroidsPkg/PORTING.md` in the UEFI port
+Booted with `fastboot boot`; the OS images are flashed to `userdata`:
+
+- UEFI, the UniXNU menu and payload, DarwinBoot and XNU (iPad7,1 iPadOS 17.7.11 kernelcache) on all eight cores.
+- The root is mounted from UFS (`userdata`) and iPadOS userspace runs: launchd, the SystemOS cryptex and SpringBoard.
+  The text console shows the boot until the first display frame.
+- No display yet. The CPU-rendered legacy display opens its client but the render server never presents a frame;
+  uke (SM7675) reached the same point and concluded that iOS 17 needs a GPU accelerator. SpringBoard restarts
+  ("too many corpses") without one.
+- The Adreno 810 (gen8) work is in software so far: the register map and init tables from mainline, per-generation
+  registers in NativeAdreno, and the gen8 GMU cold start and HFI startup (host-tested, `scripts/check-asteroids-gmu.py`).
+  NativeAdreno still refuses gen8 at start.
+
+Several vendor drivers are disabled in the UEFI port for bring-up; `Platforms/Nothing/asteroidsPkg/PORTING.md` there
 lists them and why.
 
 ## Build
