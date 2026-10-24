@@ -6,6 +6,7 @@
 // Writes are allowed to exactly one register (gcc_gpu_cfg_ahb_clk) and only in mode 2; anything else is refused here as well.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IODeviceMemory.h>
 #include <libkern/c++/OSSharedPtr.h>
 #include <kern/thread.h>
 #include <pexpert/pexpert.h>
