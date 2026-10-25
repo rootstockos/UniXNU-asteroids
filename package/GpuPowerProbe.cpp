@@ -1091,25 +1091,30 @@ void ucStart() {
     if (!vm || !bits) {IOLog("ASTEROIDS GPU: uc skipped: no GPU VM\n"); return;}
     u[0] = 1;
     native_gpu_power_stage = 0x101;
-    IOLog("ASTEROIDS GPU: pool: %llx+%llx (loader-kept RAM above XNU's window), pattern test, then adopt\n", GPB_GPU_POOL_BASE,
-          GPB_GPU_POOL_BYTES);
-    {
-        IODeviceMemory *memory = IODeviceMemory::withRange(GPB_GPU_POOL_BASE, GPB_GPU_POOL_BYTES);
+    // The pool is mapped whole (adoptPool keeps one write-combined kernel view). pandora's 1 GiB failed in ml_io_map's small IO submap
+    // (pgpu2: kmem_alloc of 1 GiB failed, a panic); this map is IOKit's into the kernel map, which returns no map instead. So the full
+    // size first, then halves down to the 128 MiB T15-T18 used, and the log says which size was had.
+    uint64_t poolBytes = 0;
+    for (uint64_t bytes = GPB_GPU_POOL_BYTES; bytes >= 0x8000000ULL && !poolBytes; bytes >>= 1) {
+        IOLog("ASTEROIDS GPU: pool: %llx+%llx (loader-kept RAM above XNU's window), pattern test, then adopt\n", GPB_GPU_POOL_BASE, bytes);
+        IODeviceMemory *memory = IODeviceMemory::withRange(GPB_GPU_POOL_BASE, bytes);
         OSSharedPtr<IOMemoryMap> pool;
         if (memory) {
             pool = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
             memory->release();
         }
-        if (!pool) {IOLog("ASTEROIDS GPU: pool map failed\n"); native_gpu_power_stage = 0x10f; return;}
+        if (!pool) {IOLog("ASTEROIDS GPU: pool map of %llu MiB failed\n", bytes >> 20); continue;}
         gpb_pool_result p{};
-        gpb_pool_test(reinterpret_cast<volatile uint64_t *>(pool->getVirtualAddress()), GPB_GPU_POOL_BYTES, &p);
+        gpb_pool_test(reinterpret_cast<volatile uint64_t *>(pool->getVirtualAddress()), bytes, &p);
         ringBarrier(nullptr);
         u[1] = uint32_t(p.pattern_bad + p.zero_bad);
         IOLog("ASTEROIDS GPU: pool words=%llu pattern_bad=%llu zero_bad=%llu first_bad=%llx\n", p.words, p.pattern_bad, p.zero_bad,
               p.first_bad);
-        if (u[1] || p.words != GPB_GPU_POOL_BYTES / 8) {native_gpu_power_stage = 0x10f; return;}
+        if (u[1] || p.words != bytes / 8) {native_gpu_power_stage = 0x10f; return;}
+        poolBytes = bytes;
     }
-    u[2] = uint32_t(NativeAdrenoMemory::adoptPool(GPB_GPU_POOL_BASE, size_t(GPB_GPU_POOL_BYTES), bits));
+    if (!poolBytes) {IOLog("ASTEROIDS GPU: pool map failed\n"); native_gpu_power_stage = 0x10f; return;}
+    u[2] = uint32_t(NativeAdrenoMemory::adoptPool(GPB_GPU_POOL_BASE, size_t(poolBytes), bits));
     IOLog("ASTEROIDS GPU: pool adopt %x, %u MiB\n", u[2], unsigned(NativeAdrenoMemory::poolBytes() >> 20));
     if (u[2]) {native_gpu_power_stage = 0x10f; return;}
     u[0] = 2;

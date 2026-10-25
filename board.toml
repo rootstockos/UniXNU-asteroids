@@ -347,7 +347,7 @@ gmu_pool_bytes = "0x02000000"
 # so the loader keeps it, as pandora's loader carves its pool. Android's /proc/iomem has 0x8bf800000-0xaffffefff as System
 # RAM and the live DT reserves nothing static above 4 GiB. Must match GpuPowerBoard.h GPB_GPU_POOL_*.
 gpu_pool_base = "0x900000000"
-gpu_pool_bytes = "0x8000000"
+gpu_pool_bytes = "0x40000000"            # 1 GiB since T18b (pandora's size); 128 MiB ran out in T18
 preempt_record_bytes = "0x473800"      # 4558 KiB
 ubwc_version = 4                       # mainline milos_data, and qcom,ubwc-mode = <4> in the DT
 highest_bank_bit = 14                  # LPDDR4X (the DT display node: DDR type 7 -> 14, type 8 -> 15)
