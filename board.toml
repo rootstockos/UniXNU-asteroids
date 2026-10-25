@@ -82,8 +82,14 @@ archives = [
   # build-gop-legacy-display.py and LegacyDisplayProbe.cpp (here scripts/build-native-legacy-display.py and
   # package/LegacyDisplayProbe.cpp), with the core's GopFramebuffer cf3b429 (drivers/GopFramebuffer; this repository no
   # longer carries its own copy) and our HidInputProbe.cpp, KeyStoreProbe.cpp, TouchState.cpp and LegacyDisplayStubs.c.
-  # It binds NativeLegacyDisplay to the original IOMobileFramebufferLegacy. No GPU objects: the GPU prepare steps and
-  # GpuPowerProbe.cpp are not built.
+  # It binds NativeLegacyDisplay to the original IOMobileFramebufferLegacy.
+  # T30: the GPU objects are back (T20's GpuPowerProbe.cpp, NativeAdreno's staged classes and the AGXAccelerator, the GMU
+  # vote and cold-start kits). GPU power mode 6 parses the command DB with the device package's vote builder; its headers
+  # come from scripts/data/a810-gmu-votes.json (derived locally from the phone's DT, which is not committed).
+  "prepare-asteroids-gmu-votes.py --from-data",
+  # The GMU cold start's generated registers and the pinned firmware as a C array (modes 9-10); reads the device repo's
+  # .cache, which the CI bootstrap fills (fetch-asteroids-gpu-firmware.py, prepare-asteroids-gmu.py --fetch).
+  "prepare-asteroids-gmu.py",
   "build-native-legacy-display.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
@@ -232,9 +238,9 @@ kernel_args = [
   # backboardd). t28-power-ack=1 answers a refused power-on (selector 12) with success while the powered word says on;
   # T28b is the same kernel with t28-power-ack=0.
   # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
-  "sheng-build-tag=T29",
+  # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
+  "sheng-build-tag=T30",
   "boot-display-page=1",
-  "t28-power-ack=0",
   "boot-ui-focus=PerfPowerServices",
   "boot-ui-focus2=SpringBoard",
   "boot-ui-focus3=liveactivitiesd",
@@ -261,7 +267,12 @@ kernel_args = [
   # the published plugin copy the display's frames to the scanout with the GPU (drivers/GopFramebuffer/NativeGOPPresenter.cpp);
   # a frame nobody takes keeps the CPU copy.
   # Remove the line to turn it off.
-  # T24: no sheng-gpu-power (GpuPowerProbe.cpp is not built).
+  # T24-T29: no sheng-gpu-power (GpuPowerProbe.cpp was not built).
+  # T30: mode 19 with T19's published Metal addon (metal2vulkan on Turnip in backboardd). T19 stopped at "encodes, never
+  # commits" while SpringBoard itself never finished booting (T28-T29: the missing AppleKeyStore). sheng-fb-gpu stays off,
+  # so the display keeps the CPU copy to the panel and only the render server's composition moves to the GPU.
+  "sheng-gpu-power=19",
+  "sheng-gpu-addon=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
   # without a first frame.
