@@ -792,6 +792,9 @@ void native_legacy_display_late_probe(void) {
                                 else {if(handoffAttached)handoff->detach(home);OSSafeReleaseNULL(handoff);}
                             }
                         }
+                        // Whether /chosen carries the UI scale MobileGestalt reads (T32: T31d's cache answered scale 1 with unit scale 2 asked).
+                        IOLog("ASTEROIDS DISPLAY: unit scale calls %u status %d chosen display-scale %u rotation %u\n",native_legacy_unit_scale_calls,
+                              native_legacy_unit_scale_status,native_legacy_chosen_scale,native_legacy_chosen_rotation);
                         finishUnitScalePolicy(true);
                         OSSafeReleaseNULL(displayTreeParent);
                         native_legacy_display_checkpoint();return;

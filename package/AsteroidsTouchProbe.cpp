@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // The 3a's touch bring-up (FocalTech FT3683G on QUPv3 wrapper 0 SE0, SPI), staged as docs/asteroids-touch.md in iosonandng.
 // `asteroids-touch=<v>`: the stage is v & 15, the orientation of stage 6 is (v >> 4) & 7 (1 swap axes, 2 mirror x, 4 mirror y,
-// applied in that order), so "asteroids-touch=0x16" is stage 6 with the axes swapped. Each boot runs every stage up to the one asked
-// for and stops at the first failure:
+// applied in that order), so "asteroids-touch=0x16" is stage 6 with the axes swapped. Bit 7 (0x80) skips stage 2's RPMh rail
+// votes. Each boot runs every stage up to the one asked for and stops at the first failure:
 //   1  read-only snapshot: the QUP0 clock votes and branches, SE0's DFS levels, the touch and SPI pins, the RPMh rail
-//      addresses in the command DB, and the apps SMMU's stream table. SE0's own registers only when its clocks already run.
+//      addresses in the command DB, the apps SMMU's stream table, and the apps RSC's TCS states. SE0's own registers only when its
+//      clocks already run.
 //   2  power: reset low, the 3.3 V (ldob22) and 1.8 V (ldob11) rails voted on active TCS 2 of the apps RSC, reset high; the QUP0
 //      branch votes; the SPI pins; then SE0's identity (expect FW_REVISION 0x102, FIFO interface disabled) and 2 s of the
 //      interrupt line.
@@ -170,6 +171,10 @@ struct Session {
     Region gccS0, gccHalt, gccVote, pins[6], wrapper, se, smmu, rsc;
     // Stage 2.
     uint32_t rscId, tcsStatus[2], irqLow, irqSamples, cbcrWait;
+    // The apps RSC as stage 1 found it (read only): IRQ enable and status, and per TCS 0-7 its status (1 idle), control, command
+    // enable and command 0's status. Stage 2's votes: each command's status (bit 16 completed), per rail mode, voltage, enable.
+    bool rscRead, skipRails;
+    uint32_t rscIrqEnable, rscIrqStatus, tcsState[8][4], cmdStatus[2][3];
     // Stage 3.
     IOBufferMemoryDescriptor *dmaMem;
     uint64_t dmaPhys;
@@ -218,12 +223,13 @@ void rows(const Session &x) {
     char *r = native_touch_rows[0];
     const size_t n = sizeof native_touch_rows[0];
     const unsigned done = native_touch_stage_done;
-    if (done < 2)
+    const bool t2 = done < 2 && native_touch_stage_req >= 2 && s.step >= 20;   // stage 2 under way or failed: its row, not T1's
+    if (done < 2 && !t2)
         snprintf(r, n, "TCH T1 s%u/%u st%d e%d v%08x s0%08x ma%08x sa%08x se%c if%x fw%x l11 %x l22 %x smr563 %d/%d",
             done, native_touch_stage_req, s.step, s.error, s.vote, s.s0, s.mahb, s.sahb, s.seRead ? 'R' : '-',
             s.seIf, s.seFw, s.ldob11, s.ldob22, s.smrSe, s.smrGpi);
     else if (done < 3)
-        snprintf(r, n, "TCH T2 s%u/%u st%d e%d v%08x s0%08x fw%x if%x hw%08x rsc%08x tcs%x/%x irq low %u/%u rst%x",
+        snprintf(r, n, "TCH T2 s%u/%u st%d e%d v%08x s0%08x fw%x if%x hw%08x rsc%08x cmd%x/%x irq low %u/%u rst%x",
             done, native_touch_stage_req, s.step, s.error, s.vote, s.s0, s.seFw, s.seIf, s.seHw, x.rscId, x.tcsStatus[0],
             x.tcsStatus[1], x.irqLow, x.irqSamples, s.pin[kPinReset][1]);
     else if (done < 4)
@@ -256,9 +262,16 @@ void logSummary(const char *when, const Session &x) {
     IOLog("ASTEROIDS TOUCH: %s cmddb status=%d version=%x ldob11=%x ldob22=%x\n", when, s.dbStatus, s.dbVersion, s.ldob11, s.ldob22);
     IOLog("ASTEROIDS TOUCH: %s smmu status=%d scr0=%08x id0=%08x smrs=%u valid=%u 0x563=%d (s2cr %08x) 0x576=%d 0x60=%d (s2cr %08x)\n",
           when, s.smmuStatus, s.scr0, s.id0, s.smrCount, s.smrValid, s.smrSe, s.s2crSe, s.smrGpi, s.smrUfs, s.s2crUfs);
+    IOLog("ASTEROIDS TOUCH: %s rsc %s id=%08x irq enable=%x status=%x\n", when, x.rscRead ? "read" : "unmapped", x.rscId,
+          x.rscIrqEnable, x.rscIrqStatus);
+    for (unsigned t = 0; x.rscRead && t < 8; t += 2)
+        IOLog("ASTEROIDS TOUCH: %s tcs%u st=%x ctl=%x en=%x cmd0=%x | tcs%u st=%x ctl=%x en=%x cmd0=%x\n", when, t, x.tcsState[t][0],
+              x.tcsState[t][1], x.tcsState[t][2], x.tcsState[t][3], t + 1, x.tcsState[t + 1][0], x.tcsState[t + 1][1],
+              x.tcsState[t + 1][2], x.tcsState[t + 1][3]);
     if (native_touch_stage_req < 2) return;
-    IOLog("ASTEROIDS TOUCH: %s power rsc=%08x tcs %x/%x irq low %u of %u cbcr wait %u\n", when, x.rscId, x.tcsStatus[0],
-          x.tcsStatus[1], x.irqLow, x.irqSamples, x.cbcrWait);
+    IOLog("ASTEROIDS TOUCH: %s power rails %s ldob22 cmds %x %x %x ldob11 cmds %x %x %x irq low %u of %u cbcr wait %u\n", when,
+          x.skipRails ? "skipped" : "voted", x.cmdStatus[0][0], x.cmdStatus[0][1], x.cmdStatus[0][2], x.cmdStatus[1][0],
+          x.cmdStatus[1][1], x.cmdStatus[1][2], x.irqLow, x.irqSamples, x.cbcrWait);
     if (native_touch_stage_req < 3) return;
     IOLog("ASTEROIDS TOUCH: %s bus smmu slot %d bank %d reuse %d ready %d (%s) dma %llx sclk %llu spi %llu div %u loop rc %d match %d "
           "rx %02x%02x%02x%02x%02x%02x%02x%02x in %x/%x\n", when, x.smmuSlot, x.smmuBank, x.smmuReuse, x.smmuReady,
@@ -385,27 +398,64 @@ void readSmmu(Session &x) {
     }
 }
 
+void readRsc(Session &x) {
+    mark(x, 6);
+    // Not a stage 1 failure when it cannot be mapped: only stage 2 needs it.
+    if (!x.rsc.va && !mapRegion(kRsc, 0x10000, x.rsc, !x.rw)) return;
+    x.rscId = rd32(x.rsc.va, 0);
+    const QcomRscLayout l = qcom_rsc_layout(x.rscId);
+    x.rscIrqEnable = rd32(x.rsc.va, kTcsOffset);   // IRQ_ENABLE, +0 in both layouts
+    x.rscIrqStatus = rd32(x.rsc.va, kTcsOffset + l.irq_status);
+    for (unsigned t = 0; t < 8; ++t) {
+        const uint32_t base = kTcsOffset + l.tcs_stride * t;
+        x.tcsState[t][0] = rd32(x.rsc.va, base + l.status);
+        x.tcsState[t][1] = rd32(x.rsc.va, base + l.control);
+        x.tcsState[t][2] = rd32(x.rsc.va, base + l.cmd_enable);
+        x.tcsState[t][3] = rd32(x.rsc.va, base + l.cmd_data + 4);   // CMD_STATUS follows CMD_DATA in both layouts
+    }
+    x.rscRead = true;
+}
+
 // ---- Stage 2: power, clocks, pins, engine identity ----
 void setPin(Session &x, unsigned index, uint32_t ctl) {wr32(x.pins[index].va, 0, ctl); x.s.pin[index][0] = rd32(x.pins[index].va, 0);}
 void setReset(Session &x, bool high) {
     wr32(x.pins[kPinReset].va, 4, high ? 2u : 0u);
     x.s.pin[kPinReset][1] = rd32(x.pins[kPinReset].va, 4);
 }
-// One active RPMh request on TCS 2 (the same TCS UniXNU-sheng's audio rail vote uses): mode, voltage and enable of a VRM.
-bool voteRail(Session &x, uint32_t address, uint32_t millivolts, unsigned which) {
-    const QcomRscLayout layout = qcom_rsc_layout(x.rscId);
-    const uint32_t addresses[3] = {address + 8, address, address + 4}, values[3] = {7, millivolts, 1};   // high power mode, mV, on
+// RPMh votes on active TCS 2 (the TCS UniXNU-sheng's audio rail vote uses), one command per request as sheng sends them. T31a sent
+// mode, voltage and enable in one request, waited for the TCS's IRQ status bit (nothing enables that interrupt) and never saw it, and
+// the UI froze with no visible cause. Now the TCS is written only when idle (status 1) and empty, completion is the command's own
+// status (bit 16), and a TCS still busy afterwards is left as it is rather than torn down under the hardware.
+int sendOne(Session &x, const QcomRscLayout &l, uint32_t address, uint32_t value, uint32_t &cmdStatus) {
+    const uint32_t base = kTcsOffset + l.tcs_stride * kTcs;
+    if (!(rd32(x.rsc.va, base + l.status) & 1) || rd32(x.rsc.va, base + l.control) || rd32(x.rsc.va, base + l.cmd_enable)) return -16;
     QcomRpmhWrite writes[16];
-    const unsigned n = qcom_rpmh_active_request(&layout, kTcs, addresses, values, 3, writes, 16);
-    if (!n) return false;
+    const unsigned n = qcom_rpmh_active_request(&l, kTcs, &address, &value, 1, writes, 16);
+    if (!n) return -22;
     for (unsigned i = 0; i < n; ++i) wr32(x.rsc.va, kTcsOffset + writes[i].offset, writes[i].value);
-    // The completion is the TCS's bit in the IRQ status register; give it up to 20 ms, then return the TCS to idle either way.
-    uint32_t status = 0;
-    for (unsigned i = 0; i < 200 && !((status = rd32(x.rsc.va, kTcsOffset + layout.irq_status)) & (1u << kTcs)); ++i) IODelay(100);
-    x.tcsStatus[which] = status;
-    const unsigned m = qcom_rpmh_finish(&layout, kTcs, writes, 16);
+    bool done = false, idle = false;
+    for (unsigned i = 0; i < 200 && !done; ++i) {
+        done = ((cmdStatus = rd32(x.rsc.va, base + l.cmd_data + 4)) & (1u << 16)) != 0;
+        if (!done) IODelay(100);
+    }
+    for (unsigned i = 0; i < 200 && !idle; ++i) {
+        idle = (rd32(x.rsc.va, base + l.status) & 1) != 0;
+        if (!idle) IODelay(100);
+    }
+    if (!idle) return -11;
+    const unsigned m = qcom_rpmh_finish(&l, kTcs, writes, 16);
     for (unsigned i = 0; i < m; ++i) wr32(x.rsc.va, kTcsOffset + writes[i].offset, writes[i].value);
-    return (status & (1u << kTcs)) != 0;
+    return done ? 0 : -110;
+}
+int voteRail(Session &x, uint32_t address, uint32_t millivolts, unsigned which) {
+    const QcomRscLayout l = qcom_rsc_layout(x.rscId);
+    const uint32_t addresses[3] = {address + 8, address, address + 4}, values[3] = {7, millivolts, 1};   // high power mode, mV, on
+    for (unsigned c = 0; c < 3; ++c) {
+        const int rc = sendOne(x, l, addresses[c], values[c], x.cmdStatus[which][c]);
+        x.tcsStatus[which] = x.cmdStatus[which][c];
+        if (rc) return rc;
+    }
+    return 0;
 }
 bool power(Session &x) {
     Snapshot &s = x.s;
@@ -416,13 +466,15 @@ bool power(Session &x) {
     setPin(x, kPinReset, kResetPinCfg);
     setPin(x, kPinIrq, kIrqPinCfg);
     mark(x, 21);
-    if (!mapRegion(kRsc, 0x10000, x.rsc, false)) {fail(s, 21, -12); return false;}
+    if (!x.rsc.va && !mapRegion(kRsc, 0x10000, x.rsc, false)) {fail(s, 21, -12); return false;}
     x.rscId = rd32(x.rsc.va, 0);
-    mark(x, 22);
-    const bool vci = voteRail(x, s.ldob22, 3300, 0);
-    mark(x, 23);
-    const bool vddio = voteRail(x, s.ldob11, 1800, 1);
-    if (!vci || !vddio) {fail(s, 23, -110); return false;}
+    // asteroids-touch bit 7: no RPMh writes (the rails as the boot loader left them), to tell the votes from the pins.
+    if (!x.skipRails) {
+        mark(x, 22);
+        if (const int rc = voteRail(x, s.ldob22, 3300, 0)) {fail(s, 22, rc); return false;}
+        mark(x, 23);
+        if (const int rc = voteRail(x, s.ldob11, 1800, 1)) {fail(s, 23, rc); return false;}
+    }
     IOSleep(2);
     setReset(x, true);
     IOSleep(200);
@@ -692,12 +744,13 @@ void touchThread(void *, wait_result_t) {
     Snapshot &s = x.s;
     const unsigned stage = native_touch_stage_req;
     x.rw = stage >= 2;
-    IOLog("ASTEROIDS TOUCH: stage %u (orientation %u) start\n", stage, x.orient);
+    IOLog("ASTEROIDS TOUCH: stage %u (orientation %u%s) start\n", stage, x.orient, x.skipRails ? ", rails skipped" : "");
     readClocks(x);
     if (!s.error) readPins(x);
     if (!s.error) readEngine(x);
     if (!s.error) readCommandDb(x);
     if (!s.error) readSmmu(x);
+    if (!s.error) readRsc(x);
     native_touch_error = s.error;
     if (!s.error) {s.step = 6; native_touch_stage_done = 1;}
     rows(x);
@@ -735,6 +788,7 @@ extern "C" void asteroids_touch_probe(void) {
     unsigned stage = value & 15;
     if (stage > 6) stage = 6;
     gSession->orient = (value >> 4) & 7;
+    gSession->skipRails = (value & 0x80) != 0;
     gSession->smmuSlot = gSession->smmuBank = -1;
     gSession->loopRc = 99;
     native_touch_stage_req = stage;
