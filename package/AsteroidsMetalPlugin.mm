@@ -30,6 +30,7 @@
 #pragma clang diagnostic ignored "-Wunused-function"
 #include "NativeMetalBridgePhase.h"
 #include <mach/mach.h>
+#include <objc/runtime.h>
 #pragma clang diagnostic pop
 #endif
 
@@ -200,6 +201,12 @@ static id deviceForPort(unsigned port) {
             return nil;
         }
         gpu->mark(0x6802);
+        // T20: metal2vulkan declines supportsConditionalLoadStore on purpose (private_properties.rs: no document or AIR form names it), so the
+        // frontend installs no answer and Metal's _MTLDevice base class would decide. The bridge has no such feature: say no on the device
+        // itself, so the render server's query never reaches the base class.
+        class_addMethod(object_getClass(gDevice), sel_registerName("supportsConditionalLoadStore"), imp_implementationWithBlock(^BOOL(id) {
+                            return NO;
+                        }), "B16@0:8");
         pthread_t status, scanout;
         pthread_attr_t attributes;
         pthread_attr_init(&attributes);
