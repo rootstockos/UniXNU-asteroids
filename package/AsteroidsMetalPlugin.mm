@@ -260,6 +260,48 @@ static id deviceForPort(unsigned port) {
         return gDevice;
     }
 }
+// T22: with NativeAdrenoMetal.sample beside the bundle (and no .publish), no Metal device at all: the discovery gets nil, so the render server
+// draws on the CPU as on uke, while this thread streams its stacks (sampleThreads) every ten seconds as "BT<n>" pieces, and "SMP <threads>"
+// once a round. Marker 6900 started.
+static void sampleOnly(unsigned port) {
+    static bool started;
+    @synchronized([NativeAdrenoMetalDevice class]) {
+        if (started) return;
+        started = true;
+    }
+    void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL);
+    if (!iokit) return;
+    if (auto retain = (int (*)(unsigned))dlsym(iokit, "IOObjectRetain")) retain(port);
+    Gpu *gpu = makeGpu(port);
+    if (!gpu) return;
+    gpu->mark(0x6900);
+    pthread_t thread;
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&attributes, 1u << 20);
+    pthread_create(&thread, &attributes, [](void *arg) -> void * {
+        Gpu *g = static_cast<Gpu *>(arg);
+        gStatusThread = mach_thread_self();
+        char stacks[460] = "", text[64];
+        unsigned pieces = 0;
+        for (unsigned step = 0;; ++step) {
+            sleep(10);
+            if (step >= 1 + pieces) step = 0;
+            if (step == 0) {
+                sampleThreads(stacks, sizeof stacks);
+                pieces = (unsigned)((strlen(stacks) + 56) / 57);
+                pieces = pieces > 8 ? 8 : pieces;
+                snprintf(text, sizeof text, "SMP %.58s", stacks);
+            } else {
+                snprintf(text, sizeof text, "BT%u %.57s", step - 1, stacks + (size_t)(step - 1) * 57);
+            }
+            streamText(*g, text);
+        }
+        return nullptr;
+    }, gpu);
+    pthread_attr_destroy(&attributes);
+}
 }  // namespace publish
 #endif
 
@@ -269,6 +311,10 @@ static id deviceForPort(unsigned port) {
     if (!self || !port || strcmp(getprogname(), "backboardd") != 0) return nil;
 #ifdef ASTEROIDS_METAL_PUBLISH
     if (publish::beside("NativeAdrenoMetal.publish")) return publish::deviceForPort(port);
+    if (publish::beside("NativeAdrenoMetal.sample")) {
+        publish::sampleOnly(port);
+        return nil;
+    }
 #endif
     static bool attempted;
     if (attempted) return nil;

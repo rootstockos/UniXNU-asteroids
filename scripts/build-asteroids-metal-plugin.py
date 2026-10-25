@@ -41,10 +41,11 @@ parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.R
 parser.add_argument('--unixnu', type=Path, required=True)
 parser.add_argument('--trust-cache', type=Path, required=True, help='the unchanged original static/System trust bundle')
 parser.add_argument('--published', action='store_true', help='T18: the published stage with the metal2vulkan bridge')
+parser.add_argument('--sample-only', action='store_true', help='T22, with --published: no Metal device, only the stack samples')
 args = parser.parse_args()
 ROOT = args.unixnu.resolve()
 if args.published:
-    OUT = OUT.with_name(OUT.name + '-published')
+    OUT = OUT.with_name(OUT.name + ('-sample' if args.sample_only else '-published'))
 TURNIP = ROOT / 'build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dylib'
 VULKAN_INCLUDE = ROOT / '.cache/mesa-work/include'
 METAL = ROOT / 'drivers/AdrenoMetal'
@@ -135,7 +136,8 @@ for path in sorted(p for p in bundle.rglob('*') if p.is_file()):
     files.append(('addons/NativeAdrenoMetal.bundle/' + path.relative_to(bundle).as_posix(), mode, path.read_bytes()))
 if args.published:
     # The marker the plugin looks for beside the bundle; outside the bundle, so its seal and CDHash are the same either way.
-    files.append(('addons/NativeAdrenoMetal.publish', 0o644, b'published\n'))
+    files.append(('addons/NativeAdrenoMetal.sample', 0o644, b'sample\n') if args.sample_only else
+                 ('addons/NativeAdrenoMetal.publish', 0o644, b'published\n'))
 pad = lambda data: data + bytes(-len(data) % 8)
 body = b''
 for name, mode, data in files:
