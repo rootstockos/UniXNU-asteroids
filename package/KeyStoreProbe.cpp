@@ -88,7 +88,10 @@ static void native_keyevents_probe(void) {
     if (data && data->getLength() == sizeof(ephemeral))
         memcpy(&ephemeral, data->getBytesNoCopy(), sizeof(ephemeral));
     OSSafeReleaseNULL(chosen);
-    if (ephemeral != 1 || original) return;
+    // asteroids T29: with sheng-aks=1 the stand-in is published on a persistent Data disk too (no ephemeral-storage there). T28's
+    // unified log: without it every process failed to open AppleKeyStore (e00002bc), liveactivitiesd trapped on the missing
+    // keybag answer, and SpringBoard never finished booting, leaving the backlight off and the render server with nothing to draw.
+    if ((ephemeral != 1 && !native_aks_state_enabled()) || original) return;
     const OSSymbol *name = OSSymbol::withCString("AppleKeyStore");
     bool absent = name && !OSMetaClass::getMetaClassWithName(name);
     OSSafeReleaseNULL(name);

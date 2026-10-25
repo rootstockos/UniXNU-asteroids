@@ -408,7 +408,9 @@ static void native_legacy_call_logged(int pid,uint32_t selector,const IOExternal
 typedef IOReturn (*ExternalFn)(IOUserClient *,uint32_t,IOExternalMethodArguments *,IOExternalMethodDispatch *,OSObject *,void *);
 typedef IOReturn (*RegisterFn)(IOUserClient *,mach_port_t,UInt32,UInt32);
 static ClientStat *statFor(IOUserClient *client) {
-    for(unsigned i=0;i<seenClientCount;++i)if(seenClients[i].object==(uintptr_t)client)return &seenClients[i];
+    // The newest entry first: a closed client's address can be reused by the next open (T28: backboardd's calls were credited to
+    // IOMFB_bics_daemon's freed client).
+    for(unsigned i=seenClientCount;i-->0;)if(seenClients[i].object==(uintptr_t)client)return &seenClients[i];
     return nullptr;
 }
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {

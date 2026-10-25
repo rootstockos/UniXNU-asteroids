@@ -231,9 +231,10 @@ kernel_args = [
   # every distinct main-thread stack of backboardd the trace samples (slot 4, so boot-ui-follow is off: it would move slot 4 off
   # backboardd). t28-power-ack=1 answers a refused power-on (selector 12) with success while the powered word says on;
   # T28b is the same kernel with t28-power-ack=0.
-  "sheng-build-tag=T28",
+  # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
+  "sheng-build-tag=T29",
   "boot-display-page=1",
-  "t28-power-ack=1",
+  "t28-power-ack=0",
   "boot-ui-focus=PerfPowerServices",
   "boot-ui-focus2=SpringBoard",
   "boot-ui-focus3=liveactivitiesd",
