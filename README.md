@@ -52,3 +52,10 @@ fastboot boot out/asteroids/boot/boot.img
 panel on.
 
 Target OS: the unchanged iPad7,1 iPadOS 17.7.11 restore image, as on UniXNU's sheng port.
+
+## Third-party sources in `package/`
+
+The boot progress kit (`BootProgress*.{c,h}`, `BootFaultProbe.c`, `BootDiagExport.c`, `BootUiTrace*`, `BootProcessProbe.c`)
+is UniXNU-sheng's (commit 0e1f6e5; MIT, `BootProcessProbe.c` BSD-2-Clause-Patent), unchanged. `Font.h` is the AOSP
+framebuffer font from Mu-Silicium's FrameBufferSerialPortLib (its licence is in the file). `BootWatchdogPolicy.c` is
+Allenwdk/UniXNU-uke's (MIT) with asteroids additions.

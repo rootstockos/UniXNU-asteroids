@@ -54,9 +54,9 @@ CONFIG_XNU_OWNER_DATA_MOUNT=y
 CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
 # The APFS volume UUID of our Data seed (UniXNU build/owner-data-fixture/seed.json, 2026-10-23).
 CONFIG_XNU_OWNER_DATA_VOLUME_UUID="07DEE194-37A6-4A05-8602-8476EB2F65AE"
-# The launchd watchdog policy without the boot progress kit (our UniXNU fork, after uke): makes sheng-lite=1 and
-# sheng-disable-watchdogd=1 effective and pets the Gunyah watchdog. Archive: build/watchdog-policy/libWatchdogPolicy.a.
-CONFIG_XNU_WATCHDOG_POLICY=y
+# The launchd watchdog policy (uke's BootWatchdogPolicy.c: sheng-disable-watchdogd, sheng-disable-jobs, the Gunyah watchdog
+# pet) is linked by the boot progress kit below since T25; the standalone archive would duplicate it.
+# CONFIG_XNU_WATCHDOG_POLICY is not set
 # Display, CPU-rendered (2026-10-23): UniXNU's NativeLegacyDisplay with uke's board probe on the UEFI framebuffer.
 # SpringBoard started and crash-looped without a display. Archive: build/native-legacy-display/libNativeLegacyDisplay.late.a
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
@@ -96,9 +96,10 @@ CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 # CONFIG_XNU_OWNER_ROOT_TRUST is not set
 # CONFIG_XNU_OWNER_BOOT_MANIFEST is not set
 #
-# Boot progress: the kit is sheng's package (kits/sheng/BootProgress.c), and the base build refuses it without UFS,
-# owner-root audit and VirtIO.
-# CONFIG_XNU_BOOT_PROGRESS is not set
+# Boot progress (T25): sheng's diagnostic kit (package/BootProgress.c and friends, scripts/build-boot-progress.py): the
+# live page, user fault evidence and the UI stack trace (boot-ui-focus*). Our UniXNU fork (d143a43) builds it with UFS
+# alone; package/BootProgressStandins.c gives the Virtio and owner-root status words.
+CONFIG_XNU_BOOT_PROGRESS=y
 #
 # Display and GPU: the legacy display is the CPU-rendered SpringBoard display (a sheng device script, and it excludes
 # -v). NativeAdreno (drivers/NativeAdreno, the gen8 fork) still refuses the Adreno 810 at start, so it stays off.

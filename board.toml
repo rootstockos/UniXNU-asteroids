@@ -74,9 +74,10 @@ archives = [
   "build-native-aes-bindings.py",
   "build-arm-driver.py NativeRamBlock",
   "build-mockfs-fixture.py",
-  # UFS root, step 3: the launchd watchdog policy (uke's BootWatchdogPolicy.c): disables watchdogd and, with
-  # sheng-lite=1, the daemons that need missing hardware, and pets the Gunyah watchdog every 5 s.
-  "build-watchdog-policy.py",
+  # T25: the boot progress kit (sheng's diagnostics, package/Boot*.c): the live page, user fault evidence, the UI trace of the
+  # boot-ui-focus processes, and our launchd watchdog policy (uke's BootWatchdogPolicy.c, formerly build-watchdog-policy.py:
+  # watchdogd off, sheng-disable-jobs, the Gunyah watchdog pet every 5 s).
+  "build-boot-progress.py",
   # Display, CPU-rendered (T24b): UniXNU's display recipe (docs/porting/display.md). UniXNU-sheng 0e1f6e5's
   # build-gop-legacy-display.py and LegacyDisplayProbe.cpp (here scripts/build-native-legacy-display.py and
   # package/LegacyDisplayProbe.cpp), with the core's GopFramebuffer cf3b429 (drivers/GopFramebuffer; this repository no
@@ -216,6 +217,14 @@ kernel_args = [
   # publishes IOMFBDisplayRefresh before registerService; the render server paces its display timer by it. 120 Hz is the
   # 3a panel's rated mode, not a measured one (there is no DPU timing probe for the SM7635 yet).
   "sheng-vsync=120",
+  # T25: the boot progress kit's live page and UI trace (docs/guide/debugging.md of UniXNU). The trace samples the render
+  # server's process, SpringBoard, and the two that decide launches and kills; one page every 8 s.
+  "boot-progress=2",
+  "sheng-build-tag=T25",
+  "boot-ui-focus=backboardd",
+  "boot-ui-focus2=SpringBoard",
+  "boot-ui-focus3=runningboardd",
+  "boot-ui-focus4=launchd",
   "offline-hid-home=1",
   "offline-hid-input=1",
   "offline-key-events=1",
