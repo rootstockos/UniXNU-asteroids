@@ -1036,4 +1036,7 @@ static inline void gpb_bar_fill(const struct gpb_bar *b, uint32_t header, uint64
 #define GPB_UBWC_HBB 15u
 #define GPB_UBWC_SWIZZLE 2u               // bit1: level 2 on; levels 1 and 3 off
 #define GPB_UBWC_VERSION 4u
+/* The open type NativeAdreno serves (NativeAdrenoPluginOpenType, 'AG'): any other type is refused as a foreign IOGPU open with
+ * kIOReturnUnsupported before a client is mounted (T15 opened with type 0 and got e00002c7 three times). */
+#define GPB_UC_OPEN_TYPE 0x4147u
 #endif

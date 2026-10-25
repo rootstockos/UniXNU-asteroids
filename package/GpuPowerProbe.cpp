@@ -998,7 +998,7 @@ IOReturn ucSubmit(IOUserClient *uc, uint64_t handle, uint64_t iova, unsigned dwo
 // One round as uke's wrapperRound: returns the matching words (of 4: three written, one untouched) or -1.
 int ucRound(IOService *svc, UcSteps &step, unsigned round) {
     IOUserClient *uc = nullptr;
-    if (!step(svc->newUserClient(kernel_task, nullptr, 0, nullptr, &uc)) || !uc) return -1;
+    if (!step(svc->newUserClient(kernel_task, nullptr, GPB_UC_OPEN_TYPE, nullptr, &uc)) || !uc) return -1;
     NativeAdrenoAbiParams params{};
     step(ucCall(uc, NativeAdrenoMethodQuery, nullptr, &params));
     NativeAdrenoAbiDeviceInfo info{};
@@ -1039,7 +1039,7 @@ int ucRound(IOService *svc, UcSteps &step, unsigned round) {
 // 32 submissions on one connection, IB i writing i into word i of the target; one wait on the last fence. Matched words.
 int ucBurst(IOService *svc, UcSteps &step) {
     IOUserClient *uc = nullptr;
-    if (!step(svc->newUserClient(kernel_task, nullptr, 0, nullptr, &uc)) || !uc) return -1;
+    if (!step(svc->newUserClient(kernel_task, nullptr, GPB_UC_OPEN_TYPE, nullptr, &uc)) || !uc) return -1;
     uint64_t handles[2] = {};
     IOMemoryDescriptor *desc[2] = {};
     IOMemoryMap *maps[2] = {};
