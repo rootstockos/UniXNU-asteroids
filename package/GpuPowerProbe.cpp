@@ -922,6 +922,10 @@ extern volatile uint32_t native_adreno_pool_stats[8];
 // steps ok, steps, first error, its step, burst matched (of 32), BOs from the pool, opened, closed
 uint32_t native_gpu_uc[16];
 }
+// NativeAdrenoPublish.cpp hands backboardd's boot-log pieces to sheng's boot-log export, which this board does not link; a
+// weak-import reference cannot stay undefined in the kernel link, so the probe refuses every piece (-1, as Publish does
+// when the export is absent). Weak, so a real export wins once one is linked.
+extern "C" __attribute__((weak)) int boot_log_export_put(uint32_t, uint32_t, uint32_t, const void *, uint32_t) {return -1;}
 NativeAdrenoSubmit gSubmit;
 NativeAdrenoTimer gTimer;
 const NativeAdrenoAbiDeviceInfo gDeviceInfo = {GPB_A810_CHIP_ID, GPB_A810_GMEM_BYTES, GPB_GMEM_RANGE_MIN, GPB_UCHE_TRAP_BASE,

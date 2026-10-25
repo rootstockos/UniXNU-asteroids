@@ -254,7 +254,7 @@ run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags+vote_flags),cwd=r['dire
 gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuMemory','NativeAdrenoVm','NativeAdrenoGmuMemory',
                                           'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu',
                                           'NativeAdrenoSha256','NativeAdrenoGpuContext','NativeAdrenoRing',
-                                          'NativeAdrenoCpInit','NativeAdrenoPwrup','NativeAdrenoSubmit','NativeAdrenoTimer',
+                                          'NativeAdrenoCpInit','NativeAdrenoPwrup','NativeAdrenoSubmit','NativeAdrenoTimer','NativeAdrenoProfile',
                                           'NativeAdrenoUserClient','NativeAdrenoPublish')]
 gmu_objs=[]
 for src in gmu_sources:
