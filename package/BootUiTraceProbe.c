@@ -358,3 +358,19 @@ unsigned boot_cpu_kick(char *out,unsigned size) {
  ml_set_interrupts_enabled(irq);
  return sent;
 }
+// asteroids T28: the published main-thread sample of the traced process with this name: its PC and LR, then its frame-pointer return
+// addresses (raw), with its pid and shared-cache slide. Returns the number of addresses; 0 when none is published, or while publishing.
+unsigned boot_ui_trace_main_stack(const char *name,uint64_t *out,unsigned limit,int *pid,unsigned *slide) {
+ if(limit<2 || __atomic_exchange_n(&trace_lock,1,__ATOMIC_ACQUIRE))return 0;
+ unsigned n=0;
+ for(unsigned role=0;role<BT_ROLES;++role) {
+  const struct bt_main *m=&published_main[role];
+  if(!m->pid || strcmp(published_names[role],name))continue;
+  *pid=m->pid;*slide=published_slide[role];
+  out[n++]=m->entry.pc;out[n++]=m->entry.lr;
+  for(unsigned i=0;i<32 && n<limit && m->frames[i];++i)out[n++]=m->frames[i];
+  break;
+ }
+ __atomic_store_n(&trace_lock,0,__ATOMIC_RELEASE);
+ return n;
+}

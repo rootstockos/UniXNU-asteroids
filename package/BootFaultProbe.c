@@ -175,3 +175,21 @@ void boot_progress_exit_reason(int pid,unsigned signal,char *out,unsigned long c
  }
  __atomic_store_n(&reason_busy,0,__ATOMIC_RELEASE);
 }
+
+// asteroids T28: the calling thread's user return addresses (its saved LR, then the frame-pointer chain), for LegacyDisplayProbe's
+// caller stack of each display call. Thread context only (it copies from the caller's own map); returns the number of addresses.
+unsigned boot_progress_caller_stack(uint64_t *out,unsigned limit,uint64_t *slide) {
+ *slide=current_task()->task_shared_region_slide;
+ arm_saved_state_t *state=find_user_regs(current_thread());
+ if(!limit || !state || !is_saved_state64(state))return 0;
+ unsigned n=0;out[n++]=(uint64_t)get_saved_state_lr(state);
+ uint64_t frame=(uint64_t)get_saved_state_fp(state);
+ while(n<limit && frame && !(frame&15)) {
+  uint64_t pair[2];
+  if(copyin(frame,pair,sizeof(pair)) || !pair[1])break;
+  out[n++]=pair[1];
+  if(pair[0]<=frame || pair[0]-frame>1048576)break;
+  frame=pair[0];
+ }
+ return n;
+}

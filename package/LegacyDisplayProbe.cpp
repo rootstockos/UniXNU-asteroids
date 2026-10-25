@@ -316,16 +316,85 @@ static ClientStat seenClients[kSeenClients];static unsigned seenClientCount;
 // time, caller, selector, argument shape (scalar and structure counts in and out, async = a wake port came with it) and status;
 // and every open attempt, successful or not.
 enum {kFirstCalls=48,kLastCalls=32,kOpens=12};
-struct CallEvent {uint32_t ds;int pid;uint32_t selector,status;uint16_t scalar_in,scalar_out;uint32_t struct_in,struct_out;uint8_t async;uint64_t arg0;};
+struct CallEvent {uint32_t ds;int pid;uint32_t selector,status;uint16_t scalar_in,scalar_out;uint32_t struct_in,struct_out;uint8_t async;uint64_t arg0;
+                  uint8_t stack,changed;uint32_t original;};   // asteroids T28: caller stack index (0xff none), state words changed, original status
 static CallEvent firstCalls[kFirstCalls],lastCalls[kLastCalls];
 static uint32_t callEvents;
 struct OpenEvent {uint32_t ds,type,status;int pid;};
 static OpenEvent opens[kOpens];static uint32_t openEvents;
 extern "C" void proc_name(int pid,char *buf,int size);
 static uint32_t probeNowDs(void) {uint64_t ns;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return (uint32_t)(ns/100000000);}
-static void native_legacy_call_logged(int pid,uint32_t selector,const IOExternalMethodArguments *args,IOReturn status) {
+// asteroids T28: where each call comes from, and what it does to the state words.
+// Caller stacks: the calling thread's user return addresses (BootFaultProbe.c), shared-cache addresses unslid, kept once per distinct
+// stack. State: the words at display+5808..5868 before and after each call; a change during a call or between two calls is logged.
+// Main stacks: every distinct main-thread sample of backboardd the UI trace publishes (boot-ui-focus*=backboardd), with when it was seen,
+// so the ~30 s wait before selector 12 shows what it sleeps in.
+extern "C" unsigned boot_progress_caller_stack(uint64_t *out,unsigned limit,uint64_t *slide) __attribute__((weak_import));
+extern "C" unsigned boot_ui_trace_main_stack(const char *name,uint64_t *out,unsigned limit,int *pid,unsigned *slide) __attribute__((weak_import));
+enum {kStackFrames=14,kStacks=16,kStateWords=16,kStateChanges=32,kMainFrames=22,kMainStacks=10};
+static const uint64_t kCacheLow=0x180000000ULL,kCacheHigh=0x400000000ULL;
+struct CallerStack {uint64_t frame[kStackFrames];unsigned count,uses;int pid;};
+static CallerStack callerStacks[kStacks];static unsigned callerStackCount,callerStackBusy;
+struct StateChange {uint32_t ds,call,selector,from,to;uint16_t offset;char when;};
+static StateChange stateChanges[kStateChanges];static uint32_t stateChangeCount;
+static uint32_t stateLast[kStateWords],stateFirst[kStateWords];static bool stateSeen;
+struct MainStack {uint64_t frame[kMainFrames];unsigned count;int pid;uint32_t first,last,samples;};
+static MainStack mainStacks[kMainStacks];static unsigned mainStackCount,mainStackOverflow,mainSampleCount;
+static uint64_t unslid(uint64_t address,uint64_t slide) {
+    return address>=kCacheLow+slide && address<kCacheHigh+slide?address-slide:address|(1ULL<<60);   // bit 60: outside the cache, raw
+}
+static uint8_t callerStackIndex(int pid) {
+    if(!&boot_progress_caller_stack || __atomic_exchange_n(&callerStackBusy,1,__ATOMIC_ACQUIRE))return 0xff;
+    uint64_t frame[kStackFrames]={},slide=0;
+    unsigned n=boot_progress_caller_stack(frame,kStackFrames,&slide);
+    for(unsigned i=0;i<n;++i)frame[i]=unslid(frame[i],slide);
+    uint8_t index=0xff;
+    for(unsigned k=0;k<callerStackCount;++k)
+        if(callerStacks[k].pid==pid && callerStacks[k].count==n && !memcmp(callerStacks[k].frame,frame,sizeof frame)){index=(uint8_t)k;break;}
+    if(index==0xff && n && callerStackCount<kStacks) {
+        CallerStack &c=callerStacks[callerStackCount];memcpy(c.frame,frame,sizeof frame);c.count=n;c.pid=pid;c.uses=0;index=(uint8_t)callerStackCount++;
+    }
+    if(index!=0xff)++callerStacks[index].uses;
+    __atomic_store_n(&callerStackBusy,0,__ATOMIC_RELEASE);
+    return index;
+}
+static void readStateWords(uint32_t *words) {
+    const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
+    if(!object){memset(words,0,kStateWords*4);return;}
+    memcpy(words,object+5808,kStateWords*4);
+}
+static unsigned noteStateChanges(const uint32_t *from,const uint32_t *to,uint32_t call,uint32_t selector,char when) {
+    unsigned changed=0;
+    for(unsigned w=0;w<kStateWords;++w) {
+        if(from[w]==to[w])continue;
+        ++changed;
+        uint32_t n=__atomic_fetch_add(&stateChangeCount,1,__ATOMIC_RELAXED);
+        if(n<kStateChanges)stateChanges[n]={probeNowDs(),call,selector,from[w],to[w],(uint16_t)(5808+4*w),when};
+    }
+    return changed;
+}
+static void sampleMainStack(void) {
+    if(!&boot_ui_trace_main_stack)return;
+    uint64_t frame[kMainFrames]={};int pid=0;unsigned slide=0;
+    unsigned n=boot_ui_trace_main_stack("backboardd",frame,kMainFrames,&pid,&slide);
+    if(!n)return;
+    ++mainSampleCount;
+    for(unsigned i=0;i<n;++i)frame[i]=unslid(frame[i],slide);
+    uint32_t now=probeNowDs();
+    for(unsigned k=0;k<mainStackCount;++k) {
+        MainStack &m=mainStacks[k];
+        if(m.pid==pid && m.count==n && !memcmp(m.frame,frame,sizeof frame)){m.last=now;++m.samples;return;}
+    }
+    if(mainStackCount>=kMainStacks){++mainStackOverflow;return;}
+    MainStack &m=mainStacks[mainStackCount++];memcpy(m.frame,frame,sizeof frame);m.count=n;m.pid=pid;m.first=m.last=now;m.samples=1;
+}
+// asteroids T28: t28-power-ack=1 answers selector 12 (RequestPowerChange) with success when the original refuses a power-on as
+// unsupported while the powered word (display+5840) already says on: the firmware-lit panel is on, which is what the caller asks for.
+static unsigned powerAckMode,powerAckParsed,powerAckCalls;static uint32_t powerAckOriginal;
+static void native_legacy_call_logged(int pid,uint32_t selector,const IOExternalMethodArguments *args,IOReturn status,
+                                      uint8_t stack,uint8_t changed,IOReturn original) {
     uint32_t n=__atomic_fetch_add(&callEvents,1,__ATOMIC_RELAXED);
-    CallEvent e={probeNowDs(),pid,selector,(uint32_t)status,0,0,0,0,0,0};
+    CallEvent e={probeNowDs(),pid,selector,(uint32_t)status,0,0,0,0,0,0,stack,changed,(uint32_t)original};
     if(args) {
         e.scalar_in=(uint16_t)args->scalarInputCount;e.scalar_out=(uint16_t)args->scalarOutputCount;
         e.struct_in=args->structureInputDescriptor?(uint32_t)args->structureInputDescriptor->getLength():args->structureInputSize;
@@ -344,7 +413,25 @@ static ClientStat *statFor(IOUserClient *client) {
 }
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
+    uint8_t stack=0xff,changed=0;uint32_t before[kStateWords],after[kStateWords];uint32_t call=callEvents;
+    if(stat) {
+        stack=callerStackIndex(stat->pid);
+        readStateWords(before);
+        if(!stateSeen){memcpy(stateFirst,before,sizeof before);stateSeen=true;}
+        else noteStateChanges(stateLast,before,call,selector,'b');
+    }
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
+    const IOReturn original=status;
+    if(stat) {
+        readStateWords(after);
+        changed=(uint8_t)noteStateChanges(before,after,call,selector,'c');
+        memcpy(stateLast,after,sizeof after);
+        if(!powerAckParsed){PE_parse_boot_argn("t28-power-ack",&powerAckMode,sizeof powerAckMode);powerAckParsed=1;}
+        if(selector==12 && powerAckMode==1 && status==kIOReturnUnsupported && args && args->scalarInput && args->scalarInputCount>=1 &&
+           args->scalarInput[0]!=0 && after[(5840-5808)/4]==1) {
+            status=kIOReturnSuccess;++powerAckCalls;powerAckOriginal=(uint32_t)original;
+        }
+    }
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
             const uint64_t *in=args->scalarInput;
@@ -360,7 +447,7 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
             }
             if(at>=0){++stat->sel6_calls[at];if(status)++stat->sel6_fails[at];stat->sel6_status[at]=(uint32_t)status;}
         }
-        native_legacy_call_logged(stat->pid,selector,args,status);
+        native_legacy_call_logged(stat->pid,selector,args,status,stack,changed,original);
         ++stat->calls;if(status)++stat->fails;
         if(selector<kSelectors){++stat->selector_calls[selector];if(status)++stat->selector_fails[selector];stat->selector_status[selector]=(uint32_t)status;}
     }
@@ -437,13 +524,23 @@ static const char *statusText(uint32_t status,char *out,unsigned cap) {
     return out;
 }
 static void callItem(LineWriter &w,const CallEvent &e) {
-    char st[12];
-    w.put("%u.%u %d#%u %u/%u>%u/%u%s %llx=%s| ",e.ds/10,e.ds%10,e.pid,e.selector,e.scalar_in,e.struct_in,e.scalar_out,e.struct_out,
-          e.async?" A":"",(unsigned long long)e.arg0,statusText(e.status,st,sizeof st));
+    char st[12],orig[16]="",tail[16]="";
+    if(e.original!=e.status){char o[12];snprintf(orig,sizeof orig,"(%s)",statusText(e.original,o,sizeof o));}
+    if(e.stack!=0xff)snprintf(tail,sizeof tail," k%u",e.stack);
+    if(e.changed){size_t l=strlen(tail);snprintf(tail+l,sizeof tail-l," w%u",e.changed);}
+    w.put("%u.%u %d#%u %u/%u>%u/%u%s %llx=%s%s%s| ",e.ds/10,e.ds%10,e.pid,e.selector,e.scalar_in,e.struct_in,e.scalar_out,e.struct_out,
+          e.async?" A":"",(unsigned long long)e.arg0,statusText(e.status,st,sizeof st),orig,tail);
+}
+static void frameItems(LineWriter &w,const uint64_t *frame,unsigned count) {
+    for(unsigned i=0;i<count;++i) {
+        if(frame[i]>>60)w.put(" !%llx",(unsigned long long)(frame[i]&~(1ULL<<60)));
+        else w.put(" %llx",(unsigned long long)frame[i]);
+    }
 }
 extern "C" unsigned native_legacy_display_lines(char (*rows)[120],unsigned max) {
     LineWriter w={rows,max,0,0};if(max)rows[0][0]=0;
     char st[12];
+    sampleMainStack();
     w.put("IOMFB obj=%llx reg=%u props=%uB opens=%u clients=%u calls=%u; call: s.d pid#sel in scalars/bytes>out scalars/bytes A=async arg0=status",
           (unsigned long long)native_legacy_object,native_legacy_registration_calls,native_legacy_properties_length,openEvents,seenClientCount,callEvents);w.end();
     const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
@@ -480,6 +577,18 @@ extern "C" unsigned native_legacy_display_lines(char (*rows)[120],unsigned max) 
         for(unsigned i=n-shown;i<n;++i)callItem(w,lastCalls[i%kLastCalls]);
         w.end();
     }
+    // asteroids T28: caller stacks, state changes, selector 12 answers, backboardd's main-thread stacks.
+    w.put("STACKS %u (k<n> on a call; cache addresses unslid, !raw = outside the cache; w<n> = state words the call changed):",callerStackCount);w.end();
+    for(unsigned k=0;k<callerStackCount;++k){w.put("k%u p%d x%u:",k,callerStacks[k].pid,callerStacks[k].uses);frameItems(w,callerStacks[k].frame,callerStacks[k].count);w.end();}
+    if(stateSeen){w.put("STATE at first call d+5808:");for(unsigned i=0;i<kStateWords;++i)w.put(" %x",stateFirst[i]);w.end();}
+    w.put("STATE CHANGES %u (c = during call, b = between calls; s.d call#sel +offset old>new):",stateChangeCount);w.end();
+    for(unsigned i=0;i<stateChangeCount && i<kStateChanges;++i){const StateChange &c=stateChanges[i];
+        w.put("%u.%u %c%u#%u +%u %x>%x| ",c.ds/10,c.ds%10,c.when,c.call,c.selector,c.offset,c.from,c.to);}
+    w.end();
+    w.put("POWER ACK mode=%u answered=%u original=%s",powerAckMode,powerAckCalls,statusText(powerAckOriginal,st,sizeof st));w.end();
+    w.put("MAIN backboardd samples=%u distinct=%u overflow=%u (pc lr frames; s.d first-last xN):",mainSampleCount,mainStackCount,mainStackOverflow);w.end();
+    for(unsigned k=0;k<mainStackCount;++k){const MainStack &m=mainStacks[k];
+        w.put("m%u p%d %u.%u-%u.%u x%u:",k,m.pid,m.first/10,m.first%10,m.last/10,m.last%10,m.samples);frameItems(w,m.frame,m.count);w.end();}
     // The display's own properties as registered: key names only.
     w.put("KEYS:");
     for(const char *p=native_legacy_properties;(p=findText(p,"<key>"));) {

@@ -227,13 +227,17 @@ kernel_args = [
   # T26: the page shows every display client (pid, selectors with calls/fails) on the HANDOFF and CLIENT rows.
   # T27: boot-display-page=1 gives rows 6..20 to the display log: every open, client, call in order (argument shape and
   # status), the state words and the display's property keys, paged every 6 s.
-  "sheng-build-tag=T27",
+  # T28: the display log adds each call's caller stack (k<n>), the state words a call or the time between calls changed, and
+  # every distinct main-thread stack of backboardd the trace samples (slot 4, so boot-ui-follow is off: it would move slot 4 off
+  # backboardd). t28-power-ack=1 answers a refused power-on (selector 12) with success while the powered word says on;
+  # T28b is the same kernel with t28-power-ack=0.
+  "sheng-build-tag=T28",
   "boot-display-page=1",
+  "t28-power-ack=1",
   "boot-ui-focus=PerfPowerServices",
   "boot-ui-focus2=SpringBoard",
   "boot-ui-focus3=liveactivitiesd",
   "boot-ui-focus4=backboardd",
-  "boot-ui-follow=1",
   "offline-hid-home=1",
   "offline-hid-input=1",
   "offline-key-events=1",
