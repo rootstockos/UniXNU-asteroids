@@ -117,6 +117,34 @@ static void sampleThreads(char *out, size_t size) {
     vm_deallocate(mach_task_self(), (vm_address_t)threads, count * sizeof *threads);
     mach_port_deallocate(mach_task_self(), self);
 }
+// T22b: the render server's deep (10-bit, extended range) framebuffer, which this display chain cannot show. pandora (iOS 16, the Xiaomi 17 Pro)
+// turns it off with the CAEnableDeepFramebuffer preference next to the two compression ones; UniXNU's own plugin reports the same question as
+// marker 0x6Axx. The preference is written to backboardd's own domain (kept across boots with sheng-data-persist=2), so a render server that
+// read it before this plugin loaded still sees it on the next boot. Bits as UniXNU's: 1 the preference was already set, 2 it was false,
+// 4 MobileGestalt's deep-framebuffer answer is true, 8 that answer exists, 16 the compression capability answer exists, 32 not root.
+static unsigned deepFramebufferOff() {
+    unsigned bits = 0;
+    if (CFTypeRef value = CFPreferencesCopyAppValue(CFSTR("CAEnableDeepFramebuffer"), kCFPreferencesCurrentApplication)) {
+        bits |= 1;
+        if (CFGetTypeID(value) == CFBooleanGetTypeID() && !CFBooleanGetValue((CFBooleanRef)value)) bits |= 2;
+        CFRelease(value);
+    }
+    if (auto copyAnswer = (CFTypeRef (*)(CFStringRef))dlsym(RTLD_DEFAULT, "MGCopyAnswer")) {
+        if (CFTypeRef deep = copyAnswer(CFSTR("Aixt/MEN2O2B7f+8m4TxUA"))) {
+            bits |= 8;
+            if (CFGetTypeID(deep) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)deep)) bits |= 4;
+            CFRelease(deep);
+        }
+        if (CFTypeRef caps = copyAnswer(CFSTR("AoKnINTLPoKML3ctoP0AZg"))) {bits |= 16; CFRelease(caps);}
+    }
+    if (getuid() != 0) bits |= 32;
+    CFPreferencesSetAppValue(CFSTR("CAEnableDeepFramebuffer"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
+    CFPreferencesSetAppValue(CFSTR("CAEnableFramebufferCompression"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
+    CFPreferencesSetAppValue(CFSTR("CAEnableIOSurfaceCompression"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
+    CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+    return bits;
+}
+static unsigned gDeepBits;
 static bool beside(const char *name) {
     Dl_info info = {};
     if (!dladdr(reinterpret_cast<const void *>(&beside), &info) || !info.dli_fname) return false;
@@ -167,8 +195,8 @@ static id deviceForPort(unsigned port) {
         if (auto entryID = (int (*)(unsigned, uint64_t *))dlsym(iokit, "IORegistryEntryGetRegistryEntryID")) entryID(port, &registryID);
         // The render server compresses its framebuffer (an AGX layout this GPU does not write) unless told not to; the display takes plain rows.
         setenv("CA_DISABLE_FRAMEBUFFER_COMPRESSION", "1", 1);
-        CFPreferencesSetAppValue(CFSTR("CAEnableFramebufferCompression"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
-        CFPreferencesSetAppValue(CFSTR("CAEnableIOSurfaceCompression"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
+        gDeepBits = deepFramebufferOff();
+        gpu->mark(0x6A00 | gDeepBits);
         // The runtime needs a writable shader-cache directory; which ones backboardd's sandbox allows is not known here. In order: the user's
         // Library/Caches (kept across boots with sheng-data-persist=2), the user cache and temp directories, /tmp, /private/var/tmp.
         char candidates[5][512] = {};
@@ -275,6 +303,9 @@ static void sampleOnly(unsigned port) {
     Gpu *gpu = makeGpu(port);
     if (!gpu) return;
     gpu->mark(0x6900);
+    setenv("CA_DISABLE_FRAMEBUFFER_COMPRESSION", "1", 1);
+    gDeepBits = deepFramebufferOff();
+    gpu->mark(0x6A00 | gDeepBits);
     pthread_t thread;
     pthread_attr_t attributes;
     pthread_attr_init(&attributes);
@@ -292,7 +323,7 @@ static void sampleOnly(unsigned port) {
                 sampleThreads(stacks, sizeof stacks);
                 pieces = (unsigned)((strlen(stacks) + 56) / 57);
                 pieces = pieces > 8 ? 8 : pieces;
-                snprintf(text, sizeof text, "SMP %.58s", stacks);
+                snprintf(text, sizeof text, "SMP d%02x %.54s", gDeepBits, stacks);
             } else {
                 snprintf(text, sizeof text, "BT%u %.57s", step - 1, stacks + (size_t)(step - 1) * 57);
             }
