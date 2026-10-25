@@ -219,12 +219,17 @@ kernel_args = [
   "sheng-vsync=120",
   # T25: the boot progress kit's live page and UI trace (docs/guide/debugging.md of UniXNU). The trace samples the render
   # server's process, SpringBoard, and the two that decide launches and kills; one page every 8 s.
+  # T25b: T25 found all four idle and liveactivitiesd in a Swift trap loop, and the last display client was pid 71
+  # (PerfPowerServices on T24b's console). Slot 1 takes PerfPowerServices and slot 3 liveactivitiesd; backboardd moves to
+  # slot 4. boot-ui-follow=1 traces whatever SpringBoard sends to in slot 4 (and that process's own peer in slot 1); while
+  # SpringBoard only receives, both slots keep their names.
   "boot-progress=2",
-  "sheng-build-tag=T25",
-  "boot-ui-focus=backboardd",
+  "sheng-build-tag=T25b",
+  "boot-ui-focus=PerfPowerServices",
   "boot-ui-focus2=SpringBoard",
-  "boot-ui-focus3=runningboardd",
-  "boot-ui-focus4=launchd",
+  "boot-ui-focus3=liveactivitiesd",
+  "boot-ui-focus4=backboardd",
+  "boot-ui-follow=1",
   "offline-hid-home=1",
   "offline-hid-input=1",
   "offline-key-events=1",
