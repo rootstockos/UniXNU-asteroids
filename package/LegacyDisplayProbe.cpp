@@ -3,6 +3,7 @@
 // late hook, which starts only the key store and HID providers this board has (no sheng touch, CPU frequency, GPU power, WiFi,
 // audio DSP, battery, buttons, backlight or DPU timing probes).
 // Bounded offline original lifecycle instrument; no desktop claim.
+#include <stdarg.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IODeviceTreeSupport.h>
@@ -308,8 +309,33 @@ struct ClientStat {
     uint64_t sel6_first[3],sel6_last[3];uint32_t sel6_distinct;uint64_t sel6_seen[8][3];uint32_t sel6_calls[8],sel6_fails[8],sel6_status[8];
     uint32_t seq_count;struct {uint32_t a,b,c,status,done,presented;} seq[24];
     uintptr_t original_external,original_register;
+    uint32_t type,open_ds;char name[17];   // asteroids T27
 };
 static ClientStat seenClients[kSeenClients];static unsigned seenClientCount;
+// asteroids T27: every user-client call in order (the first kFirstCalls kept, then a ring of the latest kLastCalls), each with its
+// time, caller, selector, argument shape (scalar and structure counts in and out, async = a wake port came with it) and status;
+// and every open attempt, successful or not.
+enum {kFirstCalls=48,kLastCalls=32,kOpens=12};
+struct CallEvent {uint32_t ds;int pid;uint32_t selector,status;uint16_t scalar_in,scalar_out;uint32_t struct_in,struct_out;uint8_t async;uint64_t arg0;};
+static CallEvent firstCalls[kFirstCalls],lastCalls[kLastCalls];
+static uint32_t callEvents;
+struct OpenEvent {uint32_t ds,type,status;int pid;};
+static OpenEvent opens[kOpens];static uint32_t openEvents;
+extern "C" void proc_name(int pid,char *buf,int size);
+static uint32_t probeNowDs(void) {uint64_t ns;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return (uint32_t)(ns/100000000);}
+static void native_legacy_call_logged(int pid,uint32_t selector,const IOExternalMethodArguments *args,IOReturn status) {
+    uint32_t n=__atomic_fetch_add(&callEvents,1,__ATOMIC_RELAXED);
+    CallEvent e={probeNowDs(),pid,selector,(uint32_t)status,0,0,0,0,0,0};
+    if(args) {
+        e.scalar_in=(uint16_t)args->scalarInputCount;e.scalar_out=(uint16_t)args->scalarOutputCount;
+        e.struct_in=args->structureInputDescriptor?(uint32_t)args->structureInputDescriptor->getLength():args->structureInputSize;
+        e.struct_out=args->structureOutputDescriptor?(uint32_t)args->structureOutputDescriptor->getLength():args->structureOutputSize;
+        e.async=args->asyncWakePort!=MACH_PORT_NULL;
+        if(args->scalarInput && args->scalarInputCount)e.arg0=args->scalarInput[0];
+    }
+    if(n<kFirstCalls)firstCalls[n]=e;
+    lastCalls[n%kLastCalls]=e;
+}
 typedef IOReturn (*ExternalFn)(IOUserClient *,uint32_t,IOExternalMethodArguments *,IOExternalMethodDispatch *,OSObject *,void *);
 typedef IOReturn (*RegisterFn)(IOUserClient *,mach_port_t,UInt32,UInt32);
 static ClientStat *statFor(IOUserClient *client) {
@@ -334,6 +360,7 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
             }
             if(at>=0){++stat->sel6_calls[at];if(status)++stat->sel6_fails[at];stat->sel6_status[at]=(uint32_t)status;}
         }
+        native_legacy_call_logged(stat->pid,selector,args,status);
         ++stat->calls;if(status)++stat->fails;
         if(selector<kSelectors){++stat->selector_calls[selector];if(status)++stat->selector_fails[selector];stat->selector_status[selector]=(uint32_t)status;}
     }
@@ -385,6 +412,83 @@ extern "C" unsigned native_legacy_client_row(unsigned c,char *out,unsigned cap) 
     }
     return seenClientCount;
 }
+// asteroids T27: the display page (boot-display-page=1), every line of it; BootProgress.c pages through them. IOKit statuses
+// (e00002xx) are written as their low three digits, success as "ok".
+struct LineWriter {
+    char (*rows)[120];unsigned max,count,at;
+    void put(const char *format,...) __attribute__((format(printf,2,3))) {
+        if(count>=max)return;
+        char item[120];va_list ap;va_start(ap,format);int n=vsnprintf(item,sizeof item,format,ap);va_end(ap);
+        if(n<0)return;if(n>119)n=119;
+        if(at+(unsigned)n>119){if(++count>=max)return;at=0;rows[count][0]=0;}
+        memcpy(rows[count]+at,item,(unsigned)n+1);at+=(unsigned)n;
+    }
+    void end(void) {if(count<max && at){++count;}at=0;if(count<max)rows[count][0]=0;}
+};
+static const char *findText(const char *from,const char *needle) {
+    size_t n=strlen(needle);
+    for(;*from;++from)if(!strncmp(from,needle,n))return from;
+    return nullptr;
+}
+static const char *statusText(uint32_t status,char *out,unsigned cap) {
+    if(!status)snprintf(out,cap,"ok");
+    else if((status&0xfffff000)==0xe0000000)snprintf(out,cap,"%x",status&0xfff);
+    else snprintf(out,cap,"%x",status);
+    return out;
+}
+static void callItem(LineWriter &w,const CallEvent &e) {
+    char st[12];
+    w.put("%u.%u %d#%u %u/%u>%u/%u%s %llx=%s| ",e.ds/10,e.ds%10,e.pid,e.selector,e.scalar_in,e.struct_in,e.scalar_out,e.struct_out,
+          e.async?" A":"",(unsigned long long)e.arg0,statusText(e.status,st,sizeof st));
+}
+extern "C" unsigned native_legacy_display_lines(char (*rows)[120],unsigned max) {
+    LineWriter w={rows,max,0,0};if(max)rows[0][0]=0;
+    char st[12];
+    w.put("IOMFB obj=%llx reg=%u props=%uB opens=%u clients=%u calls=%u; call: s.d pid#sel in scalars/bytes>out scalars/bytes A=async arg0=status",
+          (unsigned long long)native_legacy_object,native_legacy_registration_calls,native_legacy_properties_length,openEvents,seenClientCount,callEvents);w.end();
+    const unsigned char *object=reinterpret_cast<const unsigned char *>(native_legacy_object);
+    if(object) {
+        w.put("STATE d+5808:");
+        for(unsigned o=5808;o<5872;o+=4){uint32_t v;memcpy(&v,object+o,4);w.put(" %x",v);}
+        w.end();
+    }
+    for(unsigned i=0;i<openEvents && i<kOpens;++i)w.put("OPEN %u.%u p%d type%u %s | ",opens[i].ds/10,opens[i].ds%10,opens[i].pid,opens[i].type,statusText(opens[i].status,st,sizeof st));
+    w.end();
+    for(unsigned c=0;c<seenClientCount;++c) {
+        const ClientStat &s=seenClients[c];
+        w.put("C%u p%d %s type%u at %u.%u calls=%u fails=%u ports=%u:",c+1,s.pid,s.name,s.type,s.open_ds/10,s.open_ds%10,s.calls,s.fails,s.regs);
+        for(unsigned sel=0;sel<kSelectors;++sel) {
+            if(!s.selector_calls[sel])continue;
+            if(s.selector_fails[sel])w.put(" %u:%u/%u@%s",sel,s.selector_calls[sel],s.selector_fails[sel],statusText(s.selector_status[sel],st,sizeof st));
+            else w.put(" %u:%u",sel,s.selector_calls[sel]);
+        }
+        w.end();
+        for(unsigned r=0;r<s.regs && r<kRegEvents;++r)
+            w.put("  port type%u %llx ref%x %s |",s.reg[r].type,(unsigned long long)s.reg[r].port,s.reg[r].ref,statusText(s.reg[r].status,st,sizeof st));
+        if(s.regs)w.end();
+        for(unsigned k=0;k<s.seq_count && k<6;++k)
+            w.put("  s6 %x %x %x=%s done%x pres%x |",s.seq[k].a,s.seq[k].b,s.seq[k].c,statusText(s.seq[k].status,st,sizeof st),s.seq[k].done,s.seq[k].presented);
+        if(s.seq_count)w.end();
+    }
+    uint32_t n=callEvents;
+    w.put("FIRST %u calls:",n<kFirstCalls?n:(uint32_t)kFirstCalls);w.end();
+    for(unsigned i=0;i<n && i<kFirstCalls;++i)callItem(w,firstCalls[i]);
+    w.end();
+    if(n>kFirstCalls) {
+        unsigned shown=n-kFirstCalls<kLastCalls?n-kFirstCalls:(unsigned)kLastCalls;
+        w.put("LAST %u of %u calls:",shown,n);w.end();
+        for(unsigned i=n-shown;i<n;++i)callItem(w,lastCalls[i%kLastCalls]);
+        w.end();
+    }
+    // The display's own properties as registered: key names only.
+    w.put("KEYS:");
+    for(const char *p=native_legacy_properties;(p=findText(p,"<key>"));) {
+        p+=5;const char *e=findText(p,"</key>");if(!e)break;
+        w.put(" %.*s",(int)(e-p<60?e-p:60),p);p=e;
+    }
+    w.end();
+    return w.count;
+}
 extern "C" unsigned native_legacy_clients_dump(char *out,unsigned cap) {
     unsigned at=0;out[0]=0;
     for(unsigned c=0;c<seenClientCount && at+120<cap;++c) {
@@ -409,7 +513,14 @@ extern "C" unsigned native_legacy_clients_dump(char *out,unsigned cap) {
     return at;
 }
 void native_legacy_client_observed(IOReturn status,IOUserClient *client) {
+    uint32_t o=__atomic_fetch_add(&openEvents,1,__ATOMIC_RELAXED);
+    if(o<kOpens)opens[o]={probeNowDs(),native_legacy_client_type,(uint32_t)status,native_legacy_client_pid};
+    unsigned before=seenClientCount;
     if(client && !status)interpose(client,native_legacy_client_pid);
+    if(seenClientCount>before) {
+        ClientStat &c=seenClients[before];c.type=native_legacy_client_type;c.open_ds=probeNowDs();
+        proc_name(c.pid,c.name,sizeof c.name);
+    }
     native_legacy_client_status=status;native_legacy_client_object=(uintptr_t)client;
     if(client)strlcpy(native_legacy_client_class,client->getMetaClass()->getClassName(),sizeof(native_legacy_client_class));
     native_legacy_client_checkpoint();

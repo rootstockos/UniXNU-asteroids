@@ -205,6 +205,7 @@ extern volatile int native_legacy_client_pid __attribute__((weak_import));
 extern volatile int native_legacy_client_status __attribute__((weak_import));
 extern char native_legacy_client_class[64] __attribute__((weak_import));
 extern unsigned native_legacy_client_row(unsigned,char *,unsigned) __attribute__((weak_import));
+extern unsigned native_legacy_display_lines(char (*)[120],unsigned) __attribute__((weak_import));
 extern volatile uint64_t native_legacy_gop_virtual __attribute__((weak_import));
 extern volatile uint64_t native_legacy_gop_physical __attribute__((weak_import));
 extern volatile uint64_t native_legacy_gop_bytes __attribute__((weak_import));
@@ -231,8 +232,16 @@ volatile unsigned boot_progress_banner_rows;
 static void capture(unsigned row, const char *text) {
   if(row<48){strncpy(boot_progress_page_text[row],text,BP_COLS-1);boot_progress_page_text[row][BP_COLS-1]=0;}
 }
+// asteroids T27: boot-display-page=1 gives rows 6..20 to the display log (LegacyDisplayProbe's every client, call, open, state
+// word and property key), 14 lines a page, the pages turning every 6 s; the trace and console rows keep running underneath.
+static unsigned display_page_mode,display_page_parsed,display_page_drawing;
+static char display_page_rows[96][120];
+static int display_page_owns(unsigned row) {
+  return display_page_mode==1 && !display_page_drawing && row>=6 && row<=20 && &native_legacy_display_lines;
+}
 static void line(unsigned row, const char *text, uint32_t color) {
   capture(row,text);
+  if(display_page_owns(row))return;
   // Reserve the last diagnostic row for a readable independent pulse.
   if(row==47 && __atomic_load_n(&pulse.ready,__ATOMIC_ACQUIRE))return;
   bp_line(&display,row,text,color);
@@ -243,12 +252,22 @@ static void line(unsigned row, const char *text, uint32_t color) {
 #define BP_BAR_SECTION 0xff1a2029
 static void bar(unsigned row, const char *text, uint32_t color, uint32_t background) {
   capture(row,text);
+  if(display_page_owns(row))return;
   if(row==47 && __atomic_load_n(&pulse.ready,__ATOMIC_ACQUIRE))return;
   bp_line_bg(&display,row,text,color,background);
 }
 static void draw(unsigned now) {
   const struct bp_core *visible=started ? &render_snapshot : &state;
   char b[BP_COLS];
+  if(!display_page_parsed){PE_parse_boot_argn("boot-display-page",&display_page_mode,sizeof(display_page_mode));display_page_parsed=1;}
+  if(display_page_mode==1 && &native_legacy_display_lines) {
+    unsigned total=native_legacy_display_lines(display_page_rows,96),pages=total?(total+13)/14:1,page=(now/6)%pages;
+    display_page_drawing=1;
+    snprintf(b,sizeof(b)," DISPLAY LOG page %u/%u (%u lines, turns every 6 s)",page+1,pages,total);
+    bar(6,b,0xffffff00,BP_BAR_SECTION);
+    for(unsigned i=0;i<14;++i)line(7+i,page*14+i<total?display_page_rows[page*14+i]:"",0xffffffff);
+    display_page_drawing=0;
+  }
   uint64_t tcr, ttbr0, ttbr1, sctlr;
   __asm__ volatile("mrs %0,tcr_el1" : "=r"(tcr));
   __asm__ volatile("mrs %0,ttbr0_el1" : "=r"(ttbr0));

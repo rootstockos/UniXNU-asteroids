@@ -225,7 +225,10 @@ kernel_args = [
   # SpringBoard only receives, both slots keep their names.
   "boot-progress=2",
   # T26: the page shows every display client (pid, selectors with calls/fails) on the HANDOFF and CLIENT rows.
-  "sheng-build-tag=T26",
+  # T27: boot-display-page=1 gives rows 6..20 to the display log: every open, client, call in order (argument shape and
+  # status), the state words and the display's property keys, paged every 6 s.
+  "sheng-build-tag=T27",
+  "boot-display-page=1",
   "boot-ui-focus=PerfPowerServices",
   "boot-ui-focus2=SpringBoard",
   "boot-ui-focus3=liveactivitiesd",
