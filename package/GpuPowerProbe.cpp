@@ -1164,6 +1164,9 @@ extern volatile uint32_t asteroids_exec_total __attribute__((weak)), asteroids_e
     asteroids_exec_bluetoothd __attribute__((weak)), asteroids_exec_fdr __attribute__((weak));
 extern char asteroids_exec_last[8][24] __attribute__((weak));
 extern char asteroids_exec_ngpu_path[64] __attribute__((weak));
+// T16c: bluetoothd starts turned into the daemon, and the user the daemon ran as.
+extern volatile uint32_t asteroids_exec_swaps __attribute__((weak));
+extern volatile int32_t asteroids_exec_ngpu_uid __attribute__((weak));
 uint32_t native_gpu_user[8];
 }
 static void userReport(const char *when) {
@@ -1189,6 +1192,8 @@ static void userReport(const char *when) {
         IOLog("ASTEROIDS GPU: user %s: execs %u, ngpu %u bluetoothd %u fdr_loader %u; last %.23s %.23s %.23s %.23s\n", when, e,
               asteroids_exec_ngpu, asteroids_exec_bluetoothd, asteroids_exec_fdr, asteroids_exec_last[(e + 4) & 7],
               asteroids_exec_last[(e + 5) & 7], asteroids_exec_last[(e + 6) & 7], asteroids_exec_last[(e + 7) & 7]);
+        IOLog("ASTEROIDS GPU: user %s: swaps %d, daemon uid %d\n", when, &asteroids_exec_swaps ? int(asteroids_exec_swaps) : -9,
+              &asteroids_exec_ngpu_uid ? int(asteroids_exec_ngpu_uid) : -9);
         if (asteroids_exec_ngpu) IOLog("ASTEROIDS GPU: user %s: ngpu exec %.63s\n", when, asteroids_exec_ngpu_path);
     } else {
         IOLog("ASTEROIDS GPU: user %s: no exec log in this kernel\n", when);

@@ -13,10 +13,13 @@
 // launchd jobs start it, and it does not export the system log. TurnipReplay.h (a submission recorded on the A740) is never on
 // this build's include path, so nothing recorded on another GPU is replayed on the A810.
 #include <fcntl.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <sys/file.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
+#include <unistd.h>
 #include "NativeAdrenoUserTest.h"
 
 #ifdef NATIVE_TURNIP_REPLAY
@@ -27,6 +30,21 @@ using MatchingFn = void *(*)(const char *);
 using GetServiceFn = unsigned (*)(unsigned, void *);
 
 // The jobs start together; the first takes the lock and the boot's time stamp, the others leave.
+// Early steps to the console (best effort: it needs write access to /dev/console), so a daemon that stops before the open is visible.
+static void say(const char *format, ...) {
+    char line[160];
+    va_list args;
+    va_start(args, format);
+    int length = vsnprintf(line, sizeof line, format, args);
+    va_end(args);
+    if (length < 0) return;
+    if (length >= int(sizeof line)) length = int(sizeof line) - 1;
+    const int console = open("/dev/console", O_WRONLY | O_NOCTTY);
+    if (console < 0) return;
+    if (write(console, line, size_t(length)) != length) {}
+    close(console);
+}
+
 static bool firstThisBoot() {
     static const char kStamp[] = "/private/var/ngpu/asteroidsgpud.boot";
     const int lock = open("/private/var/ngpu/asteroidsgpud.lock", O_CREAT | O_RDWR, 0600);
@@ -51,7 +69,11 @@ static bool firstThisBoot() {
 }
 
 int main() {
-    if (!firstThisBoot()) return 0;
+    say("ASTEROIDSGPUD: start pid %d uid %d euid %d\n", int(getpid()), int(getuid()), int(geteuid()));
+    if (!firstThisBoot()) {
+        say("ASTEROIDSGPUD: not the first run this boot (or the lock failed), exit\n");
+        return 0;
+    }
     void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL);
     if (!iokit) return 1;
     auto matching = (MatchingFn)dlsym(iokit, "IOServiceMatching");
@@ -67,5 +89,6 @@ int main() {
         port = getService(0, matching("NativeAdrenoGpuPublished"));
         if (!port) usleep(500000);
     }
+    say("ASTEROIDSGPUD: service %s after waiting\n", port ? "found" : "not found");
     return !port ? 3 : adrenoUserTest(port, "asteroidsgpud") >= 0 ? 0 : 4;
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // From Allenwdk/UniXNU-uke package/BootWatchdogPolicy.c. asteroids also runs under Gunyah, so the watchdog pet thread
-// applies here as well. asteroids additions (T16b, only with sheng-gpu-addon=1): sheng-lite keeps the bluetoothd job for the GPU
-// addon's daemon, and an exec log for the GPU probe's diagnostics.
+// applies here as well. asteroids additions (only with sheng-gpu-addon=1): sheng-lite keeps the bluetoothd job for the GPU addon's
+// daemon (T16b), an exec log for the GPU probe's diagnostics (T16b), and bluetoothd's exec turned into the daemon (T16c).
 // Explicit temporary bring-up policy for an unavailable watchdog backend.
 // Runs after writable scratch Data mounts, before the unchanged launchd exec.
 #include <sys/param.h>
@@ -49,14 +49,15 @@ static const char lite_kept_for_addon[]="com.apple.bluetoothd";
 volatile uint32_t asteroids_exec_total,asteroids_exec_ngpu,asteroids_exec_bluetoothd,asteroids_exec_fdr,asteroids_exec_seq;
 char asteroids_exec_last[8][24];
 char asteroids_exec_ngpu_path[64];
+volatile int32_t asteroids_exec_ngpu_uid=-1;   // T16c: the user the daemon runs as (bluetoothd's job decides)
 static int asteroids_exec_listener(kauth_cred_t credential,void *data,kauth_action_t action,uintptr_t arg0,uintptr_t arg1,uintptr_t arg2,uintptr_t arg3) {
- (void)credential;(void)data;(void)arg0;(void)arg2;(void)arg3;
+ (void)data;(void)arg0;(void)arg2;(void)arg3;
  const char *path=(const char *)arg1;
  if(action!=KAUTH_FILEOP_EXEC || !path)return KAUTH_RESULT_DEFER;
  const char *name=strrchr(path,'/');name=name?name+1:path;
  const uint32_t n=asteroids_exec_total;asteroids_exec_total=n+1;
  strlcpy(asteroids_exec_last[n&7],name,sizeof(asteroids_exec_last[0]));
- if(!strncmp(path,"/private/var/ngpu/",18)){asteroids_exec_ngpu=asteroids_exec_ngpu+1;strlcpy(asteroids_exec_ngpu_path,path,sizeof(asteroids_exec_ngpu_path));}
+ if(!strncmp(path,"/private/var/ngpu/",18)){asteroids_exec_ngpu=asteroids_exec_ngpu+1;strlcpy(asteroids_exec_ngpu_path,path,sizeof(asteroids_exec_ngpu_path));asteroids_exec_ngpu_uid=credential?(int32_t)kauth_cred_getuid(credential):-2;}
  if(!strcmp(name,"bluetoothd"))asteroids_exec_bluetoothd=asteroids_exec_bluetoothd+1;
  for(const char *c=name;*c;++c)if(!strncmp(c,"fdr_loader",10)){asteroids_exec_fdr=asteroids_exec_fdr+1;break;}
  asteroids_exec_seq=asteroids_exec_seq+1;
@@ -65,6 +66,18 @@ static int asteroids_exec_listener(kauth_cred_t credential,void *data,kauth_acti
 static void asteroids_exec_log_start(void) {
  static kauth_listener_t listener;
  if(!listener)listener=kauth_listen_scope(KAUTH_SCOPE_FILEOP,asteroids_exec_listener,NULL);
+}
+
+// asteroids T16c: launchd starts its jobs from its own compiled list, so the addon's job plists never ran (T16b: the real bluetoothd ran,
+// ngpu 0). Instead the kernel's exec hook (UniXNU zzy-native-gpu-addon-mount.patch) runs the GPU test daemon in place of bluetoothd, which
+// this board does not use: launchd's own com.apple.bluetoothd job, only the program changes. Same idea as pandora's sweetexecswap.
+extern const char *(*native_gpu_addon_exec_substitute)(const char *path);
+volatile uint32_t asteroids_exec_swaps;
+static const char *asteroids_exec_substitute(const char *path) {
+ if(!path || strcmp(path,"/usr/sbin/bluetoothd"))return NULL;
+ const uint32_t n=asteroids_exec_swaps;asteroids_exec_swaps=n+1;
+ if(n<4)printf("ASTEROIDS GPU: exec swap %u: /usr/sbin/bluetoothd -> /private/var/ngpu/bin/asteroidsgpud\n",n+1);
+ return "/private/var/ngpu/bin/asteroidsgpud";
 }
 
 // sheng-setup=1 or sheng-data-reset=2 (the install entry's "show Hello" choice): remove Setup's completion flags once, so this boot shows the Hello page.
@@ -147,7 +160,7 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  int enabled=0,error=0,fd=-1;int32_t result=0;
  uke_gunyah_wdt_start();
  int addon=0;PE_parse_boot_argn("sheng-gpu-addon",&addon,sizeof(addon));
- if(addon==1)asteroids_exec_log_start();
+ if(addon==1){asteroids_exec_log_start();native_gpu_addon_exec_substitute=asteroids_exec_substitute;}
  PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
  if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
  int lite=0;PE_parse_boot_argn("sheng-lite",&lite,sizeof(lite));if(lite!=1)lite=0;
