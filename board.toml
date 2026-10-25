@@ -224,7 +224,8 @@ kernel_args = [
   # slot 4. boot-ui-follow=1 traces whatever SpringBoard sends to in slot 4 (and that process's own peer in slot 1); while
   # SpringBoard only receives, both slots keep their names.
   "boot-progress=2",
-  "sheng-build-tag=T25b",
+  # T26: the page shows every display client (pid, selectors with calls/fails) on the HANDOFF and CLIENT rows.
+  "sheng-build-tag=T26",
   "boot-ui-focus=PerfPowerServices",
   "boot-ui-focus2=SpringBoard",
   "boot-ui-focus3=liveactivitiesd",

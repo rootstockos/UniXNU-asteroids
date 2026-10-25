@@ -367,6 +367,24 @@ extern "C" unsigned native_legacy_state_words(char *out,unsigned cap) {
     for(unsigned o=5808;o<5872 && at+16<cap;o+=4){uint32_t v;memcpy(&v,object+o,4);at+=snprintf(out+at,cap-at," %x",v);}
     return at;
 }
+// One page row per client (asteroids): pid, calls, fails, registered notification ports, then every selector used as
+// selector:calls or selector:calls/fails. Returns the number of clients seen; an index past the end writes an empty row.
+extern "C" unsigned native_legacy_client_row(unsigned c,char *out,unsigned cap) {
+    out[0]=0;
+    if(c>=seenClientCount)return seenClientCount;
+    const ClientStat &s=seenClients[c];
+    int n=snprintf(out,cap,"C%u/%u p%d c%u f%u r%u sel",c+1,seenClientCount,s.pid,s.calls,s.fails,s.regs);
+    unsigned at=n>0 && (unsigned)n<cap?(unsigned)n:cap-1;
+    for(unsigned sel=0;sel<kSelectors;++sel) {
+        if(!s.selector_calls[sel])continue;
+        char item[24];
+        n=s.selector_fails[sel]?snprintf(item,sizeof item," %u:%u/%u",sel,s.selector_calls[sel],s.selector_fails[sel])
+                               :snprintf(item,sizeof item," %u:%u",sel,s.selector_calls[sel]);
+        if(n<0 || at+(unsigned)n+2>=cap){if(at+2<cap){out[at++]='+';out[at]=0;}break;}
+        memcpy(out+at,item,(unsigned)n+1);at+=(unsigned)n;
+    }
+    return seenClientCount;
+}
 extern "C" unsigned native_legacy_clients_dump(char *out,unsigned cap) {
     unsigned at=0;out[0]=0;
     for(unsigned c=0;c<seenClientCount && at+120<cap;++c) {

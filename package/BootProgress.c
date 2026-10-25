@@ -204,6 +204,7 @@ extern volatile uint32_t native_legacy_client_type __attribute__((weak_import));
 extern volatile int native_legacy_client_pid __attribute__((weak_import));
 extern volatile int native_legacy_client_status __attribute__((weak_import));
 extern char native_legacy_client_class[64] __attribute__((weak_import));
+extern unsigned native_legacy_client_row(unsigned,char *,unsigned) __attribute__((weak_import));
 extern volatile uint64_t native_legacy_gop_virtual __attribute__((weak_import));
 extern volatile uint64_t native_legacy_gop_physical __attribute__((weak_import));
 extern volatile uint64_t native_legacy_gop_bytes __attribute__((weak_import));
@@ -443,9 +444,17 @@ static void draw(unsigned now) {
         line(33+r,b,0xff00ff88);
       }
     } else {
+    // asteroids T26: every display client seen (LegacyDisplayProbe's list), two per row pair, the pairs turning every 4 s;
+    // the HANDOFF and last-client rows give way to it once there is a client.
+    unsigned clients=&native_legacy_client_row?native_legacy_client_row(~0u,b,sizeof(b)):0;
+    if(clients) {
+      unsigned pairs=(clients+1)/2,first=(now/4)%pairs*2;
+      for(unsigned r=0;r<2;++r){native_legacy_client_row(first+r,b,sizeof(b));line(33+r,b,r?0xffaaaaaa:0xffffff00);}
+    } else {
     snprintf(b,sizeof(b),"HANDOFF calls=%u reason=%u attempts=%u (0=OK 1=IRQ 2=masked 3=writer timeout)",
       native_legacy_prepare_calls,native_legacy_prepare_reason,native_legacy_prepare_attempts);line(33,b,0xffffff00);
-    if(&native_legacy_client_calls) {
+    }
+    if(!clients && &native_legacy_client_calls) {
       snprintf(b,sizeof(b),"CLIENT calls=%u pid=%d type=%u status=%08x class=%.32s",
         native_legacy_client_calls,native_legacy_client_pid,native_legacy_client_type,
         (unsigned)native_legacy_client_status,native_legacy_client_class);line(34,b,0xffaaaaaa);
