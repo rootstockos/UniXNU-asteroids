@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Copy the persistent Data volume of the last boot from the phone into a disk image on this Mac.
 
-The phone runs LineageOS Recovery with ADB enabled (root shell). Nothing on the phone is written: the script only reads the
+The phone runs LineageOS Recovery with ADB enabled (root shell), or Android with a root adb shell (Rooted debugging and
+`adb root`), or Android with `su` (--su). Nothing on the phone is written: the script only reads the
 userdata partition with dd. The Data disk is the packed seed (the payload's Data ramdisk) with the pages the running system
 changed on top; those pages live in the persistent store window at the end of userdata (drivers/RamBlock/PersistOverlay.h:
 header block "SHNGDATA", presence bitmap, page i at 1 + bitmap blocks + i), placed by NativeUfs (native_ufs_store_open: the
@@ -25,7 +26,13 @@ USERDATA_FIRST, USERDATA_LAST = 0x256248, 0x3a8bffa
 RESERVE_BLOCKS = 1024 * 256              # sheng-log-reserve default (1024 MiB)
 
 
+SU = False
+
+
 def adb(*args, data=False):
+    # --su: run the shell commands through su on a non-root adb shell (Android with a su binary).
+    if SU and args[0] in ('shell', 'exec-out'):
+        args = (args[0], 'su -c ' + shlex.quote(' '.join(args[1:])))
     out = subprocess.run(['adb', *args], check=True, capture_output=True)
     return out.stdout if data else out.stdout.decode().strip()
 
@@ -56,7 +63,10 @@ def main():
     parser.add_argument('--out', required=True, type=Path)
     parser.add_argument('--device', default='/dev/block/by-name/userdata')
     parser.add_argument('--no-attach', action='store_true')
+    parser.add_argument('--su', action='store_true', help='Android with su: run the reads through su -c')
     args = parser.parse_args()
+    global SU
+    SU = args.su
     args.out.mkdir(parents=True, exist_ok=True)
 
     logical, extents = seed_regions(args.seed.read_bytes())
@@ -67,7 +77,7 @@ def main():
     start = partition - RESERVE_BLOCKS - window   # partition-relative
 
     if adb('shell', 'id -u') != '0':
-        sys.exit('adb shell is not root: enable ADB in LineageOS Recovery (Advanced > Enable ADB)')
+        sys.exit('adb shell is not root: enable ADB in LineageOS Recovery, use adb root (Rooted debugging) or --su')
     device = adb('shell', f'readlink -f {shlex.quote(args.device)}')
     size = int(adb('shell', f'blockdev --getsize64 {shlex.quote(device)}'))
     if size != partition * BLOCK:
@@ -94,8 +104,9 @@ def main():
     script = args.out / 'pull.sh'
     base = start + 1 + bitmap_blocks
     script.write_text(''.join(f'dd if={device} bs={BLOCK} skip={base + i} count={n} 2>/dev/null\n' for i, n in runs))
-    adb('push', str(script), '/tmp/pull.sh')
-    pulled = adb('exec-out', 'sh /tmp/pull.sh', data=True)
+    remote = '/data/local/tmp/pull.sh' if adb('shell', 'test -d /data/local/tmp && echo y') == 'y' else '/tmp/pull.sh'
+    adb('push', str(script), remote)
+    pulled = adb('exec-out', f'sh {remote}', data=True)
     if len(pulled) != len(present) * BLOCK:
         sys.exit(f'pulled {len(pulled)} bytes, expected {len(present) * BLOCK}')
     (args.out / 'pages.bin').write_bytes(pulled)
