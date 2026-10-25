@@ -94,7 +94,7 @@ void rows(const Snapshot &s) {
 }
 void logSummary(const char *when, const Snapshot &s) {
     IOLog("ASTEROIDS TOUCH: %s step=%d error=%d vote=%08x (qup0 %02x) cbcr s0=%08x m_ahb=%08x s_ahb=%08x core=%08x core2x=%08x\n",
-          when, s.step, s.error, s.vote, (s.vote >> 18) & 0x1f, s.s0, s.mahb, s.sahb, s.core, s.core2x);
+          when, s.step, s.error, s.vote, (s.vote & kVoteQup0) >> 18, s.s0, s.mahb, s.sahb, s.core, s.core2x);
     IOLog("ASTEROIDS TOUCH: %s pins gpio0 %x/%x gpio1 %x/%x gpio2 %x/%x gpio3 %x/%x gpio19 %x/%x/%x gpio20 %x/%x/%x\n", when,
           s.pin[0][0], s.pin[0][1], s.pin[1][0], s.pin[1][1], s.pin[2][0], s.pin[2][1], s.pin[3][0], s.pin[3][1],
           s.pin[4][0], s.pin[4][1], s.pin[4][2], s.pin[5][0], s.pin[5][1], s.pin[5][2]);
