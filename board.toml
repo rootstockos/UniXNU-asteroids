@@ -180,8 +180,6 @@ kernel_args = [
                                       # the video console, so kernel diagnostics show on screen
   "-textconsole",                     # our UniXNU fork (uke's -uketextconsole): text console with the framebuffer mapped;
                                       # also prints the previous boot's panic log
-  "offline-legacy-noconsole=1",       # uke's probe: mute the text console once the display presents its first frame
-                                      # ("UKE: screen console muted after the first frame"), so text shows until a frame does
   "serial=3",                         # kept: serial console and kprintf on; no UART, so output stays on the video console (as on sheng)
   "debug=0x14e",                      # kept: debug mask with kprintf (DB_KPRT) and panic detail
   "kt_fixed_zones=120",               # kept: generic XNU zone sizing that sheng, fajita and uke all boot with
@@ -197,7 +195,9 @@ kernel_args = [
   "sheng-data-persist=2",             # Data writes go through to the store at the end of userdata
   "sheng-log=1",                      # persistent kernel log at the end of userdata
   "sheng-aks=1",                      # AppleKeyStore stand-in, as on uke
-  "sheng-lite=1",                     # leave out the daemons that need missing hardware, as on uke
+  # T23, as umi (an iPadOS 17.7.11 phone at Hello with a CPU display): only the four jobs of the XPC wait cycle are
+  # left out, not sheng-lite's list of about 25.
+  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd",
   "sheng-disable-watchdogd=1",        # as on uke
   # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
   # Display, CPU-rendered, as uke boots it: load IOMobileGraphicsFamily, register NativeLegacyDisplay on the GOP
@@ -207,16 +207,15 @@ kernel_args = [
   "offline-mobile-graphics-client=0",
   "offline-legacy-register=1",
   "offline-legacy-gop=1",
-  "offline-legacy-unit-scale=1",      # uke uses 2 on its 3200-wide panel; 2 would make the 3a's 1080 pixels 540 points
+  "offline-legacy-unit-scale=2",      # T23: as umi on its 1080-wide panel (T21b showed 1 or 2 makes no difference to the stall)
   "offline-legacy-pm=1",
   "offline-legacy-validate=1",
   "offline-legacy-transfer=1",
   "offline-legacy-cpu-present=1",
-  "offline-legacy-default-surface=1",
+  # T23: umi and sheng run without uke's offline-legacy-default-surface=1, offline-legacy-base-present=1 and
+  # offline-legacy-noconsole=1, and without a vsync tick; all four are off. sheng-gpu-power=1 stays for its
+  # read-only heartbeat (the display swap counters).
   "offline-legacy-phase=4",
-  "offline-legacy-base-present=1",   # T20, uke's present fix: copy the overlay surface a SwapEnd names to the panel (swap padding is on by default)
-  "sheng-vsync=60",                  # T20b: NativeMobileDisplay's refresh tick (sheng uses 120). Without it the render server sits
-                                      # in its message loop waiting for a vsync and never commits or swaps (T20's stack samples)
   "offline-hid-home=1",
   "offline-hid-input=1",
   "offline-key-events=1",
