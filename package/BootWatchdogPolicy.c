@@ -58,7 +58,7 @@ static int asteroids_exec_listener(kauth_cred_t credential,void *data,kauth_acti
  strlcpy(asteroids_exec_last[n&7],name,sizeof(asteroids_exec_last[0]));
  if(!strncmp(path,"/private/var/ngpu/",18)){asteroids_exec_ngpu=asteroids_exec_ngpu+1;strlcpy(asteroids_exec_ngpu_path,path,sizeof(asteroids_exec_ngpu_path));}
  if(!strcmp(name,"bluetoothd"))asteroids_exec_bluetoothd=asteroids_exec_bluetoothd+1;
- if(strstr(name,"fdr_loader"))asteroids_exec_fdr=asteroids_exec_fdr+1;
+ for(const char *c=name;*c;++c)if(!strncmp(c,"fdr_loader",10)){asteroids_exec_fdr=asteroids_exec_fdr+1;break;}
  asteroids_exec_seq=asteroids_exec_seq+1;
  return KAUTH_RESULT_DEFER;
 }
