@@ -5,13 +5,14 @@
 // Test stage (T17, the default): like the default stage of UniXNU's drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm, it runs the shared user test
 // (NativeAdrenoUserTest.h: two rounds of three CP_MEM_WRITEs through its own mappings, then the Turnip smoke test with the libvulkan_freedreno.dylib
 // beside it) on a thread of its own and returns nil, so no device is registered and the software renderer keeps running. Unlike it, it tests only in
-// backboardd (the one process the kernel grants the open, see NativeSandboxGrantProcess).
+// backboardd (the first process the kernel grants the open, see NativeSandboxGrantProcess).
 // Published stage (T18: built with ASTEROIDS_METAL_PUBLISH and the metal2vulkan bridge, and the addon carries NativeAdrenoMetal.publish beside the
 // bundle): backboardd returns the native Metal frontend's device (NativeBridgeMetalFrontend.mm, the metal2vulkan runtime on Turnip), which the
 // original discovery registers, so the render server renders through it; a second thread serves the display driver's frames with the GPU (boot-arg
-// sheng-fb-gpu=1, NativeMetalBridgePhase.h serveScanout). It follows the upstream published mode with less: backboardd only (no
-// NativeAdrenoMetal.clients), and no telemetry stream, cache export, shader priming or render-server state experiment (that one writes fixed
-// QuartzCore addresses of another build). Every other process returns nil and keeps the software renderer.
+// sheng-fb-gpu=1, NativeMetalBridgePhase.h serveScanout). It follows the upstream published mode with less: backboardd plus, from T31, the
+// processes NativeAdrenoMetal.clients names (each its own device, none of backboardd's threads), and no telemetry stream, cache export, shader
+// priming or render-server state experiment (that one writes fixed QuartzCore addresses of another build). Every other process returns nil and
+// keeps the software renderer.
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
 #include <pthread.h>
@@ -145,19 +146,22 @@ static unsigned deepFramebufferOff() {
     return bits;
 }
 static unsigned gDeepBits;
-static bool beside(const char *name) {
+static bool besidePath(const char *name, char *path, size_t size) {
     Dl_info info = {};
-    if (!dladdr(reinterpret_cast<const void *>(&beside), &info) || !info.dli_fname) return false;
-    char path[1024];
-    snprintf(path, sizeof path, "%s", info.dli_fname);   // <dir>/NativeAdrenoMetal.bundle/NativeAdrenoMetal
+    if (!dladdr(reinterpret_cast<const void *>(&besidePath), &info) || !info.dli_fname) return false;
+    snprintf(path, size, "%s", info.dli_fname);   // <dir>/NativeAdrenoMetal.bundle/NativeAdrenoMetal
     for (int i = 0; i < 2; ++i) {
         char *slash = strrchr(path, '/');
         if (!slash) return false;
         *slash = 0;
     }
-    strlcat(path, "/", sizeof path);
-    strlcat(path, name, sizeof path);
-    return access(path, R_OK) == 0;
+    strlcat(path, "/", size);
+    strlcat(path, name, size);
+    return true;
+}
+static bool beside(const char *name) {
+    char path[1024];
+    return besidePath(name, path, sizeof path) && access(path, R_OK) == 0;
 }
 static Gpu *makeGpu(unsigned port) {
     void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL);
@@ -172,6 +176,77 @@ static Gpu *makeGpu(unsigned port) {
     return gpu;
 }
 static id gDevice;
+// T31: the Metal clients, after upstream UniXNU drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm (MIT, listedClient/clientDevice). Whether
+// NativeAdrenoMetal.clients beside the bundle names this process (names separated by blanks, commas or new lines; "*" names every process).
+// The kernel grants the open only to the processes its NativeSandboxGrantProcess lists, and NativeAdreno has four connection slots.
+static bool listedClient() {
+    char path[1024];
+    if (!besidePath("NativeAdrenoMetal.clients", path, sizeof path)) return false;
+    FILE *file = fopen(path, "r");
+    if (!file) return false;
+    char text[1024] = {};
+    const size_t length = fread(text, 1, sizeof text - 1, file);
+    fclose(file);
+    text[length] = 0;
+    const char *self = getprogname();
+    for (char *save = nullptr, *name = strtok_r(text, " ,\t\r\n", &save); name; name = strtok_r(nullptr, " ,\t\r\n", &save))
+        if (!strcmp(name, "*") || !strcmp(name, self)) return true;
+    return false;
+}
+// A failed client's reason on the marker stream: "<step> <detail>".
+static void clientFailure(unsigned port, const char *step, const char *detail) {
+    if (Gpu *gpu = makeGpu(port)) {
+        char text[64];
+        snprintf(text, sizeof text, "%.14s %.46s", step, detail ? detail : "");
+        streamText(*gpu, text);
+    }
+}
+// A listed process other than the render server: the same runtime on its own connection, none of backboardd's threads (status, scanout),
+// its shader cache in its own cache or temp directory. Every other process keeps returning nil (the software renderer).
+static id clientDevice(unsigned port) {
+    static id device;
+    static bool tried;
+    @synchronized([NativeAdrenoMetalDevice class]) {
+        if (tried) return device;
+        tried = true;
+        if (!listedClient()) return nil;
+        setenv("TU_DEBUG", "sysmem,nocb", 1);
+        char turnip[1024];
+        if (!turnip::libraryPath(turnip, sizeof turnip) || access(turnip, R_OK) != 0) {clientFailure(port, "no-turnip", ""); return nil;}
+        uint64_t registryID = 0;
+        if (void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL)) {
+            if (auto retain = (int (*)(unsigned))dlsym(iokit, "IOObjectRetain")) retain(port);
+            if (auto entryID = (int (*)(unsigned, uint64_t *))dlsym(iokit, "IORegistryEntryGetRegistryEntryID")) entryID(port, &registryID);
+        }
+        // IOSurfaces this GPU reads or writes must be plain rows, as in the render server.
+        CFPreferencesSetAppValue(CFSTR("CAEnableIOSurfaceCompression"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
+        char candidates[2][512] = {};
+        if (!confstr(_CS_DARWIN_USER_CACHE_DIR, candidates[0], sizeof candidates[0] - 16)) candidates[0][0] = 0;
+        if (!confstr(_CS_DARWIN_USER_TEMP_DIR, candidates[1], sizeof candidates[1] - 16)) candidates[1][0] = 0;
+        const char *lastError = "";
+        unsigned usable = 0;
+        for (unsigned i = 0; i < 2 && !device; ++i) {
+            if (!candidates[i][0]) continue;
+            strlcat(candidates[i], "m2v", sizeof candidates[i]);
+            mkdir(candidates[i], 0700);
+            if (access(candidates[i], W_OK) != 0) continue;
+            ++usable;
+            @try {
+                device = native_bridge_metal_open(turnip, candidates[i], registryID, nullptr);
+            } @catch (NSException *exception) {
+                device = nil;
+                lastError = "exception";
+            }
+            if (!device && !lastError[0]) lastError = nmb_last_error();
+        }
+        if (!device) clientFailure(port, usable ? "no-device" : "no-cachedir", lastError);
+        if (device)
+            class_addMethod(object_getClass(device), sel_registerName("supportsConditionalLoadStore"), imp_implementationWithBlock(^BOOL(id) {
+                                return NO;
+                            }), "B16@0:8");
+        return device;
+    }
+}
 // backboardd's one device. Markers as upstream: 6800 entered, 6801 Turnip found, 6810+i the cache directory that opened it, 6802 device made,
 // 6803 returned to the discovery; 68f1 no Turnip, 68f2 no device (with "PUB no device: <reason>" on the stream).
 static id deviceForPort(unsigned port) {
@@ -339,13 +414,17 @@ static void sampleOnly(unsigned port) {
 @implementation NativeAdrenoMetalDevice
 - (id)initWithAcceleratorPort:(unsigned)port {
     self = [super init];
-    if (!self || !port || strcmp(getprogname(), "backboardd") != 0) return nil;
+    if (!self || !port) return nil;
+    const bool renderServer = strcmp(getprogname(), "backboardd") == 0;
 #ifdef ASTEROIDS_METAL_PUBLISH
-    if (publish::beside("NativeAdrenoMetal.publish")) return publish::deviceForPort(port);
+    if (publish::beside("NativeAdrenoMetal.publish")) return renderServer ? publish::deviceForPort(port) : publish::clientDevice(port);
+    if (!renderServer) return nil;
     if (publish::beside("NativeAdrenoMetal.sample")) {
         publish::sampleOnly(port);
         return nil;
     }
+#else
+    if (!renderServer) return nil;
 #endif
     static bool attempted;
     if (attempted) return nil;

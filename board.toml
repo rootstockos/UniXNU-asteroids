@@ -239,7 +239,7 @@ kernel_args = [
   # T28b is the same kernel with t28-power-ack=0.
   # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
   # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
-  "sheng-build-tag=T30",
+  "sheng-build-tag=T31",
   "boot-display-page=1",
   "boot-ui-focus=PerfPowerServices",
   "boot-ui-focus2=SpringBoard",

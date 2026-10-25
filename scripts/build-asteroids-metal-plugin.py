@@ -138,6 +138,10 @@ if args.published:
     # The marker the plugin looks for beside the bundle; outside the bundle, so its seal and CDHash are the same either way.
     files.append(('addons/NativeAdrenoMetal.sample', 0o644, b'sample\n') if args.sample_only else
                  ('addons/NativeAdrenoMetal.publish', 0o644, b'published\n'))
+    if not args.sample_only:
+        # T31: the Metal clients beside backboardd (the kernel's NativeSandboxGrantProcess grants the same three; NativeAdreno has four slots):
+        # the active wallpaper (WallpaperKit's CollectionsPoster), PosterBoard and iconservicesagent, after UniXNU-sheng's list.
+        files.append(('addons/NativeAdrenoMetal.clients', 0o644, b'CollectionsPoster\nPosterBoard\niconservicesagent\n'))
 pad = lambda data: data + bytes(-len(data) % 8)
 body = b''
 for name, mode, data in files:

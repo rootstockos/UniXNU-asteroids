@@ -1223,7 +1223,9 @@ void publishMetal() {
     accelerator->setProperty("MetalPluginClassName", "NativeAdrenoMetalDevice");
     // The render server, the one process whose open the kernel grants in place of the sandbox verdict
     // (UniXNU patches/xnu/zzw-native-adreno-sandbox-grant.patch); T17's plugin tests only in backboardd.
-    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd");
+    // T31: the render server plus the three Metal clients the plugin's NativeAdrenoMetal.clients lists (NativeAdreno has four connection
+    // slots): the active wallpaper (WallpaperKit's CollectionsPoster), PosterBoard and iconservicesagent, after UniXNU-sheng's list.
+    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,CollectionsPoster,PosterBoard,iconservicesagent");
     gMetalStage = 4;
     if (!accelerator->attach(IOService::getPlatform())) {accelerator->release(); gMetalStatus = kIOReturnNotAttached; return;}
     accelerator->registerService();
