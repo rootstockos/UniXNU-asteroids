@@ -38,6 +38,7 @@ extern "C" {
 #include "ShengGmuFirmware.h"   // build/sheng-gmu: the pinned gen80300_gmu.bin as an array; never committed
 #include "NativeAdrenoSha256.h"
 #include "NativeAdrenoGpuContext.h"
+#include "NativeAdrenoDiag.h"
 #include "NativeAdrenoRing.h"
 #include "NativeAdrenoCpInit.h"
 #include "NativeAdrenoPwrup.h"
@@ -879,8 +880,10 @@ void barStart() {
     words[1] = uint32_t(GPB_BAR_IB_IOVA); words[2] = uint32_t(GPB_BAR_IB_IOVA >> 32); words[3] = b.ib_dwords;
     const volatile uint32_t *fb = reinterpret_cast<const volatile uint32_t *>(static_cast<uint8_t *>(gFb.mapping()) + b.offset +
                                                                               size_t(b.rows / 2) * b.row_bytes);
-    IOLog("ASTEROIDS GPU: bar: drawing from the IB, then every 200 ms for 2 minutes\n");
-    for (unsigned n = 0; n < 600; ++n) {
+    // Mode 18 draws once: the service must be up before the GPU addon's daemon gives up waiting for it.
+    const unsigned draws = gMode >= 18 ? 1 : 600;
+    IOLog("ASTEROIDS GPU: bar: drawing from the IB%s\n", draws > 1 ? ", then every 200 ms for 2 minutes" : " once");
+    for (unsigned n = 0; n < draws; ++n) {
         uint32_t w = 0;
         st = gRing.submit(words, 4, &fence);
         if (!st) w = gRing.wait(fence, &clock, 200000, &seen);
@@ -894,7 +897,7 @@ void barStart() {
                   same ? "ok" : "miss");
             cpState("bar");
         }
-        IOSleep(200);
+        if (draws > 1) IOSleep(200);
     }
     IOLog("ASTEROIDS GPU: bar redraws ok=%u failed=%u first=%x %s\n", g[9], g[10], g[11], g[10] ? "stopped" : "done");
     native_gpu_power_stage = g[10] ? 0xff : 0xf8;
@@ -1144,6 +1147,55 @@ void ucStart() {
     cpState("uc");
     native_gpu_power_stage = ok ? 0x108 : 0x10e;
 }
+// Mode 18 (T16): what user space does with the published service. The GPU addon (boot-arg sheng-gpu-addon=1) brings a test
+// daemon that opens NativeAdrenoGpu from user space, runs the shared user test (two rounds of three CP_MEM_WRITEs through its own
+// mappings, uncached then write-combined) and then a Turnip smoke test (Vulkan instance, device, a compute fill and a triangle).
+// It reports through the driver's open log, progress markers (refused opens of type 0x4147xxxx) and SetMetadata lines; this
+// prints them every two seconds while they change, for ten minutes, then once more.
+extern "C" {
+// The kernel's GPU addon mount (patches/xnu/zzy-native-gpu-addon-mount.patch): weak, so a kernel without it still links.
+extern volatile int native_gpu_addon_stage __attribute__((weak)), native_gpu_addon_status __attribute__((weak));
+extern volatile int native_gpu_addon2_stage __attribute__((weak)), native_gpu_addon2_status __attribute__((weak));
+uint32_t native_gpu_user[8];
+}
+static void userReport(const char *when) {
+    const NativeAdrenoMetalDiag &d = native_adreno_metal_diag;
+    const uint32_t n = d.marks_total, at = (n + 15) & 15;
+    IOLog("ASTEROIDS GPU: user %s: addon %d/%d daemons %d/%d; opens %u closes %u busy %u bad %u foreign %u (type %x) mount_fail %u/%x\n",
+          when, &native_gpu_addon_stage ? native_gpu_addon_stage : -9, &native_gpu_addon_status ? native_gpu_addon_status : -9,
+          &native_gpu_addon2_stage ? native_gpu_addon2_stage : -9, &native_gpu_addon2_status ? native_gpu_addon2_status : -9,
+          d.opens, d.closes, d.busy, d.bad, d.foreign_opens, d.foreign_type, native_adreno_mount_fail[0], native_adreno_mount_fail[1]);
+    IOLog("ASTEROIDS GPU: user %s: calls %u tunnel %u probes %u last sel %u st %x inflight %u; marks %u: %x %x %x %x %x %x\n", when,
+          d.calls, d.tunnel_calls, d.probes, d.last_selector, d.last_status, d.inflight, n, d.marks[(at + 11) & 15], d.marks[(at + 12) & 15],
+          d.marks[(at + 13) & 15], d.marks[(at + 14) & 15], d.marks[(at + 15) & 15], d.marks[at & 15]);
+    const uint32_t opened = native_adreno_open_log_count;
+    for (uint32_t i = opened > 3 ? opened - 3 : 0; i < opened; ++i) {
+        const NativeAdrenoOpenRecord &o = native_adreno_open_log[i & 7];
+        IOLog("ASTEROIDS GPU: user %s: open %u by %.19s type %x macf %x res %x attach %u\n", when, i, o.name, o.type, o.macf, o.res, o.attach);
+    }
+    IOLog("ASTEROIDS GPU: user %s: report \"%.63s\"\n", when, d.report);
+    IOLog("ASTEROIDS GPU: user %s: turnip \"%.63s\"\n", when, d.report2);
+}
+void userWatch() {
+    IOLog("ASTEROIDS GPU: user: watching the service for 10 minutes (the addon's daemon, Turnip)\n");
+    uint32_t last[4] = {~0u, ~0u, ~0u, ~0u};
+    for (unsigned t = 0; t < 300; ++t) {
+        const NativeAdrenoMetalDiag &d = native_adreno_metal_diag;
+        const uint32_t now[4] = {d.marks_total, d.opens + d.closes + d.foreign_opens + d.busy, d.reports, native_adreno_open_log_count};
+        if (memcmp(now, last, sizeof now)) {
+            memcpy(last, now, sizeof now);
+            char when[8];
+            snprintf(when, sizeof when, "%us", t * 2);
+            userReport(when);
+        }
+        IOSleep(2000);
+    }
+    native_gpu_user[0] = native_adreno_metal_diag.opens;
+    native_gpu_user[1] = native_adreno_metal_diag.marks_total;
+    native_gpu_user[2] = native_adreno_metal_diag.reports;
+    userReport("end");
+    cpState("user");
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -1215,6 +1267,7 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 15) zapStart();
     if (gMode >= 16) barStart();
     if (gMode >= 17) ucStart();
+    if (gMode >= 18 && native_gpu_power_stage == 0x108) userWatch();
     native_gpu_power_stage = 4;
 }
 }

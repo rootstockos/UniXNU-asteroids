@@ -227,7 +227,9 @@ kernel_args = [
   # a8xx hw_init's register writes, 14 starts the CP (ring, SQE, CP_ME_INIT, fenced
   # WPTR writes) and has it write one word, 15 loads the zap shader (PAS 13) and leaves secure mode, 16 runs a first IB
   # and has the GPU write a red/green/blue bar into the framebuffer, redrawn every 200 ms for 2 minutes, 17 adopts the BO
-  # pool, attaches fences and the timer, publishes NativeAdreno's user client and runs it from the kernel.
+  # pool, attaches fences and the timer, publishes NativeAdreno's user client and runs it from the kernel, 18 draws the bar
+  # once, does what 17 does, then prints for ten minutes what user space (the GPU addon's test daemon, sheng-gpu-addon=1)
+  # does with the service.
   # Remove the line to turn it off.
   "sheng-gpu-power=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
