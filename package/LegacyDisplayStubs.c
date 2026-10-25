@@ -53,6 +53,11 @@ __attribute__((weak)) char boot_progress_ext_wide[2][112];
  * The weak definitions keep the display-only kernel linkable; the Adreno
  * configuration supplies the strong definitions and discards these.
  */
+/* asteroids T30: GpuPowerProbe.cpp's user line reads uke's display swap counters, which the T24+ display probe does not
+ * define; the static kernel link needs a definition, so these weak zeros stand in. */
+__attribute__((weak)) volatile uint32_t asteroids_swap_end_calls, asteroids_swap_end_size, asteroids_swap_end_id,
+    asteroids_swap_end_status, asteroids_swap_wait_calls;
+
 __attribute__((weak)) bool
 native_legacy_gpu_offer (void *display, void *memory, uint64_t stride,
                          uint32_t width, uint32_t height)
