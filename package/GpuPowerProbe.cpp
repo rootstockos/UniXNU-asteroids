@@ -1096,7 +1096,7 @@ void ucStart() {
     // size first, then halves down to the 128 MiB T15-T18 used, and the log says which size was had.
     uint64_t poolBytes = 0;
     for (uint64_t bytes = GPB_GPU_POOL_BYTES; bytes >= 0x8000000ULL && !poolBytes; bytes >>= 1) {
-        IOLog("ASTEROIDS GPU: pool: %llx+%llx (loader-kept RAM above XNU's window), pattern test, then adopt\n", GPB_GPU_POOL_BASE, bytes);
+        IOLog("ASTEROIDS GPU: pool: %llx+%llx (loader-kept RAM outside XNU's window), pattern test, then adopt\n", GPB_GPU_POOL_BASE, bytes);
         IODeviceMemory *memory = IODeviceMemory::withRange(GPB_GPU_POOL_BASE, bytes);
         OSSharedPtr<IOMemoryMap> pool;
         if (memory) {

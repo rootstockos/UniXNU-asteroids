@@ -25,7 +25,9 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 
-DRAM_BASE = 0x80000000
+# /chosen/dram-base: the high DRAM bank, where DarwinBoot places the 4.75 GiB XNU window since T19 (uke's dram_base, device
+# a562371). board.toml [payload] dram_size is measured from here; ASTEROIDS_DRAM_BASE overrides it.
+DRAM_BASE = int(os.environ.get('ASTEROIDS_DRAM_BASE', '0x8C0000000'), 0)
 ARMIO_BASE = 0x17000000          # APSS peripheral block containing the GIC
 GIC_DIST = 0x17100000
 GIC_DIST_SIZE = 0x10000

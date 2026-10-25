@@ -160,8 +160,9 @@ size_mib = 80                         # sheng's 192 held the verified bundles an
 loader = "firmware"                   # kept: DarwinBoot is already in the asteroids firmware volume
 title = "asteroids: iPadOS from UFS"
 timeout = 3                           # kept at the default; the menu already works on the phone
-dram_size = "0x80000000"              # the low DRAM window 0x80000000-0x100000000, as on sheng; the phone's /memory fills
-                                      # it (with carve-out holes) and puts the rest of its 12 GB above 0x880000000
+dram_size = "0x1FFE00000"             # T19: /chosen/dram-size from make-asteroids-adt.py's DRAM_BASE 0x8C0000000, the high bank
+                                      # up to the GPU pool (0x8C0000000-0xABFE00000), where the XNU window now lives (uke's layout;
+                                      # sheng keeps 0x80000000 + 2 GiB here with a high window, which also boots)
 panic_screen = true                   # kept: patches a copy of the kernel with the entry bars (blue at entry, magenta before
                                       # the MMU) and panic() drawn on the framebuffer; the only way to read a panic without UART.
                                       # Board-independent (symbols from the kernel, 19.2 MHz timebase), needs the two scripts above
@@ -278,7 +279,10 @@ boot_manifest_hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5
 # with it. DarwinBoot places the window in UEFI conventional memory below 4 GiB (the firmware MMU map); the largest
 # such run in the 3a's map is DXE_Heap, 0xB8000000 + 0x1BA00000 (442 MiB), less what DXE takes from it. 384 MiB first;
 # DarwinBoot refuses a window it cannot place, visibly, before the hand-over, and then 320 MiB (uke's value) is next.
-owned_memory_size = "0x18000000"
+owned_memory_size = "0x130000000"    # T19: 4.75 GiB, uke's and sheng's value on the same 12 GB class. The uefi-asteroids
+                                      # memory map declares the high bank 0x8C0000000-0xABFE00000 as conventional memory, so
+                                      # the window fits there; 384 MiB left iPadOS short (corpse crashes) and Turnip's heap at
+                                      # 96 MiB (25 % of system RAM), which refused every texture in T18b
 # Dropped: root_match_volume_uuid (no root this boot; without it XNU waits for a root device, which is an acceptable end).
 # Dropped: chip_id together with unique_chip_id = "required". They seed IOPlatformUUID, which only userland (configd)
 # waits for, and the tool refuses one without the other.
@@ -290,7 +294,7 @@ owned_memory_size = "0x18000000"
 # 1. dram_size: the size of the contiguous DRAM run that starts at 0x80000000, from the UEFI memory map or the SMEM RAM
 #    partition table (sheng's 0x80000000 is its own first bank). Never the 12 GB total: the Qualcomm map has holes and
 #    carve-outs above the first bank.
-# 2. owned_memory_size: 384 MiB, to be confirmed on the phone (see [payload.adt]). Above about 440 MiB needs the high
+# 2. owned_memory_size: 4.75 GiB since T19 (it was 384 MiB, see [payload.adt]). Above about 440 MiB needs the high
 #    DRAM range in the UEFI firmware's memory map.
 # 3. boot-progress: wanted, but its kit is sheng's package (kits/sheng/BootProgress.c and headers) and XNU_BOOT_PROGRESS
 #    requires XNU_NATIVE_UFS, XNU_OWNER_ROOT_AUDIT, XNU_NATIVE_VIRTIO_BLOCK and the supplied verified-root archive. Porting
@@ -346,7 +350,7 @@ gmu_pool_bytes = "0x02000000"
 # The BO pool (GPU mode 17): RAM above 4 GiB that DarwinBoot never gives XNU (its window is owned_memory_size below 4 GiB),
 # so the loader keeps it, as pandora's loader carves its pool. Android's /proc/iomem has 0x8bf800000-0xaffffefff as System
 # RAM and the live DT reserves nothing static above 4 GiB. Must match GpuPowerBoard.h GPB_GPU_POOL_*.
-gpu_pool_base = "0x900000000"
+gpu_pool_base = "0xABFE00000"             # T19: the top of the high bank, reserved in the UEFI map (GPU_Pool) so the XNU window never covers it
 gpu_pool_bytes = "0x40000000"            # 1 GiB since T18b (pandora's size); 128 MiB ran out in T18
 preempt_record_bytes = "0x473800"      # 4558 KiB
 ubwc_version = 4                       # mainline milos_data, and qcom,ubwc-mode = <4> in the DT
