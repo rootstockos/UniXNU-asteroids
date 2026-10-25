@@ -230,7 +230,9 @@ kernel_args = [
   # pool, attaches fences and the timer, publishes NativeAdreno's user client and runs it from the kernel, 18 draws the bar
   # once, does what 17 does, then prints for ten minutes what user space (the GPU addon's test daemon, sheng-gpu-addon=1)
   # does with the service, 19 also publishes the AGXAccelerator for the original Metal discovery (the addon's Metal plugin
-  # then tests in backboardd).
+  # then tests in backboardd; T18's published plugin returns a Metal device there instead). With 19, sheng-fb-gpu=1 lets
+  # the published plugin copy the display's frames to the scanout with the GPU (drivers/NativeMobileDisplay/NativeGOPPresenter.cpp);
+  # a frame nobody takes keeps the CPU copy.
   # Remove the line to turn it off.
   "sheng-gpu-power=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
