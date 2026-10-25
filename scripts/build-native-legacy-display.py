@@ -278,7 +278,12 @@ for src in gmu_sources:
 # loaded, because the parent metaclass does not exist before that), and it imports nothing of the original base beyond the three
 # bound above.
 accel_source=adreno/'NativeAdrenoAccelerator.cpp';accel_obj=OUT/'NativeAdrenoAccelerator.o';accel_late=OUT/'NativeAdrenoAccelerator.late.o'
-run(kernel_cxx(accel_source,accel_obj,adreno_flags+['-Wno-overloaded-virtual']),cwd=r['directory'])
+# Its base header comes from UniXNU's AdrenoMetal submodule, which this board does not include: the package carries a copy, placed so
+# the source's "../NativeMetal/OriginalAcceleratorABI.h" resolves from an include directory beside it.
+accel_abi_header=ROOT/'kits/asteroids/OriginalAcceleratorABI.h'
+(OUT/'accel-include').mkdir(exist_ok=True);(OUT/'NativeMetal').mkdir(exist_ok=True)
+(OUT/'NativeMetal/OriginalAcceleratorABI.h').write_bytes(accel_abi_header.read_bytes())
+run(kernel_cxx(accel_source,accel_obj,adreno_flags+['-I',str(OUT/'accel-include'),'-Wno-overloaded-virtual']),cwd=r['directory'])
 accel_raw=accel_obj.read_bytes();accel_image=macho(accel_raw)
 st=next(p for c,p,_ in accel_image['commands'] if c==2);sy,count,strings,_=struct.unpack_from('<4I',accel_raw,st+8)
 accel_imports=set()
@@ -353,7 +358,7 @@ sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
          gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',
          gmu_gen/'ShengGmuFirmware.h',gmu_gen/'ShengSqeFirmware.h',gmu_gen/'ShengZapFirmware.h',adreno/'NativeAdrenoA810HwInit.h',
-         adreno/'NativeAdrenoRegisters.h',pm4/'AdrenoPM4.h',accel_source,ROOT/'drivers/NativeMetal/OriginalAcceleratorABI.h',
+         adreno/'NativeAdrenoRegisters.h',pm4/'AdrenoPM4.h',accel_source,accel_abi_header,
          ROOT/'scripts/data/ioaccelerator-base-abi.json']
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeGOPPresenter'],text=True),end='')
 gop=ROOT/'build/native-gop-presenter';gop_late=gop/'NativeGOPPresenter.late.o'
