@@ -138,6 +138,13 @@ require(undefined==set(bindings),'All and only actual original-class imports qua
 # their exact addresses after the class-import assertion.
 bindings['_uke_original_default_surface_port']=0xfffffff00578b390
 bindings['_uke_surface_copy_port_name']=0xfffffff004baa90c
+# From uke (ad87339): the family's own surface-ID lookup pair, exactly as swap_submit calls them: the IOSurfaceRoot
+# (framebuffer+0x1600) lookup stub with its third-argument helper (the submitting task). Both are kext PLT stubs fixed in this
+# image; the GOT slot behind each is bound at kext load.
+bindings['_uke_surface_root_lookup']=0xfffffff0057a28c0
+bindings['_uke_surface_lookup_task']=0xfffffff0057a2e84
+require(read(0xfffffff0057a28c0,12)==bytes.fromhex('903c00b010e244f900021fd6'),'Actual family surface lookup stub')
+require(read(0xfffffff0057a2e84,12)==bytes.fromhex('903c00b0101647f900021fd6'),'Actual family lookup task stub')
 # From UniXNU-sheng's builder, for UniXNU NativeMobileDisplay's vsync tick and refresh properties (same 21H461 kernelcache).
 # The original display-refresh notification sender (self, timestamp, continuous host time, frame interval): it sends the six-word
 # vsync message (type 5) to every client entry queued at +5592, the tail queue that selector 72's registration (slot 208) fills at

@@ -22,6 +22,8 @@ extern "C" void native_legacy_display_static_init(void) __asm__("__GLOBAL__sub_I
 extern "C" IOService *native_legacy_display_allocate(void);
 extern "C" void native_gop_presenter_static_init(void) __asm__("__GLOBAL__sub_I_NativeGOPPresenter.cpp");
 extern "C" IOService *native_gop_presenter_create(void);
+// From uke (Allenwdk/UniXNU-uke ad87339, BSD-2-Clause-Patent): present the overlay surface a SwapEnd names (offline-legacy-base-present=1).
+extern "C" void native_legacy_present_base(void *display,unsigned frameSurfaceId);
 static IOService *pendingLegacyDisplay;
 static IOService *activeGOPPresenter,*activeGOPNub;
 // GPU hand-off presenter (sheng-fb-gpu=1, phase 4): lives beside the display driver, which offers it frames instead of copying them.
@@ -75,6 +77,9 @@ volatile int native_legacy_pm_status=-1;
 volatile uint32_t native_legacy_swap_validation_calls,native_legacy_swap_validation_result,native_legacy_swap_validation_reason;
 volatile uint64_t native_legacy_swap_request,native_legacy_swap_surface;
 volatile uint32_t native_legacy_transfer_calls;
+// T20: every SwapEnd (selector 5) and SwapWait (selector 6) from any client, for GpuPowerProbe's heartbeat: the record size as userland
+// sent it, the overlay surface ID it names (0: none), and the original status.
+volatile uint32_t asteroids_swap_end_calls,asteroids_swap_end_size,asteroids_swap_end_id,asteroids_swap_end_status,asteroids_swap_wait_calls;
 volatile int native_legacy_transfer_status=-1;
 volatile uint64_t native_legacy_transfer_bytes,native_legacy_transfer_request;
 volatile uint32_t native_legacy_retirement_calls,native_legacy_retired_generation,native_legacy_presented_generation,native_legacy_retired_frames;
@@ -357,7 +362,9 @@ static void dumpSwapInput(const IOExternalMethodArguments *args) {
     const unsigned char *p=reinterpret_cast<const unsigned char *>(args->structureInput);
     unsigned n=args->structureInputSize;
     if(!p||!n)return;
-    if(n>0x120)n=0x120;
+    // 0x360 covers every field the original swap_submit reads (the last is the
+    // per-layer flag block ending at +0x351); 0x120 only reached the header.
+    if(n>0x360)n=0x360;
     for(unsigned off=0;off<n;off+=32) {
         char line[160];unsigned at=snprintf(line,sizeof(line),"UKE: swap+%03x",off);
         for(unsigned k=0;k<32&&off+k+4<=n;k+=4) {
@@ -381,6 +388,10 @@ static void dumpSwapQueue(const char *tag,unsigned nth,IOReturn status) {
         tag,nth,(unsigned)status,(unsigned long long)current,(unsigned long long)head,
         state[0],state[1],state[2],state[3],state[4],state[5],state[6],state[7],state[8],state[9]);
 }
+static void native_legacy_swap_trace(uint32_t size,uint32_t surfaceId,IOReturn status) {
+    asteroids_swap_end_size=size;asteroids_swap_end_id=surfaceId;asteroids_swap_end_status=(uint32_t)status;
+    asteroids_swap_end_calls=asteroids_swap_end_calls+1;
+}
 static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExternalMethodArguments *args,IOExternalMethodDispatch *dispatch,OSObject *target,void *ref) {
     ClientStat *stat=statFor(client);
     unsigned calls=(stat && selector<kSelectors)?stat->selector_calls[selector]:0;
@@ -397,10 +408,43 @@ static IOReturn wrappedExternal(IOUserClient *client,uint32_t selector,IOExterna
         return kIOReturnSuccess;
     }
     if(stat && selector==5 && stat->selector_calls[5]<2) dumpSwapInput(args);
+    // From uke (ad87339): the original swap_end rejects any structureInputSize but 1288 (0x508) before swap_submit can run, and this
+    // userland builds a 1200-byte record, so every swap died as `accepted=0 reason=2 surface=0`. Every record field swap_submit reads
+    // lives below 1200, so pad a kernel copy up to the expected size and let the original path translate and present it;
+    // offline-legacy-swap-pad=0 disables.
+    void *swapPad=nullptr;const void *swapSavedInput=nullptr;uint32_t swapSavedSize=0;
+    unsigned swapPadEnabled=1;PE_parse_boot_argn("offline-legacy-swap-pad",&swapPadEnabled,sizeof(swapPadEnabled));
+    if(stat && selector==5 && swapPadEnabled!=0 && args && args->structureInput &&
+       args->structureInputSize>=0x9c && args->structureInputSize<0x508) {
+        swapPad=IOMalloc(0x508);
+        if(swapPad) {
+            memset(swapPad,0,0x508);
+            memcpy(swapPad,args->structureInput,args->structureInputSize);
+            swapSavedInput=args->structureInput;swapSavedSize=args->structureInputSize;
+            args->structureInput=swapPad;args->structureInputSize=0x508;
+            static unsigned swapPadLogged;
+            if(swapPadLogged<4){++swapPadLogged;printf("UKE: swap-in size=%u padded to 1288\n",(unsigned)swapSavedSize);}
+        }
+    }
+    // The transaction's real pixels: the first enabled record layer carrying a surface ID (mask +0x14c, IDs +0x9c+4*layer). The
+    // family's translation loop only covers layers 0..3, so an overlay layer above it never resolves inside the original SwapEnd.
+    unsigned frameSurfaceId=0;
+    if(stat && selector==5 && args && args->structureInput && args->structureInputSize>=0x150) {
+        const unsigned char *record=reinterpret_cast<const unsigned char *>(args->structureInput);
+        uint32_t mask=0;memcpy(&mask,record+0x14c,4);
+        for(unsigned layer=0;layer<8 && 0x9c+layer*4+4<=args->structureInputSize;++layer)
+            if(mask&(1u<<layer)) {uint32_t id=0;memcpy(&id,record+0x9c+layer*4,4);if(id){frameSurfaceId=id;break;}}
+    }
     IOReturn status=stat?reinterpret_cast<ExternalFn>(stat->original_external)(client,selector,args,dispatch,target,ref):kIOReturnNotAttached;
+    if(swapPad) {args->structureInput=swapSavedInput;args->structureInputSize=swapSavedSize;IOFree(swapPad,0x508);}
+    if(stat && selector==5) native_legacy_swap_trace(swapSavedSize?swapSavedSize:(args?args->structureInputSize:0),frameSurfaceId,status);
+    // The original SwapEnd has retired the request; the frame lives in the overlay surface the record names, so copy it now.
+    if(stat && selector==5 && status==kIOReturnSuccess)
+        native_legacy_present_base(reinterpret_cast<void *>((uintptr_t)native_legacy_object),frameSurfaceId);
     if(traced)printf("UKEMEM: sel %u exit %x\n",(unsigned)selector,(unsigned)status);
     if(stat && selector==5 && stat->selector_calls[5]<3) dumpSwapQueue("swap-end",stat->selector_calls[5]+1,status);
     if(stat && selector==6 && stat->selector_calls[6]<3) dumpSwapQueue("swap-wait",stat->selector_calls[6]+1,status);
+    if(stat && selector==6) asteroids_swap_wait_calls=asteroids_swap_wait_calls+1;
     if(stat) {
         if(selector==6 && args && args->scalarInput && args->scalarInputCount>=3) {
             const uint64_t *in=args->scalarInput;

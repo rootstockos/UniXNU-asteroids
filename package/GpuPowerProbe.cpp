@@ -1175,6 +1175,10 @@ extern char asteroids_exec_ngpu_path[64] __attribute__((weak));
 // T16c: bluetoothd starts turned into the daemon, and the user the daemon ran as.
 extern volatile uint32_t asteroids_exec_swaps __attribute__((weak));
 extern volatile int32_t asteroids_exec_ngpu_uid __attribute__((weak));
+// T20: the display's swap calls (LegacyDisplayProbe.cpp) and its successful or failed copies to the panel.
+extern volatile uint32_t asteroids_swap_end_calls __attribute__((weak)), asteroids_swap_end_size __attribute__((weak)),
+    asteroids_swap_end_id __attribute__((weak)), asteroids_swap_end_status __attribute__((weak)),
+    asteroids_swap_wait_calls __attribute__((weak)), native_legacy_transfer_calls __attribute__((weak));
 uint32_t native_gpu_user[8];
 }
 // Mode 19 (T17): the accelerator for the original Metal discovery (IOServiceMatching("IOAcceleratorES") -> MetalPluginName ->
@@ -1260,6 +1264,9 @@ static void userReport(const char *when) {
     } else {
         IOLog("ASTEROIDS GPU: user %s: no exec log in this kernel\n", when);
     }
+    IOLog("ASTEROIDS GPU: user %s: display swap-end %d (size %d id %d status %x) swap-wait %d copies %d\n", when,
+          GPB_WEAK(asteroids_swap_end_calls), GPB_WEAK(asteroids_swap_end_size), GPB_WEAK(asteroids_swap_end_id),
+          GPB_WEAK(asteroids_swap_end_status), GPB_WEAK(asteroids_swap_wait_calls), GPB_WEAK(native_legacy_transfer_calls));
 #undef GPB_WEAK
     if (gMode >= 19) metalReport(when);
     IOLog("ASTEROIDS GPU: user %s: report \"%.63s\"\n", when, d.report);

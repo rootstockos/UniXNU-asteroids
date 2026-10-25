@@ -106,6 +106,8 @@ run(['xcrun', 'clang++', *base, '-std=c++17', '-fobjc-arc', '-Wno-deprecated-dec
      *([BRIDGE, '-Wl,-dead_strip', '-framework', 'IOSurface'] if args.published else []),
      '-framework', 'Foundation', '-framework', 'Metal', '-o', exe])
 pm4.unlink()
+# The symbols for the T20 stack samples (offsets in the plugin go back to functions with atos or nm).
+shutil.copyfile(exe, OUT / 'NativeAdrenoMetal.unstripped')
 run(['strip', '-x', exe])
 header = exe.read_bytes()[:12]
 if struct.unpack('<3I', header)[:2] != (0xfeedfacf, 0x100000c) or struct.unpack('<3I', header)[2] & 0xffffff:
