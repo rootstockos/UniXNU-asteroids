@@ -153,9 +153,10 @@ roots = [
 # checkout (Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib).
 [payload]
 volume = "ASTEROIDESP"                # 11 characters, the FAT label limit; the label itself is not matched by anything
-size_mib = 64                         # sheng's 192 held the verified bundles and the Data seed; this kernel's files take
-                                      # 49 MiB. payload.py refuses the build if the files exceed 95 %, so raise it if that
-                                      # happens. It rides in the kernel image (see [bootimg]), so smaller loads faster
+size_mib = 80                         # sheng's 192 held the verified bundles and the Data seed; this kernel's files took
+                                      # 49 MiB, and 62 with T18's published GPU addon (64 was too small). payload.py refuses the
+                                      # build if the files exceed 95 %, so raise it if that happens. It rides in the kernel
+                                      # image (see [bootimg]), so smaller loads faster
 loader = "firmware"                   # kept: DarwinBoot is already in the asteroids firmware volume
 title = "asteroids: iPadOS from UFS"
 timeout = 3                           # kept at the default; the menu already works on the phone
