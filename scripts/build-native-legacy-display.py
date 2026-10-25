@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-# From Allenwdk/UniXNU-uke scripts/build-native-legacy-display.py (BSD-2-Clause-Patent), with kits/asteroids and without
-# uke's touch, CPU frequency, boot-process and UI-trace probes. The _uke_* binding names are the probe's imports; their
-# addresses belong to the shared 21H461 kernelcache.
+# asteroids T24: UniXNU-sheng a599a1a scripts/build-native-legacy-display.py (BSD-2-Clause-Patent), the builder UniXNU-umi
+# uses: the original class keeps slots 242 (default surface) and 301 (refresh), no extra original bindings, the single-entry
+# swap queue adapter. Kept from our tree: kits/asteroids, UniXNU's current component paths, the weak stubs and TouchState.
+# Left out: sheng's touch, CPU frequency and GPU power probes and uke's boot-trace probes.
 """Bind an owned concrete backend to the unchanged original Legacy lifecycle."""
 import hashlib
 import json
@@ -18,7 +19,6 @@ def require(v,why):
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 print(run(['python3',ROOT/'scripts/audit-mobile-graphics-legacy.py'],text=True),end='')
 audit=json.loads((ROOT/'build/display-analysis/mobile-graphics-legacy-abi.json').read_text())
-print(run(['python3',ROOT/'scripts/audit-mobile-graphics-default-surface.py'],text=True),end='')
 pure=audit['abstract_slots'];methods=audit['methods']
 header='''// SPDX-License-Identifier: BSD-2-Clause-Patent
 // Opaque ABI storage for the exact original class, not source-level access
@@ -45,10 +45,8 @@ public:
  }
  // The real normal scanout backend removes its pending head before calling
  // slot 295. Slot 312 is a discard path (terminal state 8), not presentation.
- // The queue is a tail queue (head at +5480, tail pointer at +5488, each request's next at +2960 and previous-link at +2968): taking the head
- // moves the next request, if a client already queued one behind it (int-132: swap 3 arrived during swap 2's GPU copy and the old
- // single-entry form refused to retire swap 2, so every wait on it stayed busy), up to the head. The original queue's reference
- // moves to the current-swap slot for the original completion body.
+ // Limit this offline adapter to the observed single-entry queue and retain
+ // exactly the original queue's reference for the original completion body.
  bool activateOnlyPendingSwap(const OriginalLegacySwapRequest *request) {
   auto self=reinterpret_cast<unsigned char *>(this);
   auto bytes=reinterpret_cast<const unsigned char *>(request);
@@ -56,15 +54,10 @@ public:
   memcpy(&current,self+5472,8);memcpy(&head,self+5480,8);memcpy(&tail,self+5488,8);
   if(!request || current || head!=request)return false;
   memcpy(&next,bytes+2960,8);memcpy(&previous,bytes+2968,8);
-  if(previous!=self+5480)return false;
-  if(next) {
-   const void *link=self+5480;
-   memcpy(const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(next))+2968,&link,8);
-  } else if(tail!=bytes+2960)return false;
+  if(next || previous!=self+5480 || tail!=bytes+2960)return false;
   memcpy(self+5472,&request,8);
-  if(next) {memcpy(self+5480,&next,8);}
-  else {const void *empty=nullptr,*emptyTail=self+5480;memcpy(self+5480,&empty,8);memcpy(self+5488,&emptyTail,8);}
-  return true;
+  const void *empty=nullptr,*emptyTail=self+5480;
+  memcpy(self+5480,&empty,8);memcpy(self+5488,&emptyTail,8);return true;
  }
  void free() override;
  bool init(OSDictionary *properties=nullptr) override;
@@ -81,8 +74,6 @@ for i in range(168,358):
     if i==184:header+=' virtual bool isMainDisplay();\n'
     elif i==188:header+=' virtual IOReturn getDotPitch(uint32_t *);\n'
     elif i==213:header+=' virtual IOReturn supportedFrameInfo(uint32_t,uint32_t *,char *,uint32_t *)=0;\n'
-    elif i==242:header+=' virtual IOReturn copyDefaultSurfacePortName(task_t,uint32_t *);\n'
-    elif i==301:header+=' virtual bool getRefreshAttributes(uint64_t *,bool);\n'
     elif i==249:header+=' virtual void getDisplayDimensions(uint32_t *,uint32_t *);\n'
     elif i==290:header+=' virtual void kickSwapQueue();\n'
     elif i==296:header+=' virtual bool validateSwap(const OriginalLegacySwapRequest *);\n'
@@ -125,48 +116,14 @@ owned=[];native=[]
 for i,name in enumerate(compiled):
     expected=int(methods[i]['address'],16)
     if name.startswith(('__ZN19NativeLegacyDisplay','__ZNK19NativeLegacyDisplay')):
-        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,242,288,290,296,301) or i in pure,'Only qualified own methods and guarded leaves override')
+        owned.append(i);require(i in (0,1,7,14,84,86,87,141,155,184,188,288,290,296) or i in pure,'Only qualified own methods and guarded leaves override')
     elif '25IOMobileFramebufferLegacy' in name:
         require(i not in pure,'No unresolved original abstract backend target');bindings[name]=expected
     else:
         require(i<168 and names.get(name)==expected,'Actual inherited native base symbol '+str(i));native.append(i)
-require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,242,288,290,296,301]+pure),'Exact owned method set')
+require(owned==sorted([0,1,7,14,84,86,87,141,155,184,188,288,290,296]+pure),'Exact owned method set')
 undefined={n for n,_,k in symbols if k==1 and 'IOMobileFramebufferLegacy' in n}
 require(undefined==set(bindings),'All and only actual original-class imports qualified')
-# The default-surface port fallback calls the original slot242 and the original
-# surface -> Mach-port helper. They are not original-class imports, so bind
-# their exact addresses after the class-import assertion.
-bindings['_uke_original_default_surface_port']=0xfffffff00578b390
-bindings['_uke_surface_copy_port_name']=0xfffffff004baa90c
-# From uke (ad87339): the family's own surface-ID lookup pair, exactly as swap_submit calls them: the IOSurfaceRoot
-# (framebuffer+0x1600) lookup stub with its third-argument helper (the submitting task). Both are kext PLT stubs fixed in this
-# image; the GOT slot behind each is bound at kext load.
-bindings['_uke_surface_root_lookup']=0xfffffff0057a28c0
-bindings['_uke_surface_lookup_task']=0xfffffff0057a2e84
-require(read(0xfffffff0057a28c0,12)==bytes.fromhex('903c00b010e244f900021fd6'),'Actual family surface lookup stub')
-require(read(0xfffffff0057a2e84,12)==bytes.fromhex('903c00b0101647f900021fd6'),'Actual family lookup task stub')
-# From UniXNU-sheng's builder, for UniXNU NativeMobileDisplay's vsync tick and refresh properties (same 21H461 kernelcache).
-# The original display-refresh notification sender (self, timestamp, continuous host time, frame interval): it sends the six-word
-# vsync message (type 5) to every client entry queued at +5592, the tail queue that selector 72's registration (slot 208) fills at
-# +5512 + type*16. The platform subclass that normally calls it on each panel vblank is not part of this port.
-require(read(0xfffffff005796720,16)==bytes.fromhex('ff0302d1fd7b07a9fdc30191a0831ff8') and
-        read(0xfffffff005796830,4)==bytes.fromhex('08ed4af9') and
-        read(0xfffffff00579685c,16)==bytes.fromhex('e2230091c3008052240080521684ff97') and
-        read(0xfffffff005795fbc,4)==bytes.fromhex('0ab182d2'),
-        'Original vsync sender, its +5592 queue and six-word drop-allowed async send')
-bindings['_native_legacy_vsync_notify']=0xfffffff005796720
-# Slot 301 fills the six refresh words that setDisplayRefreshProperties publishes as IOMFBDisplayRefresh (minimum interval, its mach
-# time, maximum interval, its mach time, step, its mach time; intervals in 32.32 seconds): the generic body fixes the minimum at
-# 0x04444444 (1/60 s), and the render server paces its display timer by it.
-require(int(methods[301]['address'],16)==0xfffffff00579ea5c and read(0xfffffff00579ea68,8)==bytes.fromhex('888888d28888a0f2') and
-        read(0xfffffff00579ec54,4)==bytes.fromhex('08b544f9'),
-        'Original slot-301 refresh words with the 1/60 s minimum, called by setDisplayRefreshProperties')
-# setDisplayRefreshProperties itself (self): fills the six words through slot 301 and publishes them as IOMFBDisplayRefresh. Nothing in
-# the family calls it (the platform subclass does), so without it the render server falls back to its own 1/60 s heartbeat.
-require(read(0xfffffff00579ebb8,16)==bytes.fromhex('ff0302d1fd7b07a9fdc30191a0031ff8') and
-        read(0xfffffff00579ed54,16)==bytes.fromhex('086540f90173ff90218c0c9100013fd6'),
-        'Original setDisplayRefreshProperties publishing IOMFBDisplayRefresh through setProperty')
-bindings['_native_legacy_set_refresh_properties']=0xfffffff00579ebb8
 # Exact original IOSurface getters, independently observed through the real
 # original swap request. These aliases call original code; no object layout
 # is substituted and no original method/vtable is patched.
@@ -198,17 +155,6 @@ require(read(0xfffffff00578aa7c,24)==bytes.fromhex('080040f9084545f9030080d2e203
         'Original completion calls optional report slot 337 with null outputs and zero limit')
 require(read(0xfffffff005777e9c,16)==bytes.fromhex('080040f908e142f900013fd6c0000036'),
         'Original isMainDisplay dispatch uses only self and tests boolean bit zero')
-# asteroids T17 (GPU power mode 19): NativeAdreno's staged AGXAccelerator derives from the original IOAcceleratorES. Its three
-# imports bind to the audited original base constructor, destructor and metaclass of the same 21H461 kernelcache (UniXNU
-# scripts/data/ioaccelerator-base-abi.json, the recipe of build-adreno740-accelerator.py), in this same binding object.
-accel_abi=json.loads((ROOT/'scripts/data/ioaccelerator-base-abi.json').read_text())
-require(not accel_abi['operational_overrides'] and accel_abi['instance_bytes']==136 and accel_abi['virtual_entries']==168,
-        'The audited original IOAcceleratorES is the 136-byte, 168-entry base without operational overrides')
-accel_bindings={'__ZN15IOAcceleratorESC2EPK11OSMetaClass':int(accel_abi['protected_compatible_constructor_aliases'][0],16),
-                '__ZN15IOAcceleratorESD2Ev':int(accel_abi['nondeleting_destructor'],16),
-                '__ZN15IOAcceleratorES10gMetaClassE':int(accel_abi['metaclass'],16)}
-require(not set(accel_bindings)&set(bindings),'Accelerator and display bindings are disjoint')
-bindings.update(accel_bindings)
 asm=OUT/'original-bindings.S';asm.write_text(''.join(f'.globl {name}\n.set {name}, {va:#x}\n' for name,va in sorted(bindings.items())))
 sdk=run(['xcrun','--sdk','iphoneos','--show-sdk-path'],text=True).strip()
 run(['xcrun','clang','-target','arm64-apple-ios17.0','-isysroot',sdk,'-c',asm,'-o',OUT/'original-bindings.o'])
@@ -233,77 +179,6 @@ hid_source=ROOT/'kits/asteroids/HidInputProbe.cpp'
 hid_obj=OUT/'HidInputProbe.o'
 hid_cmd=[str(hid_source) if str(arg)==str(source) else str(hid_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]
 run(hid_cmd,cwd=r['directory'])
-gpupower_source=ROOT/'kits/asteroids/GpuPowerProbe.cpp'
-gpupower_obj=OUT/'GpuPowerProbe.o'
-# asteroids: GPU power mode 5 builds the GMU's SMMU context with NativeAdreno's NativeAdrenoGmuContextBringup (uke's mode 4),
-# so the probe links that class and what it needs: the memory, VM and SMMU-context classes, NativeAdrenoCpu.cpp's cache and
-# CPU queries, and UniXNU's ArmSmmu4K kit (as uke's build-native-adreno-kits.py takes them). Modes 12-14 add the GPU's own
-# context, the ring, CP init and the power-up list, and UniXNU's AdrenoPM4 kit for their packets. Mode 17 adds the submit
-# object, the timer, the user-client core and the IOKit surface (NativeAdrenoPublish.cpp: the NativeAdrenoGpu service and
-# AGXDeviceUserClient, both IOService/IOUserClient subclasses, so their metaclasses register with the kernel's own
-# constructors). The rest of NativeAdreno (its service, IRQ, the Metal accelerator) stays out; CONFIG_XNU_NATIVE_ADRENO stays
-# off. The GMU and BO pools come from board.toml [gpu] and must match the probe's GpuPowerBoard.h.
-import re,tomllib
-gpu=tomllib.loads((ROOT/'kits/asteroids/../board.toml').resolve().read_text())['gpu']
-pool_base,pool_bytes=int(gpu['gmu_pool_base'],0),int(gpu['gmu_pool_bytes'],0)
-board_h=(ROOT/'kits/asteroids/GpuPowerBoard.h').read_text()
-require(int(re.search(r'#define GPB_GMU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_base and
-        int(re.search(r'#define GPB_GMU_POOL_BYTES (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_bytes,
-        'board.toml [gpu] gmu_pool_* and GpuPowerBoard.h GPB_GMU_POOL_* differ')
-require(int(re.search(r'#define GPB_GPU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==int(gpu['gpu_pool_base'],0) and
-        int(re.search(r'#define GPB_GPU_POOL_BYTES (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==int(gpu['gpu_pool_bytes'],0),
-        'board.toml [gpu] gpu_pool_* and GpuPowerBoard.h GPB_GPU_POOL_* differ')
-# The probe opens NativeAdrenoGpu with the plugin's open type; any other type is refused (T15: e00002c7).
-require(int(re.search(r'#define GPB_UC_OPEN_TYPE (0x[0-9A-Fa-f]+)u',board_h).group(1),16)==
-        int(re.search(r'NativeAdrenoPluginOpenType=(0x[0-9A-Fa-f]+)',(ROOT/'drivers/NativeAdreno/NativeAdrenoPublish.cpp').read_text()).group(1),16),
-        'GpuPowerBoard.h GPB_UC_OPEN_TYPE and NativeAdreno NativeAdrenoPluginOpenType differ')
-adreno=ROOT/'drivers/NativeAdreno';smmu4k=ROOT/'kits/ArmSmmu4K';pm4=ROOT/'kits/AdrenoPM4'
-adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-I',str(pm4),'-Wno-incompatible-sysroot',
-              '-DSHENG_GMU_POOL_BASE=UINT64_C(%#x)'%pool_base,'-DSHENG_GMU_POOL_BYTES=%#xu'%pool_bytes]
-def kernel_cxx(src,obj,extra):
-    return [str(src) if str(arg)==str(source) else str(obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+extra
-# Mode 6 parses the command DB into the HFI startup table: the device package's ShengGmuVotes.c/ShengGmuCommandDb.c over the
-# headers prepare-asteroids-gmu-votes.py --from-data writes (an earlier archive entry), and the AdrenoFirmware kit's HFI
-# vote, startup and message code (its submodule, branch asteroids-a8xx).
-gmu_gen=ROOT/'build/sheng-gmu';hfi_kit=ROOT/'kits/AdrenoFirmware'
-for header in ('ShengGmuVotesSource.h','ShengGmuCommandDbSource.h'):
-    require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu-votes.py --from-data first')
-# Modes 9-10 run the GMU cold start (ShengGmu.c over AdrenoFirmware.c) on the generated registers and firmware.
-for header in ('ShengGmuSource.h','ShengGmuFirmware.h','ShengSqeFirmware.h','ShengZapFirmware.h'):
-    require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu.py first')
-vote_flags=['-I',str(ROOT/'kits/asteroids'),'-I',str(hfi_kit),'-I',str(gmu_gen)]
-run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags+vote_flags),cwd=r['directory'])
-gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuMemory','NativeAdrenoVm','NativeAdrenoGmuMemory',
-                                          'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu',
-                                          'NativeAdrenoSha256','NativeAdrenoGpuContext','NativeAdrenoRing',
-                                          'NativeAdrenoCpInit','NativeAdrenoPwrup','NativeAdrenoSubmit','NativeAdrenoTimer','NativeAdrenoProfile',
-                                          'NativeAdrenoUserClient','NativeAdrenoPublish')]
-gmu_objs=[]
-for src in gmu_sources:
-    gmu_objs.append(OUT/(src.stem+'.o'));run(kernel_cxx(src,gmu_objs[-1],adreno_flags),cwd=r['directory'])
-# Mode 19 (T17): the staged AGXAccelerator. Its static initializer leaves __mod_init_func (the probe runs it after IOGPUFamily has
-# loaded, because the parent metaclass does not exist before that), and it imports nothing of the original base beyond the three
-# bound above.
-accel_source=adreno/'NativeAdrenoAccelerator.cpp';accel_obj=OUT/'NativeAdrenoAccelerator.o';accel_late=OUT/'NativeAdrenoAccelerator.late.o'
-# Its base header comes from UniXNU's AdrenoMetal submodule, which this board does not include: the package carries a copy, placed so
-# the source's "../NativeMetal/OriginalAcceleratorABI.h" resolves from an include directory beside it.
-accel_abi_header=ROOT/'kits/asteroids/OriginalAcceleratorABI.h'
-(OUT/'accel-include').mkdir(exist_ok=True);(OUT/'NativeMetal').mkdir(exist_ok=True)
-(OUT/'NativeMetal/OriginalAcceleratorABI.h').write_bytes(accel_abi_header.read_bytes())
-run(kernel_cxx(accel_source,accel_obj,adreno_flags+['-I',str(OUT/'accel-include'),'-Wno-overloaded-virtual']),cwd=r['directory'])
-accel_raw=accel_obj.read_bytes();accel_image=macho(accel_raw)
-st=next(p for c,p,_ in accel_image['commands'] if c==2);sy,count,strings,_=struct.unpack_from('<4I',accel_raw,st+8)
-accel_imports=set()
-for i in range(count):
-    ix,kind,section,_,va=struct.unpack_from('<IBBHQ',accel_raw,sy+i*16)
-    name=accel_raw[strings+ix:accel_raw.index(b'\0',strings+ix)].decode()
-    if kind==1 and 'IOAcceleratorES' in name:accel_imports.add(name)
-require(accel_imports and accel_imports<=set(accel_bindings),'Only the three audited original IOAcceleratorES imports: %s'%sorted(accel_imports))
-run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeAdrenoAccelerator.cpp',
-     accel_obj,accel_late])
-require(code(accel_raw,accel_image)==code(accel_late.read_bytes(),macho(accel_late.read_bytes())),
-        'Only the accelerator initializer registration changes')
-gmu_objs.append(accel_late)
 touch_state_source=ROOT/'kits/asteroids/TouchState.cpp'
 touch_state_obj=OUT/'TouchState.o'
 run([str(touch_state_source) if str(arg)==str(source) else str(touch_state_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
@@ -327,18 +202,6 @@ while j<len(pa):
 process_cmd+=['-Wall','-Wextra','-Werror','-mgeneral-regs-only','-I',str(ROOT/'.cache/xnu-work/osfmk')]
 # asteroids: BootProcessProbe and BootUiTraceProbe (uke's boot diagnostics) are not built; process_cmd only serves as
 # the kernel C compile template for the stubs below.
-smmu_sources=sorted(smmu4k.glob('ArmSmmu4K*.c'))+[pm4/'AdrenoPM4.c']
-for src in smmu_sources:
-    gmu_objs.append(OUT/(src.stem+'.kit.o'))
-    run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
-        ['-I',str(smmu4k),'-I',str(pm4)],cwd=pr['directory'])
-vote_sources=[ROOT/'kits/asteroids/ShengGmuVotes.c',ROOT/'kits/asteroids/ShengGmuCommandDb.c',
-              hfi_kit/'AdrenoHfiVotes.c',hfi_kit/'AdrenoHfiStartup.c',hfi_kit/'AdrenoHfi.c',
-              ROOT/'kits/asteroids/ShengGmu.c',hfi_kit/'AdrenoFirmware.c']
-for src in vote_sources:
-    gmu_objs.append(OUT/(src.stem+'.kit.o'))
-    run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
-        vote_flags,cwd=pr['directory'])
 stub_source=ROOT/'kits/asteroids/LegacyDisplayStubs.c'
 stub_obj=OUT/'LegacyDisplayStubs.o'
 run([str(stub_source) if arg==str(process_source) else str(stub_obj) if arg==str(process_obj) else arg for arg in process_cmd],cwd=pr['directory'])
@@ -356,17 +219,11 @@ run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
 require(code((keyevents/'NativeKeyStoreEvents.o').read_bytes(),macho((keyevents/'NativeKeyStoreEvents.o').read_bytes()))==
         code(keyevents_late.read_bytes(),macho(keyevents_late.read_bytes())),'Owned event-service instructions unchanged by late init staging')
 run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,keystore_obj,
-     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj,gpupower_obj,*gmu_objs])
+     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj])
 sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          ROOT/'drivers/NativeMobileDisplay/NativeLegacyRequest.h',source,hid_source,keystore_source,
          ROOT/'drivers/ShengHidInput/NativeHidInput.cpp',ROOT/'scripts/build-sheng-hid-input.py',
-         ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,gpupower_source,
-         ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
-         *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
-         gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',
-         gmu_gen/'ShengGmuFirmware.h',gmu_gen/'ShengSqeFirmware.h',gmu_gen/'ShengZapFirmware.h',adreno/'NativeAdrenoA810HwInit.h',
-         adreno/'NativeAdrenoRegisters.h',pm4/'AdrenoPM4.h',accel_source,accel_abi_header,
-         ROOT/'scripts/data/ioaccelerator-base-abi.json']
+         ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',stub_source,touch_state_source]
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeGOPPresenter'],text=True),end='')
 gop=ROOT/'build/native-gop-presenter';gop_late=gop/'NativeGOPPresenter.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp',

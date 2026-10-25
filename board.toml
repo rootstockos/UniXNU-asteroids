@@ -77,15 +77,10 @@ archives = [
   # UFS root, step 3: the launchd watchdog policy (uke's BootWatchdogPolicy.c): disables watchdogd and, with
   # sheng-lite=1, the daemons that need missing hardware, and pets the Gunyah watchdog every 5 s.
   "build-watchdog-policy.py",
-  # Display, CPU-rendered: uke's display build (scripts/build-native-legacy-display.py, without uke's touch, CPU frequency
-  # and boot-trace probes) with uke's board probe (package/LegacyDisplayProbe.cpp, HidInputProbe.cpp, KeyStoreProbe.cpp,
-  # LegacyDisplayStubs.c). It binds UniXNU's NativeLegacyDisplay to the original IOMobileFramebufferLegacy.
-  # GPU power mode 6 (package/GpuPowerProbe.cpp) parses the command DB with the device package's vote builder; its headers
-  # come from scripts/data/a810-gmu-votes.json (derived locally from the phone's DT, which is not committed).
-  "prepare-asteroids-gmu-votes.py --from-data",
-  # The GMU cold start's generated registers and the pinned firmware as a C array (modes 9-10); reads the device repo's
-  # .cache, which the CI bootstrap fills (fetch-asteroids-gpu-firmware.py, prepare-asteroids-gmu.py --fetch).
-  "prepare-asteroids-gmu.py",
+  # Display, CPU-rendered (T24): UniXNU-sheng a599a1a's display build and probe, the ones UniXNU-umi runs
+  # (scripts/build-native-legacy-display.py, package/LegacyDisplayProbe.cpp), with UniXNU NativeMobileDisplay 4f20939 (umi's
+  # driver) and our HidInputProbe.cpp, KeyStoreProbe.cpp, TouchState.cpp and LegacyDisplayStubs.c. It binds NativeLegacyDisplay
+  # to the original IOMobileFramebufferLegacy. No GPU objects: the GPU prepare steps and GpuPowerProbe.cpp are not built.
   "build-native-legacy-display.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
@@ -238,7 +233,7 @@ kernel_args = [
   # the published plugin copy the display's frames to the scanout with the GPU (drivers/NativeMobileDisplay/NativeGOPPresenter.cpp);
   # a frame nobody takes keeps the CPU copy.
   # Remove the line to turn it off.
-  "sheng-gpu-power=1",
+  # T24: no sheng-gpu-power (GpuPowerProbe.cpp is not built).
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
   # without a first frame.
