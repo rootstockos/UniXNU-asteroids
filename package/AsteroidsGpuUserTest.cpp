@@ -59,6 +59,8 @@ int main() {
     if (!matching || !getService) return 2;
     // NativeTurnipSmoke.h sets these only when unset.
     setenv("TU_DARWIN_SERVICE", "NativeAdrenoGpuPublished", 1);
+    // A8xx: Turnip renders in system memory and without command-buffer reuse (pandora's A840 needed both).
+    setenv("TU_DEBUG", "sysmem,nocb", 1);
     // The probe publishes about a minute after the kernel starts (power, GMU, zap, the kernel client's rounds); wait ten minutes.
     unsigned port = 0;
     for (unsigned i = 0; i < 1200 && !port; ++i) {

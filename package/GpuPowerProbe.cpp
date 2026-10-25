@@ -1156,6 +1156,14 @@ extern "C" {
 // The kernel's GPU addon mount (patches/xnu/zzy-native-gpu-addon-mount.patch): weak, so a kernel without it still links.
 extern volatile int native_gpu_addon_stage __attribute__((weak)), native_gpu_addon_status __attribute__((weak));
 extern volatile int native_gpu_addon2_stage __attribute__((weak)), native_gpu_addon2_status __attribute__((weak));
+// Its install step: files in the addon (-1 none), written, already equal, failed, last error.
+extern volatile int native_gpu_addon_files __attribute__((weak)), native_gpu_addon_written __attribute__((weak)),
+    native_gpu_addon_same __attribute__((weak)), native_gpu_addon_failed __attribute__((weak)), native_gpu_addon_error __attribute__((weak));
+// The exec log (BootWatchdogPolicy.c, with sheng-gpu-addon=1): all execs, the last eight names, and the daemon's candidate names.
+extern volatile uint32_t asteroids_exec_total __attribute__((weak)), asteroids_exec_ngpu __attribute__((weak)),
+    asteroids_exec_bluetoothd __attribute__((weak)), asteroids_exec_fdr __attribute__((weak));
+extern char asteroids_exec_last[8][24] __attribute__((weak));
+extern char asteroids_exec_ngpu_path[64] __attribute__((weak));
 uint32_t native_gpu_user[8];
 }
 static void userReport(const char *when) {
@@ -1173,15 +1181,29 @@ static void userReport(const char *when) {
         const NativeAdrenoOpenRecord &o = native_adreno_open_log[i & 7];
         IOLog("ASTEROIDS GPU: user %s: open %u by %.19s type %x macf %x res %x attach %u\n", when, i, o.name, o.type, o.macf, o.res, o.attach);
     }
+#define GPB_WEAK(v) (&(v) ? int(v) : -9)
+    IOLog("ASTEROIDS GPU: user %s: addon files %d written %d same %d failed %d error %d\n", when, GPB_WEAK(native_gpu_addon_files),
+          GPB_WEAK(native_gpu_addon_written), GPB_WEAK(native_gpu_addon_same), GPB_WEAK(native_gpu_addon_failed), GPB_WEAK(native_gpu_addon_error));
+    if (&asteroids_exec_total && asteroids_exec_last && asteroids_exec_ngpu_path) {
+        const uint32_t e = asteroids_exec_total;
+        IOLog("ASTEROIDS GPU: user %s: execs %u, ngpu %u bluetoothd %u fdr_loader %u; last %.23s %.23s %.23s %.23s\n", when, e,
+              asteroids_exec_ngpu, asteroids_exec_bluetoothd, asteroids_exec_fdr, asteroids_exec_last[(e + 4) & 7],
+              asteroids_exec_last[(e + 5) & 7], asteroids_exec_last[(e + 6) & 7], asteroids_exec_last[(e + 7) & 7]);
+        if (asteroids_exec_ngpu) IOLog("ASTEROIDS GPU: user %s: ngpu exec %.63s\n", when, asteroids_exec_ngpu_path);
+    } else {
+        IOLog("ASTEROIDS GPU: user %s: no exec log in this kernel\n", when);
+    }
+#undef GPB_WEAK
     IOLog("ASTEROIDS GPU: user %s: report \"%.63s\"\n", when, d.report);
     IOLog("ASTEROIDS GPU: user %s: turnip \"%.63s\"\n", when, d.report2);
 }
 void userWatch() {
     IOLog("ASTEROIDS GPU: user: watching the service for 10 minutes (the addon's daemon, Turnip)\n");
-    uint32_t last[4] = {~0u, ~0u, ~0u, ~0u};
+    uint32_t last[5] = {~0u, ~0u, ~0u, ~0u, ~0u};
     for (unsigned t = 0; t < 300; ++t) {
         const NativeAdrenoMetalDiag &d = native_adreno_metal_diag;
-        const uint32_t now[4] = {d.marks_total, d.opens + d.closes + d.foreign_opens + d.busy, d.reports, native_adreno_open_log_count};
+        const uint32_t execs = &asteroids_exec_ngpu ? asteroids_exec_ngpu + asteroids_exec_bluetoothd + asteroids_exec_fdr : 0;
+        const uint32_t now[5] = {d.marks_total, d.opens + d.closes + d.foreign_opens + d.busy, d.reports, native_adreno_open_log_count, execs};
         if (memcmp(now, last, sizeof now)) {
             memcpy(last, now, sizeof now);
             char when[8];
