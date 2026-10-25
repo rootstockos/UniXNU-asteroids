@@ -77,10 +77,12 @@ archives = [
   # UFS root, step 3: the launchd watchdog policy (uke's BootWatchdogPolicy.c): disables watchdogd and, with
   # sheng-lite=1, the daemons that need missing hardware, and pets the Gunyah watchdog every 5 s.
   "build-watchdog-policy.py",
-  # Display, CPU-rendered (T24): UniXNU-sheng a599a1a's display build and probe, the ones UniXNU-umi runs
-  # (scripts/build-native-legacy-display.py, package/LegacyDisplayProbe.cpp), with UniXNU NativeMobileDisplay 4f20939 (umi's
-  # driver) and our HidInputProbe.cpp, KeyStoreProbe.cpp, TouchState.cpp and LegacyDisplayStubs.c. It binds NativeLegacyDisplay
-  # to the original IOMobileFramebufferLegacy. No GPU objects: the GPU prepare steps and GpuPowerProbe.cpp are not built.
+  # Display, CPU-rendered (T24b): UniXNU's display recipe (docs/porting/display.md). UniXNU-sheng 0e1f6e5's
+  # build-gop-legacy-display.py and LegacyDisplayProbe.cpp (here scripts/build-native-legacy-display.py and
+  # package/LegacyDisplayProbe.cpp), with the core's GopFramebuffer cf3b429 (drivers/GopFramebuffer; this repository no
+  # longer carries its own copy) and our HidInputProbe.cpp, KeyStoreProbe.cpp, TouchState.cpp and LegacyDisplayStubs.c.
+  # It binds NativeLegacyDisplay to the original IOMobileFramebufferLegacy. No GPU objects: the GPU prepare steps and
+  # GpuPowerProbe.cpp are not built.
   "build-native-legacy-display.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.
@@ -208,9 +210,12 @@ kernel_args = [
   "offline-legacy-transfer=1",
   "offline-legacy-cpu-present=1",
   # T23: umi and sheng run without uke's offline-legacy-default-surface=1, offline-legacy-base-present=1 and
-  # offline-legacy-noconsole=1, and without a vsync tick; all four are off. sheng-gpu-power=1 stays for its
-  # read-only heartbeat (the display swap counters).
+  # offline-legacy-noconsole=1; all three are off.
   "offline-legacy-phase=4",
+  # T24b: the refresh policy step of docs/porting/display.md. GopFramebuffer reports this rate through slot 301 and
+  # publishes IOMFBDisplayRefresh before registerService; the render server paces its display timer by it. 120 Hz is the
+  # 3a panel's rated mode, not a measured one (there is no DPU timing probe for the SM7635 yet).
+  "sheng-vsync=120",
   "offline-hid-home=1",
   "offline-hid-input=1",
   "offline-key-events=1",
@@ -230,7 +235,7 @@ kernel_args = [
   # once, does what 17 does, then prints for ten minutes what user space (the GPU addon's test daemon, sheng-gpu-addon=1)
   # does with the service, 19 also publishes the AGXAccelerator for the original Metal discovery (the addon's Metal plugin
   # then tests in backboardd; T18's published plugin returns a Metal device there instead). With 19, sheng-fb-gpu=1 lets
-  # the published plugin copy the display's frames to the scanout with the GPU (drivers/NativeMobileDisplay/NativeGOPPresenter.cpp);
+  # the published plugin copy the display's frames to the scanout with the GPU (drivers/GopFramebuffer/NativeGOPPresenter.cpp);
   # a frame nobody takes keeps the CPU copy.
   # Remove the line to turn it off.
   # T24: no sheng-gpu-power (GpuPowerProbe.cpp is not built).
