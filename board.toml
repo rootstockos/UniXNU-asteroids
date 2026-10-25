@@ -243,7 +243,6 @@ kernel_args = [
   "boot-display-page=1",
   "boot-ui-focus=PerfPowerServices",
   "boot-ui-focus2=SpringBoard",
-  "boot-ui-focus3=liveactivitiesd",
   "boot-ui-focus4=backboardd",
   "offline-hid-home=1",
   "offline-hid-input=1",
@@ -273,6 +272,10 @@ kernel_args = [
   # so the display keeps the CPU copy to the panel and only the render server's composition moves to the GPU.
   "sheng-gpu-power=19",
   "sheng-gpu-addon=1",
+  # T30: touch stage 1, read-only (package/AsteroidsTouchProbe.cpp): clocks, pins, SE0 only if clocked, the rails in the
+  # command DB, the SMMU stream table. Page row 42 and "ASTEROIDS TOUCH:" kernel log lines. boot-ui-focus3=liveactivitiesd
+  # (fixed in T29) was dropped to make room.
+  "asteroids-touch=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
   # without a first frame.

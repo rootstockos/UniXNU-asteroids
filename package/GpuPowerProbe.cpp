@@ -1175,10 +1175,11 @@ extern char asteroids_exec_ngpu_path[64] __attribute__((weak));
 // T16c: bluetoothd starts turned into the daemon, and the user the daemon ran as.
 extern volatile uint32_t asteroids_exec_swaps __attribute__((weak));
 extern volatile int32_t asteroids_exec_ngpu_uid __attribute__((weak));
-// T20: the display's swap calls (LegacyDisplayProbe.cpp) and its successful or failed copies to the panel.
-extern volatile uint32_t asteroids_swap_end_calls __attribute__((weak)), asteroids_swap_end_size __attribute__((weak)),
-    asteroids_swap_end_id __attribute__((weak)), asteroids_swap_end_status __attribute__((weak)),
-    asteroids_swap_wait_calls __attribute__((weak)), native_legacy_transfer_calls __attribute__((weak));
+// T20: the display's swap calls (LegacyDisplayProbe.cpp) and its successful or failed copies to the panel. T30: weak_import, since
+// the T24+ display probe defines none of the asteroids_swap_* counters (they read -9); a plain weak reference does not link.
+extern volatile uint32_t asteroids_swap_end_calls __attribute__((weak_import)), asteroids_swap_end_size __attribute__((weak_import)),
+    asteroids_swap_end_id __attribute__((weak_import)), asteroids_swap_end_status __attribute__((weak_import)),
+    asteroids_swap_wait_calls __attribute__((weak_import)), native_legacy_transfer_calls __attribute__((weak_import));
 uint32_t native_gpu_user[8];
 }
 // Mode 19 (T17): the accelerator for the original Metal discovery (IOServiceMatching("IOAcceleratorES") -> MetalPluginName ->
