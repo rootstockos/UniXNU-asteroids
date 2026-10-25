@@ -215,6 +215,8 @@ kernel_args = [
   "offline-legacy-default-surface=1",
   "offline-legacy-phase=4",
   "offline-legacy-base-present=1",   # T20, uke's present fix: copy the overlay surface a SwapEnd names to the panel (swap padding is on by default)
+  "sheng-vsync=60",                  # T20b: NativeMobileDisplay's refresh tick (sheng uses 120). Without it the render server sits
+                                      # in its message loop waiting for a vsync and never commits or swaps (T20's stack samples)
   "offline-hid-home=1",
   "offline-hid-input=1",
   "offline-key-events=1",
