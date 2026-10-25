@@ -296,10 +296,14 @@ gmu_objs.append(accel_late)
 touch_state_source=ROOT/'kits/asteroids/TouchState.cpp'
 touch_state_obj=OUT/'TouchState.o'
 run([str(touch_state_source) if str(arg)==str(source) else str(touch_state_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
-# asteroids T30: the touch probe (stage 1, read-only; docs/asteroids-touch.md in iosonandng).
+# asteroids T30: the touch probe (stages 1-6, asteroids-touch=<n>; docs/asteroids-touch.md in iosonandng), with the core's QcomGeniSpi
+# engine library and UniXNU-sheng's QcomRpmh/SmmuBypass (copied into the package) built below with the kernel C template.
 touch_probe_source=ROOT/'kits/asteroids/AsteroidsTouchProbe.cpp'
 touch_probe_obj=OUT/'AsteroidsTouchProbe.o'
-run([str(touch_probe_source) if str(arg)==str(source) else str(touch_probe_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+geni=ROOT/'drivers/QcomGeniSpi'
+require((geni/'GeniSpi.c').is_file(),'drivers/QcomGeniSpi (core submodule) is missing')
+run([str(touch_probe_source) if str(arg)==str(source) else str(touch_probe_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+
+    ['-I',str(geni),'-I',str(ROOT/'kits/asteroids')],cwd=r['directory'])
 keystore_source=ROOT/'kits/asteroids/KeyStoreProbe.cpp'
 keystore_obj=OUT/'KeyStoreProbe.o'
 keystore_cmd=[str(keystore_source) if str(arg)==str(source) else str(keystore_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]
@@ -332,6 +336,12 @@ for src in vote_sources:
     gmu_objs.append(OUT/(src.stem+'.kit.o'))
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
         vote_flags,cwd=pr['directory'])
+touch_kit_sources=[geni/'GeniSpi.c',ROOT/'kits/asteroids/QcomRpmh.c']
+touch_kit_objs=[]
+for src in touch_kit_sources:
+    touch_kit_objs.append(OUT/(src.stem+'.touch.o'))
+    run([str(src) if arg==str(process_source) else str(touch_kit_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
+        ['-I',str(geni),'-I',str(ROOT/'kits/asteroids')],cwd=pr['directory'])
 stub_source=ROOT/'kits/asteroids/LegacyDisplayStubs.c'
 stub_obj=OUT/'LegacyDisplayStubs.o'
 run([str(stub_source) if arg==str(process_source) else str(stub_obj) if arg==str(process_obj) else arg for arg in process_cmd],cwd=pr['directory'])
@@ -349,11 +359,12 @@ run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
 require(code((keyevents/'NativeKeyStoreEvents.o').read_bytes(),macho((keyevents/'NativeKeyStoreEvents.o').read_bytes()))==
         code(keyevents_late.read_bytes(),macho(keyevents_late.read_bytes())),'Owned event-service instructions unchanged by late init staging')
 run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,keystore_obj,
-     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj,touch_probe_obj,gpupower_obj,*gmu_objs])
+     hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj,touch_probe_obj,*touch_kit_objs,gpupower_obj,*gmu_objs])
 sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
          ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,hid_source,keystore_source,
          ROOT/'drivers/ShengHidInput/NativeHidInput.cpp',ROOT/'scripts/build-sheng-hid-input.py',
-         ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,touch_probe_source,gpupower_source,
+         ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,touch_probe_source,*touch_kit_sources,ROOT/'kits/asteroids/QcomRpmh.h',
+         ROOT/'kits/asteroids/SmmuBypass.h',geni/'GeniSpi.h',gpupower_source,
          ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
          *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
          gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',
