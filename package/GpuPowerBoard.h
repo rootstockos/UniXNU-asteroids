@@ -12,7 +12,7 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 18u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 19u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
                           // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
                           // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset; 8 then reads the GMU
@@ -27,7 +27,8 @@
                           // one-packet IB and has the GPU write a bar into the firmware framebuffer from a second IB; 17
                           // then adopts the BO pool the loader keeps from XNU, attaches fences and the timer, publishes
                           // NativeAdreno's user client and runs it from the kernel; 18 draws the bar once instead of for
-                          // two minutes, does what 17 does, then prints what user space does with the service for ten minutes
+                          // two minutes, does what 17 does, then prints what user space does with the service for ten minutes;
+                          // 19 also publishes the AGXAccelerator for the original Metal discovery before it watches
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),

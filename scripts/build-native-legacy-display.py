@@ -191,6 +191,17 @@ require(read(0xfffffff00578aa7c,24)==bytes.fromhex('080040f9084545f9030080d2e203
         'Original completion calls optional report slot 337 with null outputs and zero limit')
 require(read(0xfffffff005777e9c,16)==bytes.fromhex('080040f908e142f900013fd6c0000036'),
         'Original isMainDisplay dispatch uses only self and tests boolean bit zero')
+# asteroids T17 (GPU power mode 19): NativeAdreno's staged AGXAccelerator derives from the original IOAcceleratorES. Its three
+# imports bind to the audited original base constructor, destructor and metaclass of the same 21H461 kernelcache (UniXNU
+# scripts/data/ioaccelerator-base-abi.json, the recipe of build-adreno740-accelerator.py), in this same binding object.
+accel_abi=json.loads((ROOT/'scripts/data/ioaccelerator-base-abi.json').read_text())
+require(not accel_abi['operational_overrides'] and accel_abi['instance_bytes']==136 and accel_abi['virtual_entries']==168,
+        'The audited original IOAcceleratorES is the 136-byte, 168-entry base without operational overrides')
+accel_bindings={'__ZN15IOAcceleratorESC2EPK11OSMetaClass':int(accel_abi['protected_compatible_constructor_aliases'][0],16),
+                '__ZN15IOAcceleratorESD2Ev':int(accel_abi['nondeleting_destructor'],16),
+                '__ZN15IOAcceleratorES10gMetaClassE':int(accel_abi['metaclass'],16)}
+require(not set(accel_bindings)&set(bindings),'Accelerator and display bindings are disjoint')
+bindings.update(accel_bindings)
 asm=OUT/'original-bindings.S';asm.write_text(''.join(f'.globl {name}\n.set {name}, {va:#x}\n' for name,va in sorted(bindings.items())))
 sdk=run(['xcrun','--sdk','iphoneos','--show-sdk-path'],text=True).strip()
 run(['xcrun','clang','-target','arm64-apple-ios17.0','-isysroot',sdk,'-c',asm,'-o',OUT/'original-bindings.o'])
@@ -263,6 +274,24 @@ gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuM
 gmu_objs=[]
 for src in gmu_sources:
     gmu_objs.append(OUT/(src.stem+'.o'));run(kernel_cxx(src,gmu_objs[-1],adreno_flags),cwd=r['directory'])
+# Mode 19 (T17): the staged AGXAccelerator. Its static initializer leaves __mod_init_func (the probe runs it after IOGPUFamily has
+# loaded, because the parent metaclass does not exist before that), and it imports nothing of the original base beyond the three
+# bound above.
+accel_source=adreno/'NativeAdrenoAccelerator.cpp';accel_obj=OUT/'NativeAdrenoAccelerator.o';accel_late=OUT/'NativeAdrenoAccelerator.late.o'
+run(kernel_cxx(accel_source,accel_obj,adreno_flags+['-Wno-overloaded-virtual']),cwd=r['directory'])
+accel_raw=accel_obj.read_bytes();accel_image=macho(accel_raw)
+st=next(p for c,p,_ in accel_image['commands'] if c==2);sy,count,strings,_=struct.unpack_from('<4I',accel_raw,st+8)
+accel_imports=set()
+for i in range(count):
+    ix,kind,section,_,va=struct.unpack_from('<IBBHQ',accel_raw,sy+i*16)
+    name=accel_raw[strings+ix:accel_raw.index(b'\0',strings+ix)].decode()
+    if kind==1 and 'IOAcceleratorES' in name:accel_imports.add(name)
+require(accel_imports and accel_imports<=set(accel_bindings),'Only the three audited original IOAcceleratorES imports: %s'%sorted(accel_imports))
+run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeAdrenoAccelerator.cpp',
+     accel_obj,accel_late])
+require(code(accel_raw,accel_image)==code(accel_late.read_bytes(),macho(accel_late.read_bytes())),
+        'Only the accelerator initializer registration changes')
+gmu_objs.append(accel_late)
 touch_state_source=ROOT/'kits/asteroids/TouchState.cpp'
 touch_state_obj=OUT/'TouchState.o'
 run([str(touch_state_source) if str(arg)==str(source) else str(touch_state_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
@@ -324,7 +353,8 @@ sources=[ROOT/'drivers/NativeMobileDisplay/NativeLegacyDisplay.cpp',
          *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
          gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',
          gmu_gen/'ShengGmuFirmware.h',gmu_gen/'ShengSqeFirmware.h',gmu_gen/'ShengZapFirmware.h',adreno/'NativeAdrenoA810HwInit.h',
-         adreno/'NativeAdrenoRegisters.h',pm4/'AdrenoPM4.h']
+         adreno/'NativeAdrenoRegisters.h',pm4/'AdrenoPM4.h',accel_source,ROOT/'drivers/NativeMetal/OriginalAcceleratorABI.h',
+         ROOT/'scripts/data/ioaccelerator-base-abi.json']
 print(run(['python3',ROOT/'scripts/build-arm-driver.py','NativeGOPPresenter'],text=True),end='')
 gop=ROOT/'build/native-gop-presenter';gop_late=gop/'NativeGOPPresenter.late.o'
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_NativeGOPPresenter.cpp',

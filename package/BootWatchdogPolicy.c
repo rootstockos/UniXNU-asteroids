@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // From Allenwdk/UniXNU-uke package/BootWatchdogPolicy.c. asteroids also runs under Gunyah, so the watchdog pet thread
 // applies here as well. asteroids additions (only with sheng-gpu-addon=1): sheng-lite keeps the bluetoothd job for the GPU addon's
-// daemon (T16b), an exec log for the GPU probe's diagnostics (T16b), and bluetoothd's exec turned into the daemon (T16c).
+// daemon (T16b), an exec log for the GPU probe's diagnostics (T16b), and bluetoothd's exec turned into the daemon (T16c,
+// with sheng-gpu-addon-swap=1).
 // Explicit temporary bring-up policy for an unavailable watchdog backend.
 // Runs after writable scratch Data mounts, before the unchanged launchd exec.
 #include <sys/param.h>
@@ -160,7 +161,9 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  int enabled=0,error=0,fd=-1;int32_t result=0;
  uke_gunyah_wdt_start();
  int addon=0;PE_parse_boot_argn("sheng-gpu-addon",&addon,sizeof(addon));
- if(addon==1){asteroids_exec_log_start();native_gpu_addon_exec_substitute=asteroids_exec_substitute;}
+ // The swap only when the addon carries the daemon (sheng-gpu-addon-swap=1, T16c); T17's addon brings the Metal plugin instead.
+ int swap=0;PE_parse_boot_argn("sheng-gpu-addon-swap",&swap,sizeof(swap));
+ if(addon==1){asteroids_exec_log_start();if(swap==1)native_gpu_addon_exec_substitute=asteroids_exec_substitute;}
  PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
  if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
  int lite=0;PE_parse_boot_argn("sheng-lite",&lite,sizeof(lite));if(lite!=1)lite=0;

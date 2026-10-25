@@ -23,7 +23,10 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
+#include <IOKit/IOPlatformExpert.h>
 #include <libkern/c++/OSSharedPtr.h>
+#include <libkern/c++/OSMetaClass.h>
+#include <libkern/c++/OSSymbol.h>
 #include <kern/thread.h>
 #include <pexpert/pexpert.h>
 #include <string.h>
@@ -1169,6 +1172,60 @@ extern volatile uint32_t asteroids_exec_swaps __attribute__((weak));
 extern volatile int32_t asteroids_exec_ngpu_uid __attribute__((weak));
 uint32_t native_gpu_user[8];
 }
+// Mode 19 (T17): the accelerator for the original Metal discovery (IOServiceMatching("IOAcceleratorES") -> MetalPluginName ->
+// /System/Library/Extensions/<name>.bundle), after UniXNU-sheng's publishMetal (BSD-2-Clause-Patent). The class is NativeAdreno's
+// staged AGXAccelerator: its static initializer is out of __mod_init_func (build-native-legacy-display.py) and runs here, after the
+// original IOGPUFamily kext has loaded, because the parent metaclass does not exist before that. The plugin bundle arrives through
+// the GPU addon's Extensions overlay; without a NativeAdrenoMetal.publish file beside it, it only runs its tests in backboardd.
+extern "C" void native_adreno_accelerator_static_init(void) __asm__("__GLOBAL__sub_I_NativeAdrenoAccelerator.cpp") __attribute__((weak));
+extern "C" IOService *native_adreno_accelerator_allocate(void) __attribute__((weak));
+extern "C" unsigned native_adreno_accelerator_instance_size(void) __attribute__((weak));
+extern "C" kern_return_t OSKextLoadKextWithIdentifier(const char *);
+extern "C" kmod_info_t g_kernel_kmod_info;
+// Stages: 1 kext load attempted, 2 parent metaclass found, 3 own class registered, 4 object created and initialised, 5 published.
+volatile uint32_t gMetalStage = 0, gMetalRegistered = 0;
+volatile int gMetalKext = -99, gMetalStatus = 0;
+void publishMetal() {
+    gMetalStage = 1;
+    if (!native_adreno_accelerator_static_init || !native_adreno_accelerator_allocate || !native_adreno_accelerator_instance_size) {
+        gMetalStatus = kIOReturnUnsupported;
+        return;
+    }
+    gMetalKext = OSKextLoadKextWithIdentifier("com.apple.iokit.IOGPUFamily");
+    if (gMetalKext) {gMetalStatus = gMetalKext; return;}
+    const OSSymbol *name = OSSymbol::withCString("IOAcceleratorES");
+    const OSMetaClass *parent = name ? OSMetaClass::getMetaClassWithName(name) : nullptr;
+    OSSafeReleaseNULL(name);
+    if (!parent || parent->getClassSize() != 136) {gMetalStatus = kIOReturnNotFound; return;}
+    gMetalStage = 2;
+    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
+    if (!handle) {gMetalStatus = kIOReturnNoResources; return;}
+    native_adreno_accelerator_static_init();
+    gMetalStatus = OSMetaClass::postModLoad(handle);
+    if (gMetalStatus) return;
+    if (native_adreno_accelerator_instance_size() != 136) {gMetalStatus = kIOReturnInvalid; return;}
+    gMetalStage = 3;
+    IOService *accelerator = native_adreno_accelerator_allocate();
+    if (!accelerator) {gMetalStatus = kIOReturnNoMemory; return;}
+    if (!accelerator->init()) {accelerator->release(); gMetalStatus = kIOReturnError; return;}
+    // The two keys the original discovery reads. The plugin name is ours; no Apple device identity is claimed.
+    accelerator->setProperty("MetalPluginName", "NativeAdrenoMetal");
+    accelerator->setProperty("MetalPluginClassName", "NativeAdrenoMetalDevice");
+    // The render server, the one process whose open the kernel grants in place of the sandbox verdict
+    // (UniXNU patches/xnu/zzw-native-adreno-sandbox-grant.patch); T17's plugin tests only in backboardd.
+    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd");
+    gMetalStage = 4;
+    if (!accelerator->attach(IOService::getPlatform())) {accelerator->release(); gMetalStatus = kIOReturnNotAttached; return;}
+    accelerator->registerService();
+    gMetalRegistered = 1;
+    gMetalStage = 5;
+}
+static void metalReport(const char *when) {
+    const NativeAdrenoMetalDiag &d = native_adreno_metal_diag;
+    IOLog("ASTEROIDS GPU: metal %s: stage %u status %x kext %x registered %u; property reads %u (last %.16s) MetalPluginName reads %u (%.16s)\n",
+          when, gMetalStage, unsigned(gMetalStatus), unsigned(gMetalKext), gMetalRegistered, d.property_reads, d.reader[0], d.name_reads,
+          d.name_reader);
+}
 static void userReport(const char *when) {
     const NativeAdrenoMetalDiag &d = native_adreno_metal_diag;
     const uint32_t n = d.marks_total, at = (n + 15) & 15;
@@ -1199,16 +1256,18 @@ static void userReport(const char *when) {
         IOLog("ASTEROIDS GPU: user %s: no exec log in this kernel\n", when);
     }
 #undef GPB_WEAK
+    if (gMode >= 19) metalReport(when);
     IOLog("ASTEROIDS GPU: user %s: report \"%.63s\"\n", when, d.report);
     IOLog("ASTEROIDS GPU: user %s: turnip \"%.63s\"\n", when, d.report2);
 }
 void userWatch() {
-    IOLog("ASTEROIDS GPU: user: watching the service for 10 minutes (the addon's daemon, Turnip)\n");
-    uint32_t last[5] = {~0u, ~0u, ~0u, ~0u, ~0u};
+    IOLog("ASTEROIDS GPU: user: watching the service for 10 minutes (%s, Turnip)\n", gMode >= 19 ? "the Metal plugin in backboardd" : "the addon's daemon");
+    uint32_t last[6] = {~0u, ~0u, ~0u, ~0u, ~0u, ~0u};
     for (unsigned t = 0; t < 300; ++t) {
         const NativeAdrenoMetalDiag &d = native_adreno_metal_diag;
         const uint32_t execs = &asteroids_exec_ngpu ? asteroids_exec_ngpu + asteroids_exec_bluetoothd + asteroids_exec_fdr : 0;
-        const uint32_t now[5] = {d.marks_total, d.opens + d.closes + d.foreign_opens + d.busy, d.reports, native_adreno_open_log_count, execs};
+        const uint32_t now[6] = {d.marks_total, d.opens + d.closes + d.foreign_opens + d.busy, d.reports, native_adreno_open_log_count, execs,
+                                 d.property_reads + d.name_reads};
         if (memcmp(now, last, sizeof now)) {
             memcpy(last, now, sizeof now);
             char when[8];
@@ -1294,6 +1353,10 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 15) zapStart();
     if (gMode >= 16) barStart();
     if (gMode >= 17) ucStart();
+    if (gMode >= 19 && native_gpu_power_stage == 0x108) {
+        publishMetal();
+        metalReport("published");
+    }
     if (gMode >= 18 && native_gpu_power_stage == 0x108) userWatch();
     native_gpu_power_stage = 4;
 }
