@@ -226,7 +226,8 @@ kernel_args = [
   # fuse and CP state, builds the GPU's SMMU context (bank 0, SID 0, ACTLR 0x32b) and copies gen80300_sqe.fw into it, 13 runs
   # a8xx hw_init's register writes, 14 starts the CP (ring, SQE, CP_ME_INIT, fenced
   # WPTR writes) and has it write one word, 15 loads the zap shader (PAS 13) and leaves secure mode, 16 runs a first IB
-  # and has the GPU write a red/green/blue bar into the framebuffer, redrawn every 200 ms for 2 minutes.
+  # and has the GPU write a red/green/blue bar into the framebuffer, redrawn every 200 ms for 2 minutes, 17 adopts the BO
+  # pool, attaches fences and the timer, publishes NativeAdreno's user client and runs it from the kernel.
   # Remove the line to turn it off.
   "sheng-gpu-power=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
@@ -336,6 +337,11 @@ gmem_bytes = "0x90000"                 # 512 KiB + 64 KiB
 gmu_chip_id = "0x8030000"
 gmu_pool_base = "0xE6440000"            # GMU_Pool in the UEFI memory map (uefi-asteroids 8a92c2c): the first 32 MiB of DXE_Heap1
 gmu_pool_bytes = "0x02000000"
+# The BO pool (GPU mode 17): RAM above 4 GiB that DarwinBoot never gives XNU (its window is owned_memory_size below 4 GiB),
+# so the loader keeps it, as pandora's loader carves its pool. Android's /proc/iomem has 0x8bf800000-0xaffffefff as System
+# RAM and the live DT reserves nothing static above 4 GiB. Must match GpuPowerBoard.h GPB_GPU_POOL_*.
+gpu_pool_base = "0x900000000"
+gpu_pool_bytes = "0x8000000"
 preempt_record_bytes = "0x473800"      # 4558 KiB
 ubwc_version = 4                       # mainline milos_data, and qcom,ubwc-mode = <4> in the DT
 highest_bank_bit = 14                  # LPDDR4X (the DT display node: DDR type 7 -> 14, type 8 -> 15)

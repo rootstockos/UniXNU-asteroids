@@ -220,9 +220,11 @@ gpupower_obj=OUT/'GpuPowerProbe.o'
 # asteroids: GPU power mode 5 builds the GMU's SMMU context with NativeAdreno's NativeAdrenoGmuContextBringup (uke's mode 4),
 # so the probe links that class and what it needs: the memory, VM and SMMU-context classes, NativeAdrenoCpu.cpp's cache and
 # CPU queries, and UniXNU's ArmSmmu4K kit (as uke's build-native-adreno-kits.py takes them). Modes 12-14 add the GPU's own
-# context, the ring, CP init and the power-up list, and UniXNU's AdrenoPM4 kit for their packets. The rest of NativeAdreno
-# (its service, IRQ, user clients) stays out; CONFIG_XNU_NATIVE_ADRENO stays off. The GMU pool comes
-# from board.toml [gpu] and must match the probe's GpuPowerBoard.h, so the context adopts the pages mode 4 tested.
+# context, the ring, CP init and the power-up list, and UniXNU's AdrenoPM4 kit for their packets. Mode 17 adds the submit
+# object, the timer, the user-client core and the IOKit surface (NativeAdrenoPublish.cpp: the NativeAdrenoGpu service and
+# AGXDeviceUserClient, both IOService/IOUserClient subclasses, so their metaclasses register with the kernel's own
+# constructors). The rest of NativeAdreno (its service, IRQ, the Metal accelerator) stays out; CONFIG_XNU_NATIVE_ADRENO stays
+# off. The GMU and BO pools come from board.toml [gpu] and must match the probe's GpuPowerBoard.h.
 import re,tomllib
 gpu=tomllib.loads((ROOT/'kits/asteroids/../board.toml').resolve().read_text())['gpu']
 pool_base,pool_bytes=int(gpu['gmu_pool_base'],0),int(gpu['gmu_pool_bytes'],0)
@@ -230,6 +232,9 @@ board_h=(ROOT/'kits/asteroids/GpuPowerBoard.h').read_text()
 require(int(re.search(r'#define GPB_GMU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_base and
         int(re.search(r'#define GPB_GMU_POOL_BYTES (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_bytes,
         'board.toml [gpu] gmu_pool_* and GpuPowerBoard.h GPB_GMU_POOL_* differ')
+require(int(re.search(r'#define GPB_GPU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==int(gpu['gpu_pool_base'],0) and
+        int(re.search(r'#define GPB_GPU_POOL_BYTES (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==int(gpu['gpu_pool_bytes'],0),
+        'board.toml [gpu] gpu_pool_* and GpuPowerBoard.h GPB_GPU_POOL_* differ')
 adreno=ROOT/'drivers/NativeAdreno';smmu4k=ROOT/'kits/ArmSmmu4K';pm4=ROOT/'kits/AdrenoPM4'
 adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-I',str(pm4),'-Wno-incompatible-sysroot',
               '-DSHENG_GMU_POOL_BASE=UINT64_C(%#x)'%pool_base,'-DSHENG_GMU_POOL_BYTES=%#xu'%pool_bytes]
@@ -249,7 +254,8 @@ run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags+vote_flags),cwd=r['dire
 gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuMemory','NativeAdrenoVm','NativeAdrenoGmuMemory',
                                           'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu',
                                           'NativeAdrenoSha256','NativeAdrenoGpuContext','NativeAdrenoRing',
-                                          'NativeAdrenoCpInit','NativeAdrenoPwrup')]
+                                          'NativeAdrenoCpInit','NativeAdrenoPwrup','NativeAdrenoSubmit','NativeAdrenoTimer',
+                                          'NativeAdrenoUserClient','NativeAdrenoPublish')]
 gmu_objs=[]
 for src in gmu_sources:
     gmu_objs.append(OUT/(src.stem+'.o'));run(kernel_cxx(src,gmu_objs[-1],adreno_flags),cwd=r['directory'])

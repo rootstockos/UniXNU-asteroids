@@ -12,7 +12,7 @@
 #define ASTEROIDS_GPU_POWER_BOARD_H
 #include <stdint.h>
 
-#define GPB_MAX_MODE 16u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
+#define GPB_MAX_MODE 17u   // 4 runs modes 1-3, then the GMU pool test below (no SMMU or GMU access); 5 then builds the GMU's
                           // SMMU context on the pool (gpb_gmu_context_gate, NativeAdrenoGmuContextBringup); 6 then reads
                           // the GMU clock tree (gpb_read_gmu_clocks) and the AOP command DB, and writes nothing; 7 then brings the GMU clocks
                           // up as Linux does (gpb_gmu_clocks_on), with the GMU still in reset; 8 then reads the GMU
@@ -24,7 +24,9 @@
                           // then runs a8xx hw_init's register writes up to the SQE base (gpb_hw_init); 14 then starts
                           // the CP: ring, SQE, CP_ME_INIT and a first CP_MEM_WRITE; 15 then loads the zap shader (PAS 13)
                           // and leaves secure mode (CP_SET_SECURE_MODE 0), then writes a second word; 16 then runs a
-                          // one-packet IB and has the GPU write a bar into the firmware framebuffer from a second IB
+                          // one-packet IB and has the GPU write a bar into the firmware framebuffer from a second IB; 17
+                          // then adopts the BO pool the loader keeps from XNU, attaches fences and the timer, publishes
+                          // NativeAdreno's user client and runs it from the kernel
 
 // The 3a's live device tree (/sys/firmware/fdt): clock-controller@100000 qcom,volcano-gcc (size 0x1f4200),
 // clock-controller@3d90000 qcom,volcano-gpucc (size 0x9800), qcom,kgsl-iommu@3da0000 (size 0x40000),
@@ -1014,4 +1016,24 @@ static inline void gpb_bar_fill(const struct gpb_bar *b, uint32_t header, uint64
         for (uint32_t x = 0; x < b->width; ++x) ib[k++] = gpb_bar_pixel(b, x, row);
     }
 }
+
+// Mode 17 (T15): the BO pool. DarwinBoot gives XNU only its 384 MiB owned-memory window (board.toml), so XNU never sees
+// this RAM: the loader keeps it, and the probe adopts it for NativeAdreno's BOs (pandora's patch 0178 gets the same from
+// its loader through the ADT). The range is in the phone's DDR above 4 GiB: Android's /proc/iomem lists
+// 0x8bf800000-0xaffffefff as System RAM, and the live DT's reserved-memory has no static region above 4 GiB (only
+// mem_dump_region, placed by Linux at boot). The GPU's 36 output bits reach it. 128 MiB is mapped at once (pandora's 1 GiB
+// in one io map panicked); board.toml [gpu] gpu_pool_* must match.
+#define GPB_GPU_POOL_BASE 0x900000000ULL
+#define GPB_GPU_POOL_BYTES 0x8000000ULL
+// The client-visible facts for the A810, each from a pinned source: chip id, GMEM 576 KiB from NativeAdrenoProfile's
+// a810 entry (mainline a6xx_catalog.c); GMEM window and trap base from mode 13's writes; UBWC from milos_data (UBWC 4.0,
+// highest bank bit 15, level 2 swizzling only). The VA window is uke's: clear of the kernel buffers, the bar's maps and
+// the GMEM window, up to the 2 GiB aperture. macrotile_mode is not checked yet (0); only Turnip reads it.
+#define GPB_A810_CHIP_ID 0x44010000u
+#define GPB_A810_GMEM_BYTES 0x90000u
+#define GPB_CLIENT_VA_START 0x20000000ULL
+#define GPB_CLIENT_VA_BYTES 0x60000000ULL
+#define GPB_UBWC_HBB 15u
+#define GPB_UBWC_SWIZZLE 2u               // bit1: level 2 on; levels 1 and 3 off
+#define GPB_UBWC_VERSION 4u
 #endif

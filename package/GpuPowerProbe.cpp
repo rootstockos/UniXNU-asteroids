@@ -5,7 +5,8 @@
 // the HFI startup messages, mode 10, the GX request with the first RBBM reads, mode 11, the SW fuse and CP survey with
 // the GPU's own SMMU context and the SQE copy, mode 12, a8xx hw_init's register writes, mode 13, and the CP start through
 // CP_ME_INIT and a first CP_MEM_WRITE, mode 14, the zap shader with the secure-mode exit, mode 15, and the first IBs with a
-// bar the GPU writes into the firmware framebuffer, mode 16 (sheng-gpu-power=1..16;
+// bar the GPU writes into the firmware framebuffer, mode 16, and the BO pool, fences, timer and NativeAdreno's user
+// client run from the kernel, mode 17 (sheng-gpu-power=1..17;
 // absent or 0 does nothing). Modes 9-10 hand the
 // device package's ShengGmu.c (UniXNU-sheng's, with mainline's gen8 branches) its own uncached maps of the GMU, RSCC, GPU and CX_MISC
 // windows and Normal non-cacheable maps of the five payloads mode 5 placed in the pool; its writes go through its own
@@ -44,6 +45,9 @@ extern "C" {
 #include "ShengSqeFirmware.h"   // build/sheng-gmu: the pinned gen80300_sqe.fw as an array; never committed
 #include "ShengZapFirmware.h"   // build/sheng-gmu: the pinned gen80300_zap.mbn as an array; never committed
 #include "NativeAdrenoMemory.h"
+#include "NativeAdrenoUserClient.h"   // with NativeAdrenoSubmit.h and NativeAdrenoTimer.h
+#include "NativeAdrenoABI.h"
+#include <IOKit/IOUserClient.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/task.h>
 #include <kern/clock.h>
@@ -53,8 +57,6 @@ struct gpb_result native_gpu_power_result;
 struct gpb_pool_result native_gpu_pool_result;
 struct NativeAdrenoGmuContextReport native_gpu_gmu_context;
 volatile uint32_t native_gpu_power_stage;
-// NativeAdrenoGpuContext.cpp reads it; its owner, NativeAdrenoUserClient.cpp, is not linked here. 0: no pool remap.
-volatile uint32_t native_adreno_wc_enabled;
 }
 
 namespace {
@@ -897,6 +899,247 @@ void barStart() {
     IOLog("ASTEROIDS GPU: bar redraws ok=%u failed=%u first=%x %s\n", g[9], g[10], g[11], g[10] ? "stopped" : "done");
     native_gpu_power_stage = g[10] ? 0xff : 0xf8;
 }
+// Mode 17 (T15): what the user interface stands on, as uke's probe hands its live GPU to NativeAdreno (publishAndWrapperTest)
+// and pandora's levels 13-14 built it. One boot; each step runs only when the one before it passed:
+//   1 the BO pool: the loader-kept RAM at GPB_GPU_POOL_BASE written and checked with gpb_pool_test through a temporary
+//     write-combined map, then adopted (NativeAdrenoMemory::adoptPool); user BOs come from it from now on
+//   2 fences and time: NativeAdrenoSubmit on the live VM and ring (CP timestamp fences, at most eight jobs in flight) and
+//     NativeAdrenoTimer on CP_ALWAYS_ON_COUNTER (gen8 table)
+//   3 native_adreno_publish: the NativeAdrenoGpu service with the A810's device info
+//   4 two rounds as a client takes them, minus the Mach trap: newUserClient, Query, GetDeviceInfo, two BOs (IB, target)
+//     from the pool, BoMap, BoCpuMap and clientMemoryForType, an IB of three CP_MEM_WRITEs written through the client's own
+//     mapping, Submit, WaitFence, GetTimestamp, clientClose (drain, unmap, free); the second round proves the slot recycles
+//   5 a burst of 32 submissions on one connection, each writing its index, then one WaitFence on the last: every word must
+//     be there (fences retire in order)
+// Nothing is torn down at the end: the service stays published for user space.
+extern "C" {
+IOReturn native_adreno_publish(NativeAdrenoVm *, NativeAdrenoSubmit *, NativeAdrenoRing *, const NativeAdrenoRingClock *,
+                               const NativeAdrenoTimer *, const NativeAdrenoAbiDeviceInfo *, uint32_t, uint32_t);
+uint32_t native_adreno_publish_stats(uint32_t *);
+IOService *native_adreno_published_service();
+extern volatile uint32_t native_adreno_pool_stats[8];
+// step reached, pool test bad words, adopt, submit attach, timer attach, publish, round 1 and 2 matched words (of 4),
+// steps ok, steps, first error, its step, burst matched (of 32), BOs from the pool, opened, closed
+uint32_t native_gpu_uc[16];
+}
+NativeAdrenoSubmit gSubmit;
+NativeAdrenoTimer gTimer;
+const NativeAdrenoAbiDeviceInfo gDeviceInfo = {GPB_A810_CHIP_ID, GPB_A810_GMEM_BYTES, GPB_GMEM_RANGE_MIN, GPB_UCHE_TRAP_BASE,
+                                               GPB_CLIENT_VA_START, GPB_CLIENT_VA_BYTES, GPB_UBWC_HBB, GPB_UBWC_SWIZZLE, 0,
+                                               GPB_UBWC_VERSION, NativeAdrenoDeviceClientIova, 0};
+int timerRead(void *, uint32_t reg, uint32_t *value) {return ringRead(nullptr, reg, value);}
+const NativeAdrenoTimeIo gTimerIo{nullptr, timerRead};
+IOReturn ucCall(IOUserClient *uc, uint32_t method, const void *in, void *out) {
+    IOExternalMethodArguments a{};
+    a.version = kIOExternalMethodArgumentsCurrentVersion;
+    a.selector = method;
+    const size_t is = NativeAdrenoUserClient::inputSize(method), os = NativeAdrenoUserClient::outputSize(method);
+    a.structureInput = is ? in : nullptr;
+    a.structureInputSize = uint32_t(is);
+    a.structureOutput = os ? out : nullptr;
+    a.structureOutputSize = uint32_t(os);
+    return uc->externalMethod(method, &a, nullptr, nullptr, nullptr);
+}
+struct UcSteps {
+    int ok = 0, n = 0, at = -1;
+    IOReturn err = kIOReturnSuccess;
+    bool operator()(IOReturn s) {
+        const int i = n++;
+        if (!s) ++ok;
+        else if (!err) {err = s; at = i;}
+        return !s;
+    }
+};
+// Two pooled BOs mapped at ib/tgt, both CPU-mapped through clientMemoryForType. 0 on success; maps[] are the CPU views.
+bool ucBuffers(IOUserClient *uc, UcSteps &step, uint64_t ib_iova, uint64_t tgt_iova, uint64_t handles[2], IOMemoryDescriptor *desc[2],
+               IOMemoryMap *maps[2]) {
+    const NativeAdrenoAbiBoAlloc alloc{0x1000, 12, 0};
+    NativeAdrenoAbiBoAllocReply r[2] = {};
+    for (unsigned i = 0; i < 2; ++i) if (!step(ucCall(uc, NativeAdrenoMethodBoAlloc, &alloc, &r[i]))) return false;
+    handles[0] = r[0].handle; handles[1] = r[1].handle;
+    const NativeAdrenoAbiBoMap map[2] = {{handles[0], ib_iova, 1, 0, 2, 0}, {handles[1], tgt_iova, 3, 0, 2, 0}};
+    NativeAdrenoAbiBoMapReply mr{};
+    for (unsigned i = 0; i < 2; ++i) if (!step(ucCall(uc, NativeAdrenoMethodBoMap, &map[i], &mr))) return false;
+    for (unsigned i = 0; i < 2; ++i) {
+        const NativeAdrenoAbiBoCpuMap cm{handles[i]};
+        NativeAdrenoAbiBoCpuMapReply cr{};
+        if (!step(ucCall(uc, NativeAdrenoMethodBoCpuMap, &cm, &cr))) return false;
+        IOOptionBits options = 0;
+        if (!step(uc->clientMemoryForType(cr.token, &options, &desc[i])) || !desc[i]) return false;
+        maps[i] = desc[i]->createMappingInTask(kernel_task, 0, options);
+        if (!step(maps[i] ? kIOReturnSuccess : kIOReturnNoMemory)) return false;
+    }
+    return true;
+}
+// The IB at w: one CP_MEM_WRITE per value, value i to tgt + 4 * (first + i). Returns the dwords written, 0 on a refused header.
+unsigned ucWrites(volatile uint32_t *w, uint64_t tgt, unsigned first, const uint32_t *values, unsigned count) {
+    unsigned k = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        uint32_t header = 0;
+        if (AdrenoPM4Type7(GPB_CP_MEM_WRITE, 3, &header) != AdrenoPM4Success) return 0;
+        const uint64_t at = tgt + 4ull * (first + i);
+        w[k++] = header; w[k++] = uint32_t(at); w[k++] = uint32_t(at >> 32); w[k++] = values[i];
+    }
+    return k;
+}
+IOReturn ucSubmit(IOUserClient *uc, uint64_t handle, uint64_t iova, unsigned dwords, uint64_t *fence) {
+    NativeAdrenoAbiSubmit submit{};
+    submit.buffer_count = 1;
+    submit.buffers[0] = {handle, iova, uint64_t(dwords) * 4};
+    NativeAdrenoAbiSubmitReply reply{};
+    const IOReturn st = ucCall(uc, NativeAdrenoMethodSubmit, &submit, &reply);
+    *fence = reply.fence;
+    return st;
+}
+// One round as uke's wrapperRound: returns the matching words (of 4: three written, one untouched) or -1.
+int ucRound(IOService *svc, UcSteps &step, unsigned round) {
+    IOUserClient *uc = nullptr;
+    if (!step(svc->newUserClient(kernel_task, nullptr, 0, nullptr, &uc)) || !uc) return -1;
+    NativeAdrenoAbiParams params{};
+    step(ucCall(uc, NativeAdrenoMethodQuery, nullptr, &params));
+    NativeAdrenoAbiDeviceInfo info{};
+    step(ucCall(uc, NativeAdrenoMethodGetDeviceInfo, nullptr, &info));
+    step(info.chip_id == GPB_A810_CHIP_ID && info.gmem_bytes == GPB_A810_GMEM_BYTES ? kIOReturnSuccess : kIOReturnError);
+    uint64_t handles[2] = {};
+    IOMemoryDescriptor *desc[2] = {};
+    IOMemoryMap *maps[2] = {};
+    int matched = -1;
+    const uint64_t ib = 0x20004000, tgt = 0x20005000;
+    if (ucBuffers(uc, step, ib, tgt, handles, desc, maps)) {
+        volatile uint32_t *iw = reinterpret_cast<volatile uint32_t *>(maps[0]->getVirtualAddress());
+        volatile uint32_t *tw = reinterpret_cast<volatile uint32_t *>(maps[1]->getVirtualAddress());
+        for (unsigned i = 0; i < 1024; ++i) tw[i] = 0xdeadbeef;
+        const uint32_t values[3] = {0x0badc0deu, 0xfeed0000u | round, 0x600d0a81u};
+        const unsigned dwords = ucWrites(iw, tgt, 0, values, 3);
+        ringBarrier(nullptr);
+        uint64_t fence = 0;
+        if (step(dwords ? kIOReturnSuccess : kIOReturnInternalError) && step(ucSubmit(uc, handles[0], ib, dwords, &fence))) {
+            const NativeAdrenoAbiWaitFence wait{fence, 200000000ull};
+            if (step(ucCall(uc, NativeAdrenoMethodWaitFence, &wait, nullptr))) {
+                ringBarrier(nullptr);
+                matched = (tw[0] == values[0]) + (tw[1] == values[1]) + (tw[2] == values[2]) + (tw[3] == 0xdeadbeef);
+            }
+        }
+        NativeAdrenoAbiTimestamp ts{};
+        step(ucCall(uc, NativeAdrenoMethodGetTimestamp, nullptr, &ts));
+        IOLog("ASTEROIDS GPU: uc round %u: abi %u in %u out %u max %llx, fence %llu, words %08x %08x %08x %08x, ticks %llu\n",
+              round, params.abi_version, params.input_bits, params.output_bits, params.max_bo_bytes, fence, tw[0], tw[1], tw[2],
+              tw[3], ts.ticks);
+    }
+    for (auto *m : maps) if (m) m->release();
+    for (auto *d : desc) if (d) d->release();
+    step(uc->clientClose());   // drains this client's jobs, unmaps and frees its BOs
+    uc->release();
+    return matched;
+}
+// 32 submissions on one connection, IB i writing i into word i of the target; one wait on the last fence. Matched words.
+int ucBurst(IOService *svc, UcSteps &step) {
+    IOUserClient *uc = nullptr;
+    if (!step(svc->newUserClient(kernel_task, nullptr, 0, nullptr, &uc)) || !uc) return -1;
+    uint64_t handles[2] = {};
+    IOMemoryDescriptor *desc[2] = {};
+    IOMemoryMap *maps[2] = {};
+    int matched = -1;
+    const uint64_t ib = 0x20010000, tgt = 0x20011000;
+    if (ucBuffers(uc, step, ib, tgt, handles, desc, maps)) {
+        volatile uint32_t *iw = reinterpret_cast<volatile uint32_t *>(maps[0]->getVirtualAddress());
+        volatile uint32_t *tw = reinterpret_cast<volatile uint32_t *>(maps[1]->getVirtualAddress());
+        for (unsigned i = 0; i < 1024; ++i) tw[i] = 0xdeadbeef;
+        // Each submission's IB is its own 16-byte slice of the IB page.
+        uint64_t fence = 0;
+        bool sent = true;
+        for (unsigned i = 0; i < 32 && sent; ++i) {
+            const uint32_t value = 0xb0000000u | i;
+            const unsigned dwords = ucWrites(iw + 4 * i, tgt, i, &value, 1);
+            ringBarrier(nullptr);
+            sent = step(dwords ? kIOReturnSuccess : kIOReturnInternalError) &&
+                   step(ucSubmit(uc, handles[0], ib + 16 * i, dwords, &fence));
+        }
+        if (sent) {
+            const NativeAdrenoAbiWaitFence wait{fence, 500000000ull};
+            if (step(ucCall(uc, NativeAdrenoMethodWaitFence, &wait, nullptr))) {
+                ringBarrier(nullptr);
+                matched = 0;
+                for (unsigned i = 0; i < 32; ++i) matched += tw[i] == (0xb0000000u | i);
+            }
+        }
+        IOLog("ASTEROIDS GPU: uc burst: last fence %llu, matched %d of 32, word 31 %08x, word 32 %08x\n", fence, matched, tw[31],
+              tw[32]);
+    }
+    for (auto *m : maps) if (m) m->release();
+    for (auto *d : desc) if (d) d->release();
+    step(uc->clientClose());
+    uc->release();
+    return matched;
+}
+void ucStart() {
+    native_gpu_power_stage = 0x100;
+    uint32_t *u = native_gpu_uc;
+    if (native_gpu_bar[9] == 0 || native_gpu_bar[10]) {IOLog("ASTEROIDS GPU: uc skipped: mode 16 did not finish\n"); return;}
+    NativeAdrenoVm *vm = NativeAdrenoGpuContextVm();
+    const unsigned bits = native_gpu_context.output_bits;
+    if (!vm || !bits) {IOLog("ASTEROIDS GPU: uc skipped: no GPU VM\n"); return;}
+    u[0] = 1;
+    native_gpu_power_stage = 0x101;
+    IOLog("ASTEROIDS GPU: pool: %llx+%llx (loader-kept RAM above XNU's window), pattern test, then adopt\n", GPB_GPU_POOL_BASE,
+          GPB_GPU_POOL_BYTES);
+    {
+        IODeviceMemory *memory = IODeviceMemory::withRange(GPB_GPU_POOL_BASE, GPB_GPU_POOL_BYTES);
+        OSSharedPtr<IOMemoryMap> pool;
+        if (memory) {
+            pool = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
+            memory->release();
+        }
+        if (!pool) {IOLog("ASTEROIDS GPU: pool map failed\n"); native_gpu_power_stage = 0x10f; return;}
+        gpb_pool_result p{};
+        gpb_pool_test(reinterpret_cast<volatile uint64_t *>(pool->getVirtualAddress()), GPB_GPU_POOL_BYTES, &p);
+        ringBarrier(nullptr);
+        u[1] = uint32_t(p.pattern_bad + p.zero_bad);
+        IOLog("ASTEROIDS GPU: pool words=%llu pattern_bad=%llu zero_bad=%llu first_bad=%llx\n", p.words, p.pattern_bad, p.zero_bad,
+              p.first_bad);
+        if (u[1] || p.words != GPB_GPU_POOL_BYTES / 8) {native_gpu_power_stage = 0x10f; return;}
+    }
+    u[2] = uint32_t(NativeAdrenoMemory::adoptPool(GPB_GPU_POOL_BASE, size_t(GPB_GPU_POOL_BYTES), bits));
+    IOLog("ASTEROIDS GPU: pool adopt %x, %u MiB\n", u[2], unsigned(NativeAdrenoMemory::poolBytes() >> 20));
+    if (u[2]) {native_gpu_power_stage = 0x10f; return;}
+    u[0] = 2;
+    native_gpu_power_stage = 0x102;
+    const NativeAdrenoRingClock clock{nullptr, ringNow, ringIdle};
+    u[3] = uint32_t(gSubmit.attach(vm, &gRing));
+    u[4] = uint32_t(NativeAdrenoTimer::setRegisters(NativeAdrenoRegisterTable::gen8()));
+    if (!u[4]) u[4] = uint32_t(gTimer.attach(&gTimerIo, NativeAdrenoTimeCp));
+    uint64_t t0 = 0, t1 = 0;
+    if (!u[4]) {gTimer.read(&t0); IODelay(1000); gTimer.read(&t1);}
+    IOLog("ASTEROIDS GPU: fences: submit attach %x; timer attach %x, always-on %llu then %llu (+%llu in 1 ms)\n", u[3], u[4], t0, t1,
+          t1 - t0);
+    if (u[3] || u[4]) {native_gpu_power_stage = 0x10f; return;}
+    u[0] = 3;
+    native_gpu_power_stage = 0x103;
+    u[5] = uint32_t(native_adreno_publish(vm, &gSubmit, &gRing, &clock, &gTimer, &gDeviceInfo, 31, bits));
+    IOService *svc = u[5] ? nullptr : native_adreno_published_service();
+    IOLog("ASTEROIDS GPU: publish %x service %s chip %08x gmem %x va %llx+%llx\n", u[5], svc ? "NativeAdrenoGpu" : "-",
+          gDeviceInfo.chip_id, gDeviceInfo.gmem_bytes, gDeviceInfo.va_start, gDeviceInfo.va_size);
+    if (!svc) {native_gpu_power_stage = 0x10f; return;}
+    u[0] = 4;
+    native_gpu_power_stage = 0x104;
+    UcSteps step;
+    const int v1 = ucRound(svc, step, 1);
+    const int v2 = ucRound(svc, step, 2);
+    u[6] = uint32_t(v1); u[7] = uint32_t(v2);
+    u[0] = 5;
+    native_gpu_power_stage = 0x105;
+    const int burst = ucBurst(svc, step);
+    u[12] = uint32_t(burst);
+    u[8] = uint32_t(step.ok); u[9] = uint32_t(step.n); u[10] = uint32_t(step.err); u[11] = uint32_t(step.at);
+    u[13] = native_adreno_pool_stats[1];
+    u[14] = native_adreno_publish_stats(&u[15]);
+    const bool ok = v1 == 4 && v2 == 4 && burst == 32 && step.ok == step.n;
+    IOLog("ASTEROIDS GPU: uc steps %d/%d err %x@%d rounds %d/%d of 4 burst %d of 32, pool BOs %u, opened %u closed %u, jobs done %u %s\n",
+          step.ok, step.n, unsigned(step.err), step.at, v1, v2, burst, u[13], u[14], u[15], unsigned(gSubmit.stats().completed),
+          ok ? "ok" : "miss");
+    cpState("uc");
+    native_gpu_power_stage = ok ? 0x108 : 0x10e;
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -967,6 +1210,7 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 14) cpStart();
     if (gMode >= 15) zapStart();
     if (gMode >= 16) barStart();
+    if (gMode >= 17) ucStart();
     native_gpu_power_stage = 4;
 }
 }
