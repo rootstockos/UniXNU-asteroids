@@ -82,7 +82,7 @@ result = "Memory node for the XNU window's DRAM bank."
 id = "storage"
 status = "implemented"
 components = ["ShengUfs", "RamBlock", "SoftwareAES", "VirtioMmioBlock", "VerifiedRoot"]
-paths = ["drivers/ShengUfs", "scripts/build-arm-driver.py", "scripts/build-ufs-original-bindings.py", "scripts/ci-bootstrap-candidate.sh", "scripts/pull-asteroids-data.py"]
+paths = ["drivers/ShengUfs", "drivers/NativeUfs", "scripts/build-arm-driver.py", "scripts/build-ufs-original-bindings.py", "scripts/ci-bootstrap-candidate.sh", "scripts/pull-asteroids-data.py"]
 inputs = ["UFS host 0x1d84000 and PHY 0x1d80000 (SM8550's windows), apps SMMU stream 0x60; userdata LUN 0 blocks 0x256248-0x3a8bffa."]
 configuration = ["native-ufs-root=1 and native-ufs-allow-unverified=1; sheng-data-persist=2 keeps Data at the end of userdata."]
 procedure = ["Build the userdata image, write it to userdata from recovery, boot, and pull the Data volume with scripts/pull-asteroids-data.py."]
@@ -102,7 +102,7 @@ result = "T29 booted iPadOS 17.7.11 from the UFS root with persistent Data to th
 id = "display"
 status = "implemented"
 components = ["GopFramebuffer"]
-paths = ["package/LegacyDisplay*", "package/Boot*", "package/Font.h", "scripts/build-native-legacy-display.py", "scripts/build-boot-progress.py", "scripts/audit-mobile-graphics-default-surface.py"]
+paths = ["package/LegacyDisplay*", "drivers/NativeMobileDisplay", "package/Boot*", "package/Font.h", "scripts/build-native-legacy-display.py", "scripts/build-boot-progress.py", "scripts/audit-mobile-graphics-default-surface.py"]
 inputs = ["The firmware's GOP framebuffer, 1080x2392 x8r8g8b8 at stride 4320, on a 120 Hz video-mode panel."]
 configuration = ["offline-legacy-* arguments, sheng-vsync=120, sheng-fb-gpu=1 (the GPU copies each frame to the panel)."]
 procedure = ["Boot and watch the banner rows (sheng-banner=1) for swaps per second and copy times."]
@@ -142,7 +142,7 @@ result = "Touch input works on the desktop (stage 6)."
 id = "gpu"
 status = "implemented"
 components = ["Adreno740", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm8550Platform"]
-paths = ["drivers/Adreno740", "kits/AdrenoFirmware", "package/Gpu*", "package/ShengGmu*", "package/AsteroidsMetalPlugin.mm", "package/AsteroidsGpuUserTest.cpp", "package/OriginalAcceleratorABI.h", "scripts/*gpu*", "scripts/*gmu*", "scripts/*turnip*", "scripts/*metal*", "scripts/shader_tools.py", "scripts/data/**"]
+paths = ["drivers/Adreno740", "drivers/NativeAdreno", "kits/AdrenoFirmware", "package/Gpu*", "package/ShengGmu*", "package/AsteroidsMetalPlugin.mm", "package/AsteroidsGpuUserTest.cpp", "package/OriginalAcceleratorABI.h", "scripts/*gpu*", "scripts/*gmu*", "scripts/*turnip*", "scripts/*metal*", "scripts/shader_tools.py", "scripts/data/**"]
 inputs = ["Adreno 810 (gen8, chip 0x44010000) at 0x3d00000 with GMU, RSCC and SMMU; firmware gen80300 from the pinned vendor repository."]
 configuration = ["sheng-gpu-power=19, sheng-gpu-addon=1, sheng-gpu-level=6 (763 MHz); the Metal plugin and Turnip are built on the Mac into the payload addon."]
 procedure = ["Build the kernel in CI, the addon with scripts/build-asteroids-metal-plugin.py --published, pack and boot."]
