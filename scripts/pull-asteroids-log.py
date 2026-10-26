@@ -2,7 +2,8 @@
 """Read the UniXNU diagnostic log (package/BootLog.c, sheng-log=1) of the last boot from the phone and decode it.
 
 The phone runs LineageOS Recovery with ADB (root shell). The log window is the last 32 MiB of userdata (NativeUfs kLogReserveBlocks,
-8192 blocks of 4096 bytes); it is copied with one dd, nothing on the phone is written, and sheng's decoder (scripts/read-sheng-log.py
+8192 blocks of 4096 bytes); it is copied with one dd into
+the phone's /tmp (RAM) and fetched with adb pull, nothing on the phone's storage is written, and sheng's decoder (scripts/read-sheng-log.py
 --decode, UniXNU-sheng 08cde20) writes header.txt, msgbuf.txt, slots.txt and latest.txt.
 
     python3 scripts/pull-asteroids-log.py --out <dir>
@@ -19,8 +20,8 @@ LOG_BLOCKS = 8192
 USERDATA_FIRST, USERDATA_LAST = 0x256248, 0x3a8bffa
 
 
-def adb(*args):
-    return subprocess.run(['adb', *args], check=True, capture_output=True).stdout
+def adb(*args, check=True):
+    return subprocess.run(['adb', *args], check=check, capture_output=True).stdout
 
 
 def main():
@@ -32,11 +33,18 @@ def main():
     if adb('shell', 'id -u').decode().strip() != '0':
         sys.exit('adb shell is not root: enable ADB in LineageOS Recovery')
     partition = USERDATA_LAST - USERDATA_FIRST + 1
-    window = adb('exec-out', f'dd if={args.device} bs={BLOCK} skip={partition - LOG_BLOCKS} count={LOG_BLOCKS} 2>/dev/null')
-    if len(window) != LOG_BLOCKS * BLOCK:
-        sys.exit(f'short read: {len(window)} of {LOG_BLOCKS * BLOCK} bytes')
+    # The window goes to the phone's /tmp first and comes over with adb pull: a 32 MiB exec-out stream broke partway on this host's USB link.
+    remote = '/tmp/asteroids-log.bin'
+    # The shell can end with status 255 after dd has finished (the link drops as the session closes), so the copy is checked by its size.
+    adb('shell', f'dd if={args.device} of={remote} bs={BLOCK} skip={partition - LOG_BLOCKS} count={LOG_BLOCKS} 2>/dev/null', check=False)
+    copied = adb('shell', f'stat -c %s {remote}', check=False).decode().strip()
+    if copied != str(LOG_BLOCKS * BLOCK):
+        sys.exit(f'the copy in {remote} has {copied or "no"} bytes, not {LOG_BLOCKS * BLOCK}')
     log = args.out / 'log.bin'
-    log.write_bytes(window)
+    adb('pull', remote, str(log))
+    adb('shell', f'rm -f {remote}', check=False)
+    if log.stat().st_size != LOG_BLOCKS * BLOCK:
+        sys.exit(f'short read: {log.stat().st_size} of {LOG_BLOCKS * BLOCK} bytes')
     subprocess.run([sys.executable, ROOT / 'scripts/read-sheng-log.py', '--decode', str(log), '--out', str(args.out)], check=True)
 
 
