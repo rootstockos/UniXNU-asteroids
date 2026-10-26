@@ -18,6 +18,7 @@ UniXNU's:
 |---|---|---|
 | `drivers/ShengUfs` | [rootstockos/NativeUfs](https://github.com/rootstockos/NativeUfs) (branch `asteroids`) | UFS root in `userdata` |
 | `drivers/Adreno740` | [rootstockos/NativeAdreno](https://github.com/rootstockos/NativeAdreno) (branch `asteroids`) | Adreno 810 (gen8): GMU, ring, submits and the user client |
+| `drivers/ArmDTPlatform` | [rootstockos/ArmDTPlatform](https://github.com/rootstockos/ArmDTPlatform) (branch `asteroids`) | Platform expert; forwards the wall clock to the PMIC RTC (counter + offset on Data) |
 | `drivers/ShengHidInput` | [UniXNU/ShengHidInput](https://github.com/UniXNU/ShengHidInput) | HID touch and buttons |
 | `kits/AdrenoFirmware` | [rootstockos/AdrenoFirmware](https://github.com/rootstockos/AdrenoFirmware) (branch `asteroids`) | GMU/HFI kit with the A8xx performance table and votes |
 

@@ -13,3 +13,7 @@
 [submodule "drivers/ShengHidInput"]
 	path = drivers/ShengHidInput
 	url = https://github.com/UniXNU/ShengHidInput.git
+[submodule "drivers/ArmDTPlatform"]
+	path = drivers/ArmDTPlatform
+	url = https://github.com/rootstockos/ArmDTPlatform.git
+	branch = asteroids

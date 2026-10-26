@@ -7,4 +7,9 @@ permissions:
 
 jobs:
   porting-record:
-    uses: UniXNU/UniXNU/.github/workflows/porting-record.yml@main
+    # The board selects components only our fork's catalog has (Sm7635Platform, QcomPmicRtc), so the record is checked
+    # with the fork's tools; UniXNU main's catalog reports them unknown.
+    uses: rootstockos/UniXNU/.github/workflows/porting-record.yml@asteroids-dev
+    with:
+      tools_repository: rootstockos/UniXNU
+      tools_ref: asteroids-dev
