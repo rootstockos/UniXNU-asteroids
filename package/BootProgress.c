@@ -947,6 +947,7 @@ extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_gov[9] __attribute__((weak_import)),native_cpufreq_boosts __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_frame[2] __attribute__((weak_import)),native_cpufreq_throttle[9] __attribute__((weak_import));
 extern volatile int32_t native_buttons_stats[10] __attribute__((weak_import));
+extern volatile int32_t native_panel_stats[16] __attribute__((weak_import));
 extern char native_wi_log[4][100] __attribute__((weak_import));
 extern volatile unsigned native_wi_count __attribute__((weak_import));
 extern volatile uint64_t armcpu_timer_interrupts __attribute__((weak_import));
@@ -1094,6 +1095,14 @@ static void crash_banner(unsigned now) {
     snprintf(rows[n++],120,"BTN   st=%d irq=%d rep=%d mask=%x apid=%d/%d off=%d pdc=%x err=%d spur=%d",native_buttons_stats[0],
       native_buttons_stats[1],native_buttons_stats[2],(unsigned)native_buttons_stats[3],native_buttons_stats[4],native_buttons_stats[5],
       native_buttons_stats[6],(unsigned)native_buttons_stats[7],native_buttons_stats[8],native_buttons_stats[9]);
+  // asteroids T37: the panel (PanelProbe.cpp): stage, DSI0 HW_VERSION, DSI_CTRL, DMA_CTRL, TRIG_CTRL, INT_CTRL, VIDEO_MODE_ACTIVE_V, commands
+  // sent / timed out, last command's microseconds, last level, panel on, brightness requests, last error, scheduled line.
+  if(&native_panel_stats && native_panel_stats[0])
+    snprintf(rows[n++],120,"PNL   st=%d v=%x ctl=%x dma=%x trg=%x int=%x actv=%x cmd=%d/%d %dus lvl=%d on=%d req=%d err=%d ln=%d",
+      native_panel_stats[0],(unsigned)native_panel_stats[1],(unsigned)native_panel_stats[2],(unsigned)native_panel_stats[3],
+      (unsigned)native_panel_stats[4],(unsigned)native_panel_stats[5],(unsigned)native_panel_stats[6],native_panel_stats[8],
+      native_panel_stats[9],native_panel_stats[10],native_panel_stats[11],native_panel_stats[12],native_panel_stats[13],
+      native_panel_stats[14],native_panel_stats[15]);
   if(&native_cpufreq_throttle && (native_cpufreq_throttle[0] || native_cpufreq_throttle[3] || native_cpufreq_throttle[6]))
     snprintf(rows[n++],120,"THROT d0 %u/%u low %u | d1 %u/%u low %u | d2 %u/%u low %u",
       native_cpufreq_throttle[1],native_cpufreq_throttle[0],native_cpufreq_throttle[2],native_cpufreq_throttle[4],native_cpufreq_throttle[3],

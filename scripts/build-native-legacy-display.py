@@ -227,6 +227,17 @@ run(hid_cmd,cwd=r['directory'])
 cpufreq_source=ROOT/'kits/asteroids/CpuFreqProbe.cpp'
 cpufreq_obj=OUT/'CpuFreqProbe.o'
 run([str(cpufreq_source) if str(arg)==str(source) else str(cpufreq_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+# asteroids T37: the panel's DCS command path and modes (package/PanelProbe.cpp, asteroids-panel) and the iOS brightness service
+# (package/AsteroidsBacklight.cpp). The service class's static initializer leaves __mod_init_func and runs from PanelProbe.cpp between
+# preModLoad and postModLoad, as sheng's AppleARMBacklight.cpp does from its BacklightProbe.cpp.
+panel_source=ROOT/'kits/asteroids/PanelProbe.cpp'
+panel_obj=OUT/'PanelProbe.o'
+run([str(panel_source) if str(arg)==str(source) else str(panel_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+backlight_source=ROOT/'kits/asteroids/AsteroidsBacklight.cpp'
+backlight_obj=OUT/'AsteroidsBacklight.o';backlight_late=OUT/'AsteroidsBacklight.late.o'
+run([str(backlight_source) if str(arg)==str(source) else str(backlight_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_AsteroidsBacklight.cpp',
+     backlight_obj,backlight_late])
 # asteroids T35: sheng's power and volume buttons (package/ButtonProbe.cpp, sheng-buttons=1) with its arbiter helpers (BootResetCore.h).
 buttons_source=ROOT/'kits/asteroids/ButtonProbe.cpp'
 buttons_obj=OUT/'ButtonProbe.o'
@@ -371,10 +382,10 @@ run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
      keyevents/'NativeKeyStoreEvents.o',keyevents_late])
 require(code((keyevents/'NativeKeyStoreEvents.o').read_bytes(),macho((keyevents/'NativeKeyStoreEvents.o').read_bytes()))==
         code(keyevents_late.read_bytes(),macho(keyevents_late.read_bytes())),'Owned event-service instructions unchanged by late init staging')
-run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,cpufreq_obj,buttons_obj,keystore_obj,
+run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,cpufreq_obj,buttons_obj,panel_obj,backlight_late,keystore_obj,
      hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj,touch_probe_obj,*touch_kit_objs,gpupower_obj,*gmu_objs])
 sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
-         ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,hid_source,cpufreq_source,buttons_source,ROOT/'kits/asteroids/BootResetCore.h',keystore_source,
+         ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,hid_source,cpufreq_source,buttons_source,panel_source,backlight_source,ROOT/'kits/asteroids/BootResetCore.h',keystore_source,
          ROOT/'drivers/ShengHidInput/NativeHidInput.cpp',ROOT/'scripts/build-sheng-hid-input.py',
          ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,touch_probe_source,*touch_kit_sources,ROOT/'kits/asteroids/QcomRpmh.h',
          ROOT/'kits/asteroids/SmmuBypass.h',geni/'GeniSpi.h',gpupower_source,
