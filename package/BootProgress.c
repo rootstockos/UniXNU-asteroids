@@ -946,6 +946,7 @@ extern volatile uint64_t native_legacy_copy_bytes_sum __attribute__((weak_import
 extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_gov[9] __attribute__((weak_import)),native_cpufreq_boosts __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_frame[2] __attribute__((weak_import)),native_cpufreq_throttle[9] __attribute__((weak_import));
+extern volatile int32_t native_buttons_stats[10] __attribute__((weak_import));
 extern char native_wi_log[4][100] __attribute__((weak_import));
 extern volatile unsigned native_wi_count __attribute__((weak_import));
 extern volatile uint64_t armcpu_timer_interrupts __attribute__((weak_import));
@@ -1087,6 +1088,12 @@ static void crash_banner(unsigned now) {
     snprintf(rows[n++],120,"GOV   d0 c%u %uMHz %u%% | d1 c%u %uMHz %u%% | d2 c%u %uMHz %u%% | boost %u frame %u/%uw",
       native_cpufreq_gov[0],native_cpufreq_gov[1],native_cpufreq_gov[2],native_cpufreq_gov[3],native_cpufreq_gov[4],native_cpufreq_gov[5],
       native_cpufreq_gov[6],native_cpufreq_gov[7],native_cpufreq_gov[8],native_cpufreq_boosts,native_cpufreq_frame[0],native_cpufreq_frame[1]);
+  // asteroids T35: sheng's B log row (ButtonProbe.cpp): stage, interrupts, reports, pressed mask, APIDs, other APIDs cleared, PDC version,
+  // last error, spurious interrupts.
+  if(&native_buttons_stats && native_buttons_stats[0])
+    snprintf(rows[n++],120,"BTN   st=%d irq=%d rep=%d mask=%x apid=%d/%d off=%d pdc=%x err=%d spur=%d",native_buttons_stats[0],
+      native_buttons_stats[1],native_buttons_stats[2],(unsigned)native_buttons_stats[3],native_buttons_stats[4],native_buttons_stats[5],
+      native_buttons_stats[6],(unsigned)native_buttons_stats[7],native_buttons_stats[8],native_buttons_stats[9]);
   if(&native_cpufreq_throttle && (native_cpufreq_throttle[0] || native_cpufreq_throttle[3] || native_cpufreq_throttle[6]))
     snprintf(rows[n++],120,"THROT d0 %u/%u low %u | d1 %u/%u low %u | d2 %u/%u low %u",
       native_cpufreq_throttle[1],native_cpufreq_throttle[0],native_cpufreq_throttle[2],native_cpufreq_throttle[4],native_cpufreq_throttle[3],
