@@ -270,6 +270,7 @@ kernel_args = [
   # publishes the FT3683G's contacts to TouchState; UniXNU's NativeHidInput hands them to backboardd only with this argument
   # (read by the core driver, so it stays). The boot-ui-focus rows for PerfPowerServices and SpringBoard were dropped in T32.
   "sheng-touch-hid=1",
+  "sheng-fb-gpu=1",                   # kept: UniXNU core's NativeGOPPresenter reads it (default off); without it T34 mixed GPU and CPU copy paths
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
   # without a first frame.
