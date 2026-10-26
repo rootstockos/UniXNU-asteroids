@@ -190,7 +190,6 @@ kernel_args = [
   "-no_slto_panic",                   # kept: generic, avoids the SLTO panic on this non-Apple CPU
   "ml-timeout-lock-panic-scale=40",   # kept: generic; a slow 4 KiB-page bring-up with diagnostics trips lock timeouts
   "armcpu-diagnostics=1",             # kept: generic ArmCpu, prints the CPU and GIC state; first check if interrupts fail
-  "sheng-pmgr=2",                     # restored: publish the placeholder ApplePMGR (see build-asteroids-platform-power.py)
   # UFS root, step 2, after uke's working set (Allenwdk/UniXNU-uke board.toml) without its display and input:
   "native-ufs-root=1",                # NativeUfs publishes the OS and SystemOS windows of the userdata root image
   "native-ufs-allow-unverified=1",    # without the owner policy bundle (our NativeUfs fork); reads are not authenticated
@@ -198,11 +197,9 @@ kernel_args = [
   "-apfs_shared_datavolume",          # as uke and sheng: the Data volume is shared with the root's volume group
   "sheng-data-persist=2",             # Data writes go through to the store at the end of userdata
   "sheng-log=1",                      # persistent kernel log at the end of userdata
-  "sheng-aks=1",                      # AppleKeyStore stand-in, as on uke
   # T23, as umi (an iPadOS 17.7.11 phone at Hello with a CPU display): only the four jobs of the XPC wait cycle are
   # left out, not sheng-lite's list of about 25.
   "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd",
-  "sheng-disable-watchdogd=1",        # as on uke
   # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
   # Display, CPU-rendered, as uke boots it: load IOMobileGraphicsFamily, register NativeLegacyDisplay on the GOP
   # framebuffer as the default surface, and present frames drawn by the CPU. offline-hid-* and offline-key-events publish
@@ -211,7 +208,6 @@ kernel_args = [
   "offline-mobile-graphics-client=0",
   "offline-legacy-register=1",
   "offline-legacy-gop=1",
-  "offline-legacy-unit-scale=2",      # T23: as umi on its 1080-wide panel (T21b showed 1 or 2 makes no difference to the stall)
   "offline-legacy-pm=1",
   "offline-legacy-validate=1",
   "offline-legacy-transfer=1",
@@ -229,7 +225,6 @@ kernel_args = [
   # (PerfPowerServices on T24b's console). Slot 1 takes PerfPowerServices and slot 3 liveactivitiesd; backboardd moves to
   # slot 4. boot-ui-follow=1 traces whatever SpringBoard sends to in slot 4 (and that process's own peer in slot 1); while
   # SpringBoard only receives, both slots keep their names.
-  "boot-progress=2",
   # T26: the page shows every display client (pid, selectors with calls/fails) on the HANDOFF and CLIENT rows.
   # T27: boot-display-page=1 gives rows 6..20 to the display log: every open, client, call in order (argument shape and
   # status), the state words and the display's property keys, paged every 6 s.
@@ -239,12 +234,8 @@ kernel_args = [
   # T28b is the same kernel with t28-power-ack=0.
   # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
   # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
-  "sheng-build-tag=T32",
-  "boot-display-page=1",
+  "sheng-build-tag=T33",
   "boot-ui-focus4=backboardd",
-  "offline-hid-home=1",
-  "offline-hid-input=1",
-  "offline-key-events=1",
   # GPU power observation (package/GpuPowerProbe.cpp), one stage per test boot: 1 reads the GCC GPU branches, then GPUCC,
   # SMMU and RBBM only where the previous block shows its clock or power on, and logs each block before touching it
   # ("ASTEROIDS GPU: ..."). 2 adds the one write Linux makes (gcc_gpu_cfg_ahb_clk), 3 powers CX and the SMMU clocks, 4 tests
@@ -263,22 +254,20 @@ kernel_args = [
   # then tests in backboardd; T18's published plugin returns a Metal device there instead). With 19, sheng-fb-gpu=1 lets
   # the published plugin copy the display's frames to the scanout with the GPU (drivers/GopFramebuffer/NativeGOPPresenter.cpp);
   # a frame nobody takes keeps the CPU copy.
-  # Remove the line to turn it off.
+  # T33: mode 19 is GpuPowerProbe's default; sheng-gpu-power=0 turns it off.
   # T24-T29: no sheng-gpu-power (GpuPowerProbe.cpp was not built).
   # T30: mode 19 with T19's published Metal addon (metal2vulkan on Turnip in backboardd). T19 stopped at "encodes, never
   # commits" while SpringBoard itself never finished booting (T28-T29: the missing AppleKeyStore).
-  # T32: sheng-fb-gpu=1, the GPU copies each frame to the panel. The CPU copy took 143-285 ms a frame and read the GPU's
-  # surfaces through stale cache lines (patches of old content); with the GPU copy the UI is faster, without tearing or patches.
-  "sheng-gpu-power=19",
+  # T33: these values are now the board package's defaults, so they are no longer passed: sheng-pmgr=2, sheng-aks=1,
+  # sheng-disable-watchdogd=1, offline-legacy-unit-scale=2, boot-progress=2, boot-display-page=1, offline-hid-home=1,
+  # offline-hid-input=1, offline-key-events=1, sheng-gpu-power=19 and asteroids-touch=6 (pass =0 to turn one off).
+  # T33: with mode 19 and the addon the display probe turns the GPU copy to the panel on by itself (sheng-fb-gpu=0 keeps the
+  # CPU copy, which took 143-285 ms a frame and showed stale patches), and the on-screen diagnostics are off once the UI runs
+  # (sheng-banner=1 brings them back; the rows go to the UFS log either way).
   "sheng-gpu-addon=1",
-  "sheng-fb-gpu=1",
-  # T32: no on-screen diagnostics once the system owns the display (the same rows go to the UFS log). It made no visible
-  # speed difference with the CPU copy; the page and the touch box are not wanted over the UI.
-  "sheng-banner=0",
-  # T32: touch (package/AsteroidsTouchProbe.cpp) through stage 6: the FT3683G's reports published to TouchState, and
-  # NativeHidInput hands them to backboardd (orientation 0 is right). "ASTEROIDS TOUCH:" kernel log lines. The boot-ui-focus
-  # rows for PerfPowerServices and SpringBoard were dropped to stay under the builder's 1000-byte command line.
-  "asteroids-touch=6",
+  # Touch: package/AsteroidsTouchProbe.cpp runs stage 6 by default (asteroids-touch=<n> for another stage, 0 for none) and
+  # publishes the FT3683G's contacts to TouchState; UniXNU's NativeHidInput hands them to backboardd only with this argument
+  # (read by the core driver, so it stays). The boot-ui-focus rows for PerfPowerServices and SpringBoard were dropped in T32.
   "sheng-touch-hid=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes

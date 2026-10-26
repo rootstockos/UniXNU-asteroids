@@ -27,8 +27,10 @@ static volatile int32_t aks_rc[96];
 bool native_aks_state_enabled(void) {
     static int cached = -1;
     if (cached < 0) {
-        unsigned value = 0;
-        cached = PE_parse_boot_argn("sheng-aks", &value, sizeof(value)) && value == 1;
+        // asteroids T33: the AppleKeyStore stand-in by default (T29: the UI needs it); sheng-aks=0 leaves it out.
+        unsigned value = 1;
+        PE_parse_boot_argn("sheng-aks", &value, sizeof(value));
+        cached = value == 1;
     }
     return cached == 1;
 }
@@ -74,8 +76,10 @@ void native_aks_call(uint32_t selector, int32_t result) {
     aks_publish();
 }
 static void native_keyevents_probe(void) {
-    unsigned enabled = 0, original = 0;
-    if (!PE_parse_boot_argn("offline-key-events", &enabled, sizeof(enabled)) || enabled != 1 ||
+    // asteroids T33: on by default; offline-key-events=0 turns it off.
+    unsigned enabled = 1, original = 0;
+    PE_parse_boot_argn("offline-key-events", &enabled, sizeof(enabled));
+    if (enabled != 1 ||
         native_keyevents_stage) return;
     native_keyevents_stage = 1;
     PE_parse_boot_argn("offline-keystore", &original, sizeof(original));

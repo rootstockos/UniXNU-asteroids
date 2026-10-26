@@ -143,8 +143,10 @@ void native_hid_input_observed(unsigned event,int result) {
 }
 __attribute__((noinline)) void native_hid_checkpoint(void) { __asm__ volatile("" ::: "memory"); }
 void native_hid_input_probe(void) {
-    unsigned enabled=0;
-    if(!PE_parse_boot_argn("offline-hid-input",&enabled,sizeof(enabled)) || enabled!=1)return;
+    // asteroids T33: on by default; offline-hid-input=0 turns it off.
+    unsigned enabled=1;
+    PE_parse_boot_argn("offline-hid-input",&enabled,sizeof(enabled));
+    if(enabled!=1)return;
     if(native_hid_stage)return;
     native_hid_stage=1;
     native_hid_load_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOHIDFamily");
@@ -163,7 +165,7 @@ void native_hid_input_probe(void) {
         OSDictionary *match=IOService::serviceMatching("IOHIDResource");
         IOService *resource=match?IOService::waitForMatchingService(match,5000000000ULL):nullptr;
         native_hid_resource_found=resource!=nullptr;
-        unsigned sendHome=0;PE_parse_boot_argn("offline-hid-home",&sendHome,sizeof(sendHome));
+        unsigned sendHome=1;PE_parse_boot_argn("offline-hid-home",&sendHome,sizeof(sendHome));
         if(resource && sendHome==1 && native_hid_class_sizes[4]==208) {
             void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);
             if(handle) {

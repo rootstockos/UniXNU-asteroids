@@ -654,7 +654,8 @@ __attribute__((noinline)) bool native_legacy_gop_mapping_observed(IOService *obj
         }
     }
     native_legacy_gop_mapping_checkpoint();
-    unsigned enabled=0;PE_parse_boot_argn("offline-legacy-unit-scale",&enabled,sizeof(enabled));
+    // asteroids T33: UI scale 2 by default; offline-legacy-unit-scale=0 publishes no scale.
+    unsigned enabled=2;PE_parse_boot_argn("offline-legacy-unit-scale",&enabled,sizeof(enabled));
     if(!enabled)return true;
     native_legacy_unit_scale_calls=native_legacy_unit_scale_calls+1;native_legacy_unit_scale_status=1;
     unsigned phase=0;PE_parse_boot_argn("offline-legacy-phase",&phase,sizeof(phase));
@@ -780,7 +781,11 @@ void native_legacy_display_late_probe(void) {
                     if(started && phase==4) {
                         activeLegacyDisplay=display;activeGOPNub=nub;native_legacy_stage=10;
                         {
-                            unsigned gpu=0;PE_parse_boot_argn("sheng-fb-gpu",&gpu,sizeof gpu);
+                            // asteroids T33: on by default with the published Metal plugin (GPU power mode 19 and the addon), where T32 showed the
+                            // GPU copy faster and free of the CPU copy's tearing and stale patches; sheng-fb-gpu=0 keeps the CPU copy.
+                            unsigned power=19,addon=0;PE_parse_boot_argn("sheng-gpu-power",&power,sizeof power);   // GpuPowerProbe's default
+                            PE_parse_boot_argn("sheng-gpu-addon",&addon,sizeof addon);
+                            unsigned gpu=power==19 && addon==1;PE_parse_boot_argn("sheng-fb-gpu",&gpu,sizeof gpu);
                             if(gpu==1) {
                                 IOService *handoff=native_gop_presenter_create();
                                 // Not a child of the display subsystem's node: the original display code enumerates that node's children (int-075/077:

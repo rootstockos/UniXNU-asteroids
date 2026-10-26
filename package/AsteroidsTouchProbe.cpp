@@ -2,7 +2,8 @@
 // The 3a's touch bring-up (FocalTech FT3683G on QUPv3 wrapper 0 SE0, SPI), staged as docs/asteroids-touch.md in iosonandng.
 // `asteroids-touch=<v>`: the stage is v & 15, the orientation of stage 6 is (v >> 4) & 7 (1 swap axes, 2 mirror x, 4 mirror y,
 // applied in that order), so "asteroids-touch=0x16" is stage 6 with the axes swapped. Bit 7 (0x80) skips stage 2's RPMh rail
-// votes. Each boot runs every stage up to the one asked for and stops at the first failure:
+// votes. Without the argument the probe runs stage 6; asteroids-touch=0 turns it off. Each boot runs every stage up to the one
+// asked for and stops at the first failure:
 //   1  read-only snapshot: the QUP0 clock votes and branches, SE0's DFS levels, the touch and SPI pins, the RPMh rail
 //      addresses in the command DB, the apps SMMU's stream table, and the apps RSC's TCS states. SE0's own registers only when its
 //      clocks already run.
@@ -780,8 +781,10 @@ void touchThread(void *, wait_result_t) {
 }
 
 extern "C" void asteroids_touch_probe(void) {
-    unsigned value = 0;
-    if (!PE_parse_boot_argn("asteroids-touch", &value, sizeof value) || !(value & 15) || native_touch_stage_req) return;
+    // Stage 6 (touch input) unless the boot argument asks for another stage; asteroids-touch=0 turns the probe off.
+    unsigned value = 6;
+    PE_parse_boot_argn("asteroids-touch", &value, sizeof value);
+    if (!(value & 15) || native_touch_stage_req) return;
     gSession = static_cast<Session *>(IOMallocType(Session));
     if (!gSession) {native_touch_error = -12; return;}
     bzero(gSession, sizeof *gSession);

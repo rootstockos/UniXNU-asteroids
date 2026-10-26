@@ -164,7 +164,8 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  // The swap only when the addon carries the daemon (sheng-gpu-addon-swap=1, T16c); T17's addon brings the Metal plugin instead.
  int swap=0;PE_parse_boot_argn("sheng-gpu-addon-swap",&swap,sizeof(swap));
  if(addon==1){asteroids_exec_log_start();if(swap==1)native_gpu_addon_exec_substitute=asteroids_exec_substitute;}
- PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
+ // asteroids T33: on by default (as uke boots); sheng-disable-watchdogd=0 keeps watchdogd.
+ enabled=1;PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
  if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
  int lite=0;PE_parse_boot_argn("sheng-lite",&lite,sizeof(lite));if(lite!=1)lite=0;
  if(enabled!=1)enabled=0;

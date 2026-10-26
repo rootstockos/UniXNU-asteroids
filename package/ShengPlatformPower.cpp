@@ -66,8 +66,10 @@ static const OSMetaClass *lookup(const char *text)
 
 extern "C" void sheng_pmgr_run(void)
 {
-  unsigned mode = 0;
-  if (!PE_parse_boot_argn("sheng-pmgr", &mode, sizeof(mode)) || !mode) return;
+  // asteroids T33: mode 2 by default; sheng-pmgr=0 publishes nothing.
+  unsigned mode = 2;
+  PE_parse_boot_argn("sheng-pmgr", &mode, sizeof(mode));
+  if (!mode) return;
   sheng_pmgr_observation[15] = mode;
   sheng_pmgr_observation[1] = static_cast<uint32_t>(kIOReturnError);
   if (mode > 3 || sheng_pmgr_observation[0]) { sheng_pmgr_checkpoint(); return; }

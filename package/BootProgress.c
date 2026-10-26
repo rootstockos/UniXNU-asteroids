@@ -234,7 +234,8 @@ static void capture(unsigned row, const char *text) {
 }
 // asteroids T27: boot-display-page=1 gives rows 6..20 to the display log (LegacyDisplayProbe's every client, call, open, state
 // word and property key), 14 lines a page, the pages turning every 6 s; the trace and console rows keep running underneath.
-static unsigned display_page_mode,display_page_parsed,display_page_drawing;
+// asteroids T33: the display page is on by default (boot-display-page=0 turns it off); it only paints while the banner does.
+static unsigned display_page_mode=1,display_page_parsed,display_page_drawing;
 static char display_page_rows[96][120];
 static int display_page_owns(unsigned row) {
   return display_page_mode==1 && !display_page_drawing && row>=6 && row<=20 && &native_legacy_display_lines;
@@ -600,8 +601,10 @@ void boot_progress_cancel_scanout(void) {
   __atomic_store_n(&display.yield_requested,0,__ATOMIC_RELEASE);
 }
 void boot_progress_init(void) {
-  unsigned opt=0;
-  if (!PE_parse_boot_argn("boot-progress",&opt,sizeof(opt)) || (opt != 1 && opt != 2)) return;
+  // asteroids T33: mode 2 by default (the diagnostic screen until the UI owns the display, and the UFS log); boot-progress=0 is none.
+  unsigned opt=2;
+  PE_parse_boot_argn("boot-progress",&opt,sizeof(opt));
+  if (opt != 1 && opt != 2) return;
   __asm__ volatile("mrs %0,cntfrq_el0" : "=r"(boot_progress_frequency));
   if (!boot_progress_frequency) return;
   boot_progress_epoch=ticks(); state.limit=120; state.stall=30;
@@ -1121,7 +1124,8 @@ static void touch_overlay(void) {
   // sheng-banner=0 switches every on-screen diagnostic painting off once the system owns the display (the UFS log carries the same rows):
   // the painters hold render_busy for about a million uncached stores, which a swap's scanout hand-off has to wait for.
   static int banner_off=-1;
-  if(banner_off<0){unsigned v=1;PE_parse_boot_argn("sheng-banner",&v,sizeof(v));banner_off=v==0;}
+  // asteroids T33: off by default once the UI runs (sheng-banner=1 brings the painting back); the rows still reach the UFS log.
+  if(banner_off<0){unsigned v=0;PE_parse_boot_argn("sheng-banner",&v,sizeof(v));banner_off=v==0;}
   if(banner_off)return;
   __atomic_fetch_add(&touch_passes,1,__ATOMIC_RELAXED);
   // Same rule as the text renderer: draw only while holding render_busy, so a display handoff (which takes it before

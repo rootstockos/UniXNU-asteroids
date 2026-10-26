@@ -1378,8 +1378,10 @@ void probeThread(void *, wait_result_t) {
 }
 
 extern "C" void sheng_gpu_power_probe(void) {
-    unsigned mode = 0;
-    if (!PE_parse_boot_argn("sheng-gpu-power", &mode, sizeof mode) || !mode || native_gpu_power_stage) return;
+    // asteroids T33: mode 19 (the accelerator for the published Metal plugin) by default; sheng-gpu-power=0 leaves the GPU off.
+    unsigned mode = 19;
+    PE_parse_boot_argn("sheng-gpu-power", &mode, sizeof mode);
+    if (!mode || native_gpu_power_stage) return;
     if (mode > GPB_MAX_MODE) {
         IOLog("ASTEROIDS GPU: sheng-gpu-power=%u refused; this build has modes 1-%u only\n", mode, GPB_MAX_MODE);
         native_gpu_power_stage = 0xbad;
