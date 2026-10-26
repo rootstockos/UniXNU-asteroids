@@ -58,6 +58,17 @@ __attribute__((weak)) char boot_progress_ext_wide[2][112];
 __attribute__((weak)) volatile uint32_t asteroids_swap_end_calls, asteroids_swap_end_size, asteroids_swap_end_id,
     asteroids_swap_end_status, asteroids_swap_wait_calls;
 
+/* asteroids T35: GopFramebuffer 33e941a's direct scanout maps swap surfaces through UniXNU's ShengUfs display SMMU window
+ * (native_ufs_dpu_map); our NativeUfs fork predates it. State 0 (no window) keeps direct scanout off, as before. */
+__attribute__((weak)) volatile uint32_t native_ufs_dpu_state;
+
+__attribute__((weak)) uint32_t
+native_ufs_dpu_map (unsigned slot, const uint64_t *pages, unsigned count)
+{
+	(void)slot; (void)pages; (void)count;
+	return 0;
+}
+
 __attribute__((weak)) bool
 native_legacy_gpu_offer (void *display, void *memory, uint64_t stride,
                          uint32_t width, uint32_t height)
