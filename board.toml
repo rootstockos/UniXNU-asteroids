@@ -250,6 +250,10 @@ kernel_args = [
 ]
 
 [payload.adt]
+# The platform identity, as on sheng and uke (same IPSW): /chosen chip-id and unique-chip-id, from which XNU derives IOPlatformUUID.
+# Without them gethostuuid() blocks forever and so does timed's XPC handler (T39d: Settings > Date & Time hung).
+chip_id = "207"
+unique_chip_id = "required"            # the platform seed is not stored in any repository
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # the OS volume of 21H461, as on uke (same IPSW)
 packed_data_ramdisk = true             # the Data seed as a packed ramdisk for NativeRamBlock, as on uke
 persistent_data = true                 # with sheng-data-persist=2, Data is not ephemeral
