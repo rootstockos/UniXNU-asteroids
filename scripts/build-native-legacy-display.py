@@ -253,9 +253,9 @@ require(int(re.search(r'#define GPB_GPU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).
         'board.toml [gpu] gpu_pool_* and GpuPowerBoard.h GPB_GPU_POOL_* differ')
 # The probe opens NativeAdrenoGpu with the plugin's open type; any other type is refused (T15: e00002c7).
 require(int(re.search(r'#define GPB_UC_OPEN_TYPE (0x[0-9A-Fa-f]+)u',board_h).group(1),16)==
-        int(re.search(r'NativeAdrenoPluginOpenType=(0x[0-9A-Fa-f]+)',(ROOT/'drivers/NativeAdreno/NativeAdrenoPublish.cpp').read_text()).group(1),16),
+        int(re.search(r'NativeAdrenoPluginOpenType=(0x[0-9A-Fa-f]+)',(ROOT/'drivers/Adreno740/NativeAdrenoPublish.cpp').read_text()).group(1),16),
         'GpuPowerBoard.h GPB_UC_OPEN_TYPE and NativeAdreno NativeAdrenoPluginOpenType differ')
-adreno=ROOT/'drivers/NativeAdreno';smmu4k=ROOT/'kits/ArmSmmu4K';pm4=ROOT/'kits/AdrenoPM4'
+adreno=ROOT/'drivers/Adreno740';smmu4k=ROOT/'kits/ArmSmmu4K';pm4=ROOT/'kits/AdrenoPM4'
 adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-I',str(pm4),'-Wno-incompatible-sysroot',
               '-DSHENG_GMU_POOL_BASE=UINT64_C(%#x)'%pool_base,'-DSHENG_GMU_POOL_BYTES=%#xu'%pool_bytes]
 def kernel_cxx(src,obj,extra):

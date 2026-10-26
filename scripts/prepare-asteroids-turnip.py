@@ -10,7 +10,7 @@ Runs on macOS with Xcode's iPhoneOS SDK. Everything goes under the UniXNU tree's
   .cache/mesa-tools  bison at the pinned version and checksum (macOS ships 2.3; Mesa needs 3)
   .cache/shader-tools glslangValidator for Mesa's Vulkan runtime (shader_tools.py)
 Then UniXNU's scripts/build-turnip-darwin.py --target ios builds build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dylib
-against this repository's NativeAdreno ABI (drivers/NativeAdreno/NativeAdrenoABI.h), the one the 3a's kernel serves.
+against this repository's NativeAdreno ABI (drivers/Adreno740/NativeAdrenoABI.h), the one the 3a's kernel serves.
 
 The pinned Mesa already lists the Adreno 810 (freedreno_devices.py: chip id 0xffff44010000, a8xx_gen1, one CCU, one slice), so the
 chip id the kernel reports (0x44010000, GPB_A810_CHIP_ID) selects it through Mesa's wildcard fuse-id match; nothing here changes Mesa
@@ -111,4 +111,4 @@ if args.fetch_only:
 
 # 4. Turnip for iOS against this board's ABI. Mesa's Vulkan runtime compiles its internal shaders with glslangValidator.
 shader_tools.ensure(ROOT)
-run([sys.executable, ROOT / 'scripts/build-turnip-darwin.py', '--target', 'ios', '--abi-dir', DEVICE / 'drivers/NativeAdreno'], cwd=ROOT)
+run([sys.executable, ROOT / 'scripts/build-turnip-darwin.py', '--target', 'ios', '--abi-dir', DEVICE / 'drivers/Adreno740'], cwd=ROOT)

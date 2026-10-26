@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Nothing Phone (3a): the board's memory and CPU selection on the shared SM7635 resources.
+/dts-v1/;
+/include/ "sm7635.dtsi"
+
+/ {
+    model = "Nothing Phone (3a)";
+    compatible = "nothing,asteroids", "qcom,volcano";
+
+    // The DRAM the XNU window lives in: the high bank from 0x8C0000000 up to the GPU pool at 0xABFE00000 (uke's layout, T19).
+    // DarwinBoot places owned_memory_size (board.toml [payload.adt]) there; board.toml [payload] dram_size must equal the size.
+    memory@8c0000000 {
+        device_type = "memory";
+        reg = <0x8 0xc0000000 0x1 0xffe00000>;
+    };
+};
+
+// The scheduler runs the A520 cores as an E cluster and the A720 cores as a P cluster (UniXNU's AMP patch, zzyf).
+&cpu0 { unixnu,cluster-type = "E"; };
+&cpu1 { unixnu,cluster-type = "E"; };
+&cpu2 { unixnu,cluster-type = "E"; };
+&cpu3 { unixnu,cluster-type = "E"; };
+&cpu4 { unixnu,cluster-type = "P"; };
+&cpu5 { unixnu,cluster-type = "P"; };
+&cpu6 { unixnu,cluster-type = "P"; };
+&cpu7 { unixnu,cluster-type = "P"; };
+&ufs { status = "okay"; };

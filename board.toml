@@ -1,26 +1,31 @@
-# Board description of the Nothing Phone (3a) (asteroids, SM7635 "volcano"), read by the unixnu build driver.
+# Board description of the Nothing Phone (3a) (asteroids, SM7635 "volcano"), read by the unixnu build driver (device format 2).
 # Hardware facts and how they were measured: docs/asteroids-hw-facts.md in rootstockos/iosonandng.
+schema_version = 2
 
+# The SoC profile (rootstockos/UniXNU-sm7635-common, pinned in feeds.toml) supplies the CPUs, GIC, UFS and GPU resources; the OS
+# profile supplies the unchanged iPad7,1 iPadOS 17.7.11 (21H461) restore image, its prelink, text fixups, trust-cache pins and the
+# iPad identity of the ADT, the same values this file carried in format 1.
 [board]
 name = "asteroids"
 soc = "SM7635"
+soc_source = "sm7635"
+os_profile = "ipados-17.7.11-21H461"
 description = "Nothing Phone (3a)"
 kit = "asteroids"
 
-# Same target OS image as UniXNU's sheng port: the unchanged iPad7,1 iPadOS 17.7.11 restore image.
-[ipsw]
-url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
-product = "iPad7,1"
-version = "17.7.11"
-build = "21H461"
-device_class = "j120ap"
-chip_id = 0x8011
-board_id = 12
-fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]
+# Components from UniXNU's catalog. Four are this repository's own submodules at their catalog paths, which take precedence over
+# UniXNU's: drivers/Adreno740 (rootstockos/NativeAdreno asteroids-a810, the gen8 fork; its GPU code is compiled into the display
+# archive), drivers/ShengUfs (rootstockos/NativeUfs fix/unverified-build), drivers/ShengHidInput and kits/AdrenoFirmware
+# (rootstockos/AdrenoFirmware asteroids-a8xx). Dependencies (Sm8550Platform, VirtioMmioBlock, VerifiedRoot, ShengNovatekTouch)
+# are linked into the tree and not built.
+[components]
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "RamBlock", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "AppleKeyStoreState",
+           "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "ShengHidInput"]
 
-[ipsw.sha256]
-"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
-"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+# The hardware description: dts/asteroids.dts on the SoC's dts/sm7635.dtsi. The common ADT generator builds the ADT from it.
+[device_tree]
+source = "device:dts/asteroids.dts"
+include_dirs = ["soc:dts"]
 
 # The userdata partition (LUN 0, sda13), read by NativeUfs's read-only probe (native-ufs-probe=10) on 2026-10-23:
 # first 0x256248, last 0x3a8bffa in 4 KiB blocks = 58940851 blocks (224.84 GiB); the ext4 file system there had exactly
@@ -36,6 +41,9 @@ windows = [
 
 [kernel]
 defconfig = "asteroids_defconfig"
+config_fragments = ["arch:configs/common.config", "soc:configs/sm7635.config", "os:configs/ipados.config"]
+# The device series lists the fork's bring-up patches (format 1 took every patches/xnu file) and the board's CPU patches.
+patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
 # Archive builders of the kernel step, in order. Each entry is a script of scripts/ in the build tree, without the
 # "scripts/" prefix (kernel.py prepends it; the "scripts/..." form in docs/porting/device-repository.md would resolve
 # to scripts/scripts/...). Exactly the archives the proposed defconfig links, nothing more.
@@ -105,53 +113,6 @@ archives = [
   # the legacy display and -v exclude each other (with -v DarwinBoot clears v_display).
 ]
 
-# All values follow the kernelcache, not the board: the same iPad7,1 21H461 KernelCache as sheng ([ipsw] is identical),
-# so the pin, slide and AMFI early initializer stay as they are.
-[kernel.prelink]
-tool = "kits/XnuPrelink/emit_prelink.py"
-kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
-kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"   # kept: same 21H461 kernelcache
-slide = "-0x1000000"                                                                         # kept: tied to the kernel link layout
-early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"         # kept: AMFI address in that kernelcache
-# Kept unchanged: sheng's list. It is the one closure known to prelink with this kernelcache (sheng, fajita and uke all use
-# it; fajita reached the root mount with it). None of these kexts is board specific, and their personalities only start
-# on matching ADT nodes, which the minimal ADT does not have. Strictly needed for this boot are only corecrypto,
-# AMFI (the early initializer), AppleImage4, CoreTrust, AppleMatch, sandbox and their dependencies; trimming the
-# graphics, audio and HID families is a later, separate experiment (see the open questions).
-roots = [
-  "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
-  "com.apple.driver.AppleARMPlatform",
-  "com.apple.driver.AppleARMWatchdogTimer",
-  "com.apple.driver.AppleAudioClockLibs",
-  "com.apple.driver.AppleEffaceableStorage",
-  "com.apple.driver.AppleIISController",
-  "com.apple.driver.AppleM2ScalerCSCDriver",
-  "com.apple.driver.AppleMobileFileIntegrity",
-  "com.apple.driver.ApplePMGR",
-  "com.apple.driver.IODARTFamily",
-  "com.apple.filesystems.apfs",
-  "com.apple.iokit.CoreAnalyticsFamily",
-  "com.apple.iokit.IOAVFamily",
-  "com.apple.iokit.IOAudio2Family",
-  "com.apple.iokit.IOCECFamily",
-  "com.apple.iokit.IOCryptoAcceleratorFamily",
-  "com.apple.iokit.IOGPUFamily",
-  "com.apple.iokit.IOHDCPFamily",
-  "com.apple.iokit.IOMobileGraphicsFamily",
-  "com.apple.iokit.IOReportFamily",
-  "com.apple.iokit.IOSlowAdaptiveClockingFamily",
-  "com.apple.iokit.IOStorageFamily",
-  "com.apple.iokit.IOSurface",
-  "com.apple.kec.Libm",
-  "com.apple.kec.corecrypto",
-  "com.apple.kext.AppleMatch",
-  "com.apple.kext.CoreTrust",
-  "com.apple.security.AppleImage4",
-  "com.apple.security.sandbox",
-  "com.apple.iokit.IOHIDFamily",
-  "com.apple.iokit.IOHIDEventDriver",
-]
-
 # The payload: a FAT volume with the UniXNU config, the kernel and its ADT. DarwinBoot is in the firmware
 # volume. Build with "unixnu build payload --uefi ../uefi-asteroids": the panic screen takes its font from the Mu-Silicium
 # checkout (Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib).
@@ -170,179 +131,15 @@ dram_size = "0x1FFE00000"             # T19: /chosen/dram-size from make-asteroi
 panic_screen = true                   # kept: patches a copy of the kernel with the entry bars (blue at entry, magenta before
                                       # the MMU) and panic() drawn on the framebuffer; the only way to read a panic without UART.
                                       # Board-independent (symbols from the kernel, 19.2 MHz timebase), needs the two scripts above
-# Kept: the original static and System trust caches of 21H461 (same IPSW). Only checked when --trust-cache is given;
-# this boot does not need one, since no user process runs.
-trust_cache_sha256 = [
-  "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
-  "8900d6a93d7a59ce1a872a5c081e559f4240a218f97e12d44d22dda46644d68f",
-]
-# Dropped: skip_setup_tool (edits a Data seed; no Data this boot).
-# Dropped: text_fixups (dyld shared cache and BTAudioHALPlugin fixes for sheng's userland; nothing in userland runs).
-kernel_args = [
-  "-v",                               # kept: verbose text console on the framebuffer
-  "-enable_kprintf_spam",             # from uke: DEVELOPMENT kernels keep kprintf off without it; with no UART it goes to
-                                      # the video console, so kernel diagnostics show on screen
-  "-textconsole",                     # our UniXNU fork (uke's -uketextconsole): text console with the framebuffer mapped;
-                                      # also prints the previous boot's panic log
-  "serial=3",                         # kept: serial console and kprintf on; no UART, so output stays on the video console (as on sheng)
-  "debug=0x14e",                      # kept: debug mask with kprintf (DB_KPRT) and panic detail
-  "kt_fixed_zones=120",               # kept: generic XNU zone sizing that sheng, fajita and uke all boot with
-  "-no_slto_panic",                   # kept: generic, avoids the SLTO panic on this non-Apple CPU
-  "ml-timeout-lock-panic-scale=40",   # kept: generic; a slow 4 KiB-page bring-up with diagnostics trips lock timeouts
-  "armcpu-diagnostics=1",             # kept: generic ArmCpu, prints the CPU and GIC state; first check if interrupts fail
-  "sheng-pmgr=2",                     # kept: also the code default, but UniXNU's payload check requires it here for the UFS root
-  # UFS root, step 2, after uke's working set (Allenwdk/UniXNU-uke board.toml) without its display and input:
-  "native-ufs-root=1",                # NativeUfs publishes the OS and SystemOS windows of the userdata root image
-  "native-ufs-allow-unverified=1",    # without the owner policy bundle (our NativeUfs fork); reads are not authenticated
-  "offline-apfs-load=1",              # load APFS (and IOStorageFamily) so the windows' volumes appear
-  "-apfs_shared_datavolume",          # as uke and sheng: the Data volume is shared with the root's volume group
-  "sheng-data-persist=2",             # Data writes go through to the store at the end of userdata
-  "sheng-log=1",                      # persistent kernel log at the end of userdata
-  # T23, as umi (an iPadOS 17.7.11 phone at Hello with a CPU display): only the four jobs of the XPC wait cycle are
-  # left out, not sheng-lite's list of about 25.
-  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,com.apple.coreduetd",  # T35: coreduetd as on sheng (d4c299b): one thread above 50 % of a core for the whole boot
-  # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
-  # Display, CPU-rendered, as uke boots it: load IOMobileGraphicsFamily, register NativeLegacyDisplay on the GOP
-  # framebuffer as the default surface, and present frames drawn by the CPU. offline-hid-* and offline-key-events publish
-  # the HID and key event services SpringBoard waits for (no touch hardware behind them yet).
-  "offline-mobile-graphics-load=1",
-  "offline-mobile-graphics-client=0",
-  "offline-legacy-register=1",
-  "offline-legacy-gop=1",
-  "offline-legacy-pm=1",
-  "offline-legacy-validate=1",
-  "offline-legacy-transfer=1",
-  "offline-legacy-cpu-present=1",
-  # T23: umi and sheng run without uke's offline-legacy-default-surface=1, offline-legacy-base-present=1 and
-  # offline-legacy-noconsole=1; all three are off.
-  "offline-legacy-phase=4",
-  # T24b: the refresh policy step of docs/porting/display.md. GopFramebuffer reports this rate through slot 301 and
-  # publishes IOMFBDisplayRefresh before registerService; the render server paces its display timer by it. 120 Hz is the
-  # 3a panel's rated mode, not a measured one (there is no DPU timing probe for the SM7635 yet).
-  "sheng-vsync=120",
-  # T25: the boot progress kit's live page and UI trace (docs/guide/debugging.md of UniXNU). The trace samples the render
-  # server's process, SpringBoard, and the two that decide launches and kills; one page every 8 s.
-  # T25b: T25 found all four idle and liveactivitiesd in a Swift trap loop, and the last display client was pid 71
-  # (PerfPowerServices on T24b's console). Slot 1 takes PerfPowerServices and slot 3 liveactivitiesd; backboardd moves to
-  # slot 4. boot-ui-follow=1 traces whatever SpringBoard sends to in slot 4 (and that process's own peer in slot 1); while
-  # SpringBoard only receives, both slots keep their names.
-  # T26: the page shows every display client (pid, selectors with calls/fails) on the HANDOFF and CLIENT rows.
-  # T27: boot-display-page=1 gives rows 6..20 to the display log: every open, client, call in order (argument shape and
-  # status), the state words and the display's property keys, paged every 6 s.
-  # T28: the display log adds each call's caller stack (k<n>), the state words a call or the time between calls changed, and
-  # every distinct main-thread stack of backboardd the trace samples (slot 4, so boot-ui-follow is off: it would move slot 4 off
-  # backboardd). t28-power-ack=1 answers a refused power-on (selector 12) with success while the powered word says on;
-  # T28b is the same kernel with t28-power-ack=0.
-  # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
-  # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
-  "sheng-build-tag=T35",
-  "boot-ui-focus4=backboardd",
-  # GPU power observation (package/GpuPowerProbe.cpp), one stage per test boot: 1 reads the GCC GPU branches, then GPUCC,
-  # SMMU and RBBM only where the previous block shows its clock or power on, and logs each block before touching it
-  # ("ASTEROIDS GPU: ..."). 2 adds the one write Linux makes (gcc_gpu_cfg_ahb_clk), 3 powers CX and the SMMU clocks, 4 tests
-  # the GMU pool, 5 builds the GMU's SMMU context on it (NativeAdrenoGmuContextBringup), 6 reads the GMU clock tree and the
-  # command DB and builds the HFI table (no writes), 7 brings up the GMU clocks (GPLL0 vote, PLL0, hub and gmu RCGs,
-  # gpu_cc_ahb) with the GMU still in reset, 8 then reads the GMU and RSCC state the cold start checks (no writes),
-  # 9 loads gen80300_gmu.bin and releases the GMU to HFI ready, 10 also sends the HFI startup messages, 11 then votes
-  # the lowest GPU level over HFI, asks the GMU for GX (OOB GPU_SET) and reads RBBM once GX is on, 12 then reads the SW
-  # fuse and CP state, builds the GPU's SMMU context (bank 0, SID 0, ACTLR 0x32b) and copies gen80300_sqe.fw into it, 13 runs
-  # a8xx hw_init's register writes, 14 starts the CP (ring, SQE, CP_ME_INIT, fenced
-  # WPTR writes) and has it write one word, 15 loads the zap shader (PAS 13) and leaves secure mode, 16 runs a first IB
-  # and has the GPU write a red/green/blue bar into the framebuffer, redrawn every 200 ms for 2 minutes, 17 adopts the BO
-  # pool, attaches fences and the timer, publishes NativeAdreno's user client and runs it from the kernel, 18 draws the bar
-  # once, does what 17 does, then prints for ten minutes what user space (the GPU addon's test daemon, sheng-gpu-addon=1)
-  # does with the service, 19 also publishes the AGXAccelerator for the original Metal discovery (the addon's Metal plugin
-  # then tests in backboardd; T18's published plugin returns a Metal device there instead). With 19, sheng-fb-gpu=1 lets
-  # the published plugin copy the display's frames to the scanout with the GPU (drivers/GopFramebuffer/NativeGOPPresenter.cpp);
-  # a frame nobody takes keeps the CPU copy.
-  # T33: mode 19 is GpuPowerProbe's default; sheng-gpu-power=0 turns it off.
-  # T24-T29: no sheng-gpu-power (GpuPowerProbe.cpp was not built).
-  # T30: mode 19 with T19's published Metal addon (metal2vulkan on Turnip in backboardd). T19 stopped at "encodes, never
-  # commits" while SpringBoard itself never finished booting (T28-T29: the missing AppleKeyStore).
-  # T33: these values are now the board package's defaults, so they are no longer passed: sheng-pmgr=2, sheng-aks=1,
-  # sheng-disable-watchdogd=1, offline-legacy-unit-scale=2, boot-progress=2, boot-display-page=1, offline-hid-home=1,
-  # offline-hid-input=1, offline-key-events=1, sheng-gpu-power=19 and asteroids-touch=6 (pass =0 to turn one off).
-  # T33: with mode 19 and the addon the display probe turns the GPU copy to the panel on by itself (sheng-fb-gpu=0 keeps the
-  # CPU copy, which took 143-285 ms a frame and showed stale patches), and the on-screen diagnostics are off once the UI runs
-  # (sheng-banner=1 brings them back; the rows go to the UFS log either way).
-  "sheng-gpu-addon=1",
-  # Touch: package/AsteroidsTouchProbe.cpp runs stage 6 by default (asteroids-touch=<n> for another stage, 0 for none) and
-  # publishes the FT3683G's contacts to TouchState; UniXNU's NativeHidInput hands them to backboardd only with this argument
-  # (read by the core driver, so it stays). The boot-ui-focus rows for PerfPowerServices and SpringBoard were dropped in T32.
-  "sheng-touch-hid=1",
-  "sheng-fb-gpu=1",                   # kept: UniXNU core's NativeGOPPresenter reads it (default off); without it T34 mixed GPU and CPU copy paths
-  # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
-  # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
-  # without a first frame.
-  "sheng-smp=1",
-  "armcpu-spi-ipi=1",
-  # Dropped: sheng-platform-stage and boot-ui-focus4.
-  # Not set: boot-progress=2. Its only reader is kits/sheng/BootProgress.c, which this kernel does not link; the
-  # argument would be inert. Add it back together with a ported boot progress kit (see the open questions).
-]
-
-# Fixups of signed text, applied by the kernel after signature validation (UniXNU patches/xnu/native-text-fixup.patch),
-# passed as /chosen/text-fixups. sheng's list for this same 21H461 build, as uke uses it verbatim:
-# +[AWAttentionAwarenessConfiguration initialize] deadlocks SpringBoard startup against Siri (returns at once instead);
-# two constants in dyld_shared_cache_arm64.13; BTAudioHALPlugin's factory returns NULL so audiomxd doesn't hang without
-# bluetoothd (sheng-lite).
-text_fixups = [
-  "dyld_shared_cache_arm64.15,421e8bc,28ad1bb0008544f9,c0035fd6008544f9",
-  "dyld_shared_cache_arm64.13,1b05bec,44008052,24008052",
-  "dyld_shared_cache_arm64.13,1b05b08,44008052,24008052",
-  "BTAudioHALPlugin,38bec,ffc300d1f44f01a9,000080d2c0035fd6",
-]
 
 [payload.adt]
-tool = "scripts/make-asteroids-adt.py"   # being written; same arguments as make-sheng-adt.py
-cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"   # kept: eight cores, MPIDR Affinity1 0x000..0x700 (same as sheng).
-                                       # ArmCpu probes only the boot CPU without sheng-smp=1, so the others stay off.
-                                       # If boot stalls in CPU topology, try "0" (one core, no /psci)
-psci_method = "smc"                    # stated explicitly (sheng relied on the tool default); the phone uses PSCI over smc
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # the OS volume of 21H461, as on uke (same IPSW)
 packed_data_ramdisk = true             # the Data seed as a packed ramdisk for NativeRamBlock, as on uke
 persistent_data = true                 # with sheng-data-persist=2, Data is not ephemeral
-ipad_identity = true                   # the userland is iPadOS (iPad7,1), as on uke
-# mount(8) phase 1 (launchd's first boot task) exits with 66 without /chosen/boot-manifest-hash; it names
-# /private/preboot/<hash> from it. There is no Apple personalization manifest here, so this is an explicit bring-up
-# boot-set identity, not Apple data: uke's value (SHA-384 of "UkeBringup.BootSet.v1\0"), kept for parity with the port
-# that boots past this point.
-boot_manifest_hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
-# The XNU VM is DarwinBoot's owned_memory_size window (boot_args memSize), not dram_size. Its 256 MiB default is enough
-# for the kernel but not for iPadOS userland: uke (2026-10-23) found the desktop dying in jetsam after a few minutes
-# with it. DarwinBoot places the window in UEFI conventional memory below 4 GiB (the firmware MMU map); the largest
-# such run in the 3a's map is DXE_Heap, 0xB8000000 + 0x1BA00000 (442 MiB), less what DXE takes from it. 384 MiB first;
-# DarwinBoot refuses a window it cannot place, visibly, before the hand-over, and then 320 MiB (uke's value) is next.
-owned_memory_size = "0x130000000"    # T19: 4.75 GiB, uke's and sheng's value on the same 12 GB class. The uefi-asteroids
-                                      # memory map declares the high bank 0x8C0000000-0xABFE00000 as conventional memory, so
-                                      # the window fits there; 384 MiB left iPadOS short (corpse crashes) and Turnip's heap at
-                                      # 96 MiB (25 % of system RAM), which refused every texture in T18b
-# Dropped: root_match_volume_uuid (no root this boot; without it XNU waits for a root device, which is an acceptable end).
-# Dropped: chip_id together with unique_chip_id = "required". They seed IOPlatformUUID, which only userland (configd)
-# waits for, and the tool refuses one without the other.
-# Dropped: packed_data_ramdisk, persistent_data (no Data seed) and ipad_identity (/product iPad identity and /buttons
-# for MobileGestalt; userland only).
-
-# Open questions and values to measure on the phone
-#
-# 1. dram_size: the size of the contiguous DRAM run that starts at 0x80000000, from the UEFI memory map or the SMEM RAM
-#    partition table (sheng's 0x80000000 is its own first bank). Never the 12 GB total: the Qualcomm map has holes and
-#    carve-outs above the first bank.
-# 2. owned_memory_size: 4.75 GiB since T19 (it was 384 MiB, see [payload.adt]). Above about 440 MiB needs the high
-#    DRAM range in the UEFI firmware's memory map.
-# 3. boot-progress: wanted, but its kit is sheng's package (kits/sheng/BootProgress.c and headers) and XNU_BOOT_PROGRESS
-#    requires XNU_NATIVE_UFS, XNU_OWNER_ROOT_AUDIT, XNU_NATIVE_VIRTIO_BLOCK and the supplied verified-root archive. Porting
-#    it (as fajita did, with weak stubs for the sheng-only symbols) is a separate step; until then -v plus panic_screen
-#    give the visible progress.
-# 4. Payload size: whether the asteroids ABL loads a ~67 MiB kernel image (shim, firmware and the 64 MiB payload).
-#    A ramdisk is no option: ABL ignores it (see [bootimg]).
-# 5. Framebuffer: DarwinBoot passes the GOP mode (1080x2392, 32 bpp). Check that the stride it reports is 4320 bytes;
-#    a padded stride would skew the console.
-# 6. Roots: whether a trimmed prelink closure (without IOGPUFamily, IOMobileGraphicsFamily, IOSurface, the audio, AV,
-#    HDCP, CEC and HID families) still prelinks and boots. Not tried here; the sheng list is the qualified one.
-# 7. The ADT tool (scripts/make-asteroids-adt.py, in progress) adds /arm-io/ufshc with "qcom,sm8550-ufshc". With
-#    NativeUfs not linked nothing matches it, so it is inert this boot; whether NativeUfs should match SM7635 under
-#    that compatible is a question for the UFS stage, together with the SM7635 GCC offsets.
+# The XNU VM is DarwinBoot's owned_memory_size window (boot_args memSize), not dram_size. T19: 4.75 GiB, uke's and sheng's value on
+# the same 12 GB class. The uefi-asteroids memory map declares the high bank 0x8C0000000-0xABFE00000 as conventional memory, so the
+# window fits there; 384 MiB left iPadOS short (corpse crashes) and Turnip's heap at 96 MiB, which refused every texture in T18b.
+owned_memory_size = "0x130000000"
 
 # The device firmware: our Mu-Silicium port (VolcanoPkg + asteroidsPkg) with UniXNU and DarwinBoot added.
 # The 3a's ABL takes the ramdisk from init_boot and ignores the boot image's own: the initrd it passed was the
@@ -436,3 +233,31 @@ ENABLE_SECUREBOOT = "0"
 MEMORY_PROTECTION = "TRUE"
 SHIP_MODE = "FALSE"
 BUILDID_STRING = "asteroids-bringup"
+
+# Board values of the ADT, on top of the OS profile's iPad identity.
+[adt.chosen.bytes]
+# mount(8) phase 1 (launchd's first boot task) exits with 66 without /chosen/boot-manifest-hash; it names /private/preboot/<hash>
+# from it. There is no Apple personalization manifest here, so this is an explicit bring-up boot-set identity, not Apple data:
+# uke's value (SHA-384 of "UkeBringup.BootSet.v1\0"), kept for parity with the port that boots past this point.
+boot-manifest-hash = "5fd2fc139b688ddf071aa815c1ea75d26bcd994a528cf02e365661eab5139ec7b580d63ca9319e218962a2236f23faca"
+
+[adt.product.string]
+model = "nothing,asteroids"
+
+[adt.product.u32]
+thin-bezel = 1
+
+# Suspend/resume is not implemented for this board: the original root-domain policy input instead of a CPU that parks forever.
+[adt.defaults.u32]
+sleep-disabled = 1
+
+# No 'menu' entry: the 3a has no Home button. home-button-type 2 is the non-mechanical answer BSPlatform passes through.
+[adt.buttons.string]
+compatible = "buttons"
+device_type = "buttons"
+
+[adt.buttons.strings]
+button-names = ["hold", "voldown", "volup"]
+
+[adt.buttons.u32]
+home-button-type = 2

@@ -6,52 +6,50 @@ SM7635 "Volcano"). Work in progress: not hardware-complete, and nothing here is 
 | Repository | Contents |
 |---|---|
 | [rootstockos/uefi-asteroids](https://github.com/rootstockos/uefi-asteroids) (branch `asteroids`) | Mu-Silicium UEFI port: `VolcanoPkg` and `asteroidsPkg` |
-| [rootstockos/UniXNU](https://github.com/rootstockos/UniXNU) (branch `asteroids-dev`) | the UniXNU core fork the port builds with: v3/v4 boot images, the payload carried in the kernel image, CI |
-| this repository | `board.toml`, kernel defconfigs, device package (`kits/asteroids`), device scripts |
+| [rootstockos/UniXNU](https://github.com/rootstockos/UniXNU) | the UniXNU core fork the port builds with: v3/v4 boot images, the payload carried in the kernel image, bring-up patches, CI |
+| [rootstockos/UniXNU-sm7635-common](https://github.com/rootstockos/UniXNU-sm7635-common) | the shared SM7635 profile (device format 2): CPUs, GIC, UFS and Adreno 810 resources |
+| this repository | `board.toml`, `dts/asteroids.dts`, kernel defconfigs, board XNU patches, device package (`kits/asteroids`), device scripts |
 
-Drivers and kits, each its own repository, referenced as submodules:
+The repository uses UniXNU's device format 2 (`schema_version = 2`): the SM7635 SoC profile, the iPadOS 17.7.11 (21H461) OS
+profile and catalog components. Its own driver forks are submodules at their catalog paths, where they take precedence over
+UniXNU's:
 
 | Module | Repository | Use |
 |---|---|---|
-| `drivers/NativeUfs` | [rootstockos/NativeUfs](https://github.com/rootstockos/NativeUfs) (branch `fix/unverified-build`) | UFS root in `userdata` |
-| `drivers/NativeAdreno` | [rootstockos/NativeAdreno](https://github.com/rootstockos/NativeAdreno) (branch `asteroids-a810`) | Adreno 810 (gen8) work; not built yet (`CONFIG_XNU_NATIVE_ADRENO` off) |
+| `drivers/ShengUfs` | [rootstockos/NativeUfs](https://github.com/rootstockos/NativeUfs) (branch `fix/unverified-build`) | UFS root in `userdata` |
+| `drivers/Adreno740` | [rootstockos/NativeAdreno](https://github.com/rootstockos/NativeAdreno) (branch `asteroids-a810`) | Adreno 810 (gen8): GMU, ring, submits and the user client |
+| `drivers/ShengHidInput` | [UniXNU/ShengHidInput](https://github.com/UniXNU/ShengHidInput) | HID touch and buttons |
 | `kits/AdrenoFirmware` | [rootstockos/AdrenoFirmware](https://github.com/rootstockos/AdrenoFirmware) (branch `asteroids-a8xx`) | GMU/HFI kit with the A8xx performance table and votes |
 
-## State (2026-10-24)
+## State (2026-10-26)
 
-Booted with `fastboot boot`; the OS images are flashed to `userdata`:
-
-- UEFI, the UniXNU menu and payload, DarwinBoot and XNU (iPad7,1 iPadOS 17.7.11 kernelcache) on all eight cores.
-- The root is mounted from UFS (`userdata`) and iPadOS userspace runs: launchd, the SystemOS cryptex and SpringBoard.
-  The text console shows the boot until the first display frame.
-- No display yet. The CPU-rendered legacy display opens its client but the render server never presents a frame;
-  uke (SM7675) reached the same point and concluded that iOS 17 needs a GPU accelerator. SpringBoard restarts
-  ("too many corpses") without one.
-- The Adreno 810 (gen8) work is in software so far: the register map and init tables from mainline, per-generation
-  registers in NativeAdreno, and the gen8 GMU cold start and HFI startup (host-tested, `scripts/check-asteroids-gmu.py`).
-  NativeAdreno still refuses gen8 at start.
+Booted with `fastboot boot`; the OS images are flashed to `userdata`. iPadOS 17.7.11 boots from UFS to the desktop on all
+eight cores. The render server composites on the Adreno 810 through Metal (metal2vulkan and Turnip), the GPU copies each
+frame to the panel, and touch works. The frame rate is still under 60. Test results are in `docs/asteroids-gpu-gen8.md` and
+`docs/asteroids-touch.md` of rootstockos/iosonandng; `porting.toml` records each area.
 
 Several vendor drivers are disabled in the UEFI port for bring-up; `Platforms/Nothing/asteroidsPkg/PORTING.md` there
 lists them and why.
 
 ## Build
 
-The firmware step builds on Linux too (tested in an Ubuntu 24.04 container). It needs a Mu-Silicium checkout of
-`uefi-asteroids` with the phone's own vendor drivers in `Binaries/asteroids` (extracted from its `uefi` partition with
-UEFIReader; never committed), and UniXNU with support for header v3/v4 boot images
-(rootstockos/UniXNU, branch `feat/bootimg-header-v4`).
+From the UniXNU checkout, with UniXNU-sm7635-common next to this repository (`local.toml` points the SoC source at
+`../UniXNU-sm7635-common` until `feeds.toml`'s pin is published):
 
 ```sh
 ./unixnu defconfig asteroids_defconfig -D ../UniXNU-asteroids
-./unixnu build package firmware --uefi ../uefi-asteroids --edk2 ../uefi-asteroids/Mu_Basecore
-./unixnu bootimg --uefi ../uefi-asteroids --dtb /path/to/live.dtb --ramdisk none
-fastboot boot out/asteroids/boot/boot.img
+./unixnu status --json -D ../UniXNU-asteroids
+./unixnu build kernel -D ../UniXNU-asteroids
+./unixnu build payload -D ../UniXNU-asteroids --uefi ../uefi-asteroids --edk2 ../uefi-asteroids/Mu_Basecore
+./unixnu bootimg -D ../UniXNU-asteroids --uefi ../uefi-asteroids --dtb /path/to/live.dtb
 ```
+
+Outputs are under `out/asteroids/ipados-17.7.11-21H461/asteroids/`. The kernel builds in CI (rootstockos/UniXNU's macOS
+workflow, with `scripts/ci-bootstrap-candidate.sh` as its pre-build step); the payload step compiles `dts/asteroids.dts`
+with `dtc` and writes the ADT with UniXNU's shared generator.
 
 `live.dtb` is the phone's `/sys/firmware/fdt`. It carries the `splash_region` the bootloader needs to keep the
 panel on.
-
-Target OS: the unchanged iPad7,1 iPadOS 17.7.11 restore image, as on UniXNU's sheng port.
 
 ## Third-party sources in `package/`
 

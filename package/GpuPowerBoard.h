@@ -690,7 +690,7 @@ static inline void gpb_gx_on(const struct gpb_gx_io *io, uint32_t perf, uint32_t
 #undef GPB_GX_R
 }
 // Modes 12-14 use the A810 register map NativeAdreno generates from the pinned a6xx.xml and a8xx_gpu.c
-// (drivers/NativeAdreno/NativeAdrenoA810HwInit.h, scripts/derive-a810-hwinit.py): dword offsets in the GPU block
+// (drivers/Adreno740/NativeAdrenoA810HwInit.h, scripts/derive-a810-hwinit.py): dword offsets in the GPU block
 // (byte = dword * 4) and, for the GMU registers, GPB_GMU_REG. They reuse mode 11's gpb_gx_io, with one more window:
 // CX_MISC (0x3d9e000, ShengGmu's ShengGmuCxMisc), read only.
 #include "NativeAdrenoA810HwInit.h"

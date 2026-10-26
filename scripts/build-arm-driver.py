@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile the generic platform expert against the actual source-kernel ABI."""
 # UniXNU's scripts/build-arm-driver.py (BSD-2-Clause-Patent) with two asteroids changes: a driver this device repository
-# carries as a fork under its old name (drivers/NativeUfs, drivers/NativeMobileDisplay) is compiled from that fork, and
+# carries as a fork under its old name (drivers/NativeMobileDisplay; format 2 keeps drivers/ShengUfs at its catalog path) is compiled from that fork, and
 # NativeUfs is built without the verified-root check (see the NativeUfs block below). Outputs keep the catalog's paths.
 import argparse
 import json

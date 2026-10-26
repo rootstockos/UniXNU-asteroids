@@ -96,7 +96,7 @@ for source in sorted((METAL / 'shaders').glob('smoke_*')):
 # 2. The plugin executable. TurnipReplay.h is on no include path here (AsteroidsMetalPlugin.mm refuses to build with it).
 sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
 base = ['-target', 'arm64-apple-ios17.0', '-isysroot', sdk, '-O2', '-Wall', '-Wextra', '-Werror']
-includes = ['-I', DEVICE / 'drivers/NativeAdreno', '-I', METAL, '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE, '-I', OUT]
+includes = ['-I', DEVICE / 'drivers/Adreno740', '-I', METAL, '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE, '-I', OUT]
 pm4 = OUT / 'AdrenoPM4.o'
 run(['xcrun', 'clang', *base, '-std=c11', '-c', ROOT / 'kits/AdrenoPM4/AdrenoPM4.c', '-o', pm4])
 bundle = OUT / 'NativeAdrenoMetal.bundle'

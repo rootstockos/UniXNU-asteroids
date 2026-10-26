@@ -102,6 +102,6 @@ CONFIG_XNU_EXTRA_LD_ARCHIVES=""
 CONFIG_XNU_BOOT_PROGRESS=y
 #
 # Display and GPU: the legacy display is the CPU-rendered SpringBoard display (a sheng device script, and it excludes
-# -v). NativeAdreno (drivers/NativeAdreno, the gen8 fork) still refuses the Adreno 810 at start, so it stays off.
+# -v). NativeAdreno (drivers/Adreno740, the gen8 fork) still refuses the Adreno 810 at start, so it stays off.
 # CONFIG_XNU_NATIVE_ADRENO is not set
 

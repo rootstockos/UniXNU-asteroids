@@ -1,0 +1,243 @@
+schema_version = 1
+
+[device]
+name = "asteroids"
+soc = "SM7635"
+os_profile = "ipados-17.7.11-21H461"
+summary = "Nothing Phone (3a) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UFS userdata partition, with shared SM7635 support and board-owned storage, GPU, input and power integration. Bring-up runs as numbered staged tests; their results are in docs/asteroids-gpu-gen8.md and docs/asteroids-touch.md of rootstockos/iosonandng."
+
+[[area]]
+id = "configuration"
+status = "implemented"
+components = ["ArmDTPlatform", "XnuPrelink"]
+paths = ["board.toml", "feeds.toml", "configs/**", ".gitmodules", ".github/**", ".gitignore", "LICENSE", "scripts/make-asteroids-adt.py"]
+inputs = ["SM7635 SoC profile (rootstockos/UniXNU-sm7635-common), iPadOS 17.7.11 build 21H461, asteroids_defconfig, the board's own driver forks as submodules."]
+configuration = ["board.soc_source = sm7635; board.os_profile = ipados-17.7.11-21H461; schema_version = 2.", "drivers/Adreno740, drivers/ShengUfs, drivers/ShengHidInput and kits/AdrenoFirmware are this repository's submodules at their catalog paths and take precedence over UniXNU's."]
+procedure = ["Run ./unixnu status --json -D ../UniXNU-asteroids from rootstockos/UniXNU and review profiles, components and patch order."]
+findings = ["Format 2 keeps only catalog components, so the forks of NativeAdreno and NativeUfs moved from their legacy names to drivers/Adreno740 and drivers/ShengUfs; legacy aliases are made only for UniXNU's own sources.", "The ADT from the shared generator matches the former make-asteroids-adt.py output except for the OS profile's additions (J120AP first in the root compatible, product-id, /product/audio) and the arm-io window, which now covers UFS."]
+completion = ["All source pins resolve; every selected component has a record; status shows the intended overrides and patch order."]
+limits = ["The SoC profile is pinned to a local checkout (local.toml) until rootstockos/UniXNU-sm7635-common is published."]
+next_action = ["Publish the SoC repository and pin its commit in feeds.toml."]
+
+[[area.evidence]]
+kind = "source"
+reference = "board.toml"
+result = "Format 2 board configuration with the SM7635 SoC and 21H461 OS profiles."
+
+[[area]]
+id = "firmware"
+status = "implemented"
+components = ["DarwinBoot"]
+paths = ["scripts/fetch-asteroids-gpu-firmware.py", "scripts/patch-xnu-entry-probe.py", "scripts/xnu-panic-screen.c"]
+inputs = ["rootstockos/uefi-asteroids (Mu-Silicium VolcanoPkg and asteroidsPkg) with UniXNU, UniXNUDxe and DarwinBoot.", "The 3a's ABL loads the boot image with fastboot boot; it ignores the boot image's ramdisk."]
+configuration = ["[bootimg] payload_in_kernel = true: the payload rides in the kernel image and ShengBootMemoryDxe finds it in the Kernel memory region."]
+procedure = ["Build the payload and boot image with ./unixnu build payload and ./unixnu bootimg --dtb (the phone's live DTB), then fastboot boot the image."]
+findings = ["The ABL passes the vendor_boot and init_boot ramdisks plus bootconfig as the initrd, never the boot image's own ramdisk."]
+completion = ["Firmware image builds, enters UniXNU, publishes the framebuffer and preserves the documented memory reservations."]
+limits = ["Images are booted from RAM only (fastboot boot); nothing is flashed."]
+next_action = ["Record the firmware revision with each boot image."]
+
+[[area.evidence]]
+kind = "source"
+reference = "board.toml"
+result = "[bootimg] and [firmware] select uefi-asteroids and the payload in the kernel image."
+
+[[area]]
+id = "cpu"
+status = "implemented"
+components = ["ArmCpu"]
+paths = ["package/CpuFreq*", "patches/xnu/**", "dts/**"]
+inputs = ["Four Cortex-A520 (cpus 0-3, EPSS domain 0) and four Cortex-A720 (4-6 domain 1, 7 domain 2); EPSS domains at 17d91000/17d92000/17d93000.", "Gunyah hypervisor: SGIs are not delivered, so IPIs use armcpu-spi-ipi=1."]
+configuration = ["sheng-smp=1 and armcpu-spi-ipi=1 in board.toml; unixnu,cluster-type E/P in dts/asteroids.dts; sheng-cpufreq=<mode> selects the CPU governor."]
+procedure = ["Boot with sheng-cpufreq=1 and the banner on, read the CPU row (domain state and LUT), then sheng-cpufreq=4."]
+findings = ["The CPU governor is sheng's CpuFreqProbe with 4/3/1 CPUs per domain and no L3 vote (the 3a has no EPSS L3).", "The E/P Edge scheduler and the idle-time helper are sheng's zzyf and zzye patches (patches/xnu)."]
+completion = ["Every enabled CPU reaches its entry checkpoint and timer/IPI handling works on each enabled CPU."]
+limits = ["The governor and the E/P scheduler are not yet verified on the phone (T35)."]
+next_action = ["Boot T35a (read-only) and T35b (governor) and record the clocks and frame rate."]
+
+[[area.evidence]]
+kind = "source"
+reference = "package/CpuFreqProbe.cpp"
+result = "EPSS CPU governor with touch boost and frame floor."
+
+[[area]]
+id = "memory"
+status = "implemented"
+components = []
+paths = ["package/*Smmu*", "package/*Memory*", "scripts/*smmu*", "scripts/*memory*"]
+inputs = ["DRAM high bank 0x8C0000000-0xABFE00000 for the XNU window; GPU pool at 0xABFE00000 (1 GiB); GMU pool at 0xE6440000 (32 MiB); all reserved in the uefi-asteroids memory map."]
+configuration = ["owned_memory_size 0x130000000 (4.75 GiB) and dram_size 0x1FFE00000; the DTS memory node equals dram_size."]
+procedure = ["Check that payload.dram_size equals the DTS memory node and that DarwinBoot places the window."]
+findings = ["384 MiB of owned memory left iPadOS short; 4.75 GiB in the high bank (uke's layout) is enough.", "Metal's 64 MiB blocks need a 1 GiB GPU pool outside the XNU window."]
+completion = ["All handoff regions are accounted for and each enabled DMA engine accesses its allocated range with the documented cache policy."]
+limits = ["The GPU and GMU pools are fixed reservations in the firmware memory map."]
+next_action = ["Record the firmware memory map with each firmware change."]
+
+[[area.evidence]]
+kind = "source"
+reference = "dts/asteroids.dts"
+result = "Memory node for the XNU window's DRAM bank."
+
+[[area]]
+id = "storage"
+status = "implemented"
+components = ["ShengUfs", "RamBlock", "SoftwareAES", "VirtioMmioBlock", "VerifiedRoot"]
+paths = ["drivers/ShengUfs", "scripts/build-arm-driver.py", "scripts/build-ufs-original-bindings.py", "scripts/ci-bootstrap-candidate.sh", "scripts/pull-asteroids-data.py"]
+inputs = ["UFS host 0x1d84000 and PHY 0x1d80000 (SM8550's windows), apps SMMU stream 0x60; userdata LUN 0 blocks 0x256248-0x3a8bffa."]
+configuration = ["native-ufs-root=1 and native-ufs-allow-unverified=1; sheng-data-persist=2 keeps Data at the end of userdata."]
+procedure = ["Build the userdata image, write it to userdata from recovery, boot, and pull the Data volume with scripts/pull-asteroids-data.py."]
+findings = ["NativeUfs (the ShengUfs fork) is built without the verified-root check until signed volume policies exist.", "Its IOBlockStorageDevice imports bind against the original class in a bootstrap kernel candidate built first in CI."]
+completion = ["The root volume mounts read-only from UFS and Data persists across boots."]
+limits = ["Root reads are not authenticated."]
+next_action = ["Build the owner verified-root bundle."]
+
+[[area.evidence]]
+kind = "device"
+reference = "board.toml"
+command = "fastboot boot local/unixnu-asteroids-t29-boot.img"
+revision = "adf900cf453a6b318864913757f588c9f661596f"
+result = "T29 booted iPadOS 17.7.11 from the UFS root with persistent Data to the first picture."
+
+[[area]]
+id = "display"
+status = "implemented"
+components = ["GopFramebuffer"]
+paths = ["package/LegacyDisplay*", "package/Boot*", "package/Font.h", "scripts/build-native-legacy-display.py", "scripts/build-boot-progress.py", "scripts/audit-mobile-graphics-default-surface.py"]
+inputs = ["The firmware's GOP framebuffer, 1080x2392 x8r8g8b8 at stride 4320, on a 120 Hz video-mode panel."]
+configuration = ["offline-legacy-* arguments, sheng-vsync=120, sheng-fb-gpu=1 (the GPU copies each frame to the panel)."]
+procedure = ["Boot and watch the banner rows (sheng-banner=1) for swaps per second and copy times."]
+findings = ["The CPU copy (143-285 ms a frame) mapped the surfaces cacheable without invalidation and showed stale patches; the GPU copy removes both."]
+completion = ["The desktop presents through the legacy display with measured frame times."]
+limits = ["Under 60 frames per second."]
+next_action = ["Measure the frame rate with the CPU governor (T35)."]
+
+[[area.evidence]]
+kind = "device"
+reference = "board.toml"
+command = "fastboot boot local/unixnu-asteroids-t34b-boot.img"
+revision = "e022e84a9721ea6408ea12665b5a23e9b89fc5f6"
+result = "T34b: GPU copy to the panel, no tearing or stale patches, stable."
+
+[[area]]
+id = "input"
+status = "implemented"
+components = ["ShengHidInput", "ShengNovatekTouch", "QcomGeniSpi"]
+paths = ["drivers/ShengHidInput", "package/*Touch*", "package/HidInputProbe.cpp", "package/ButtonProbe.cpp", "package/QcomRpmh.*"]
+inputs = ["FocalTech FT3683G on GENI SE0 SPI; PMK8550 PON power and RESIN, PMXR2230 GPIO 6 volume up, through the SPMI arbiter and PDC pin 1 (SPI 481)."]
+configuration = ["asteroids-touch=6 (package default) and sheng-touch-hid=1; sheng-buttons=1 for the buttons."]
+procedure = ["Boot, touch the desktop and press each button; read the BTN banner row."]
+findings = ["Touch is polled; stage 2's RPMh votes need a completion check.", "Every button constant equals sheng's (SPMI arbiter v7 at the same addresses, same PPIDs)."]
+completion = ["Contacts and buttons reach backboardd as HID events."]
+limits = ["The buttons are not yet verified on the phone (T35); ShengNovatekTouch is linked as ShengHidInput's dependency and not used."]
+next_action = ["Boot T35a with sheng-buttons=1."]
+
+[[area.evidence]]
+kind = "device"
+reference = "package/AsteroidsTouchProbe.cpp"
+command = "fastboot boot local/unixnu-asteroids-t34b-boot.img"
+revision = "e022e84a9721ea6408ea12665b5a23e9b89fc5f6"
+result = "Touch input works on the desktop (stage 6)."
+
+[[area]]
+id = "gpu"
+status = "implemented"
+components = ["Adreno740", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm8550Platform"]
+paths = ["drivers/Adreno740", "kits/AdrenoFirmware", "package/Gpu*", "package/ShengGmu*", "package/AsteroidsMetalPlugin.mm", "package/AsteroidsGpuUserTest.cpp", "package/OriginalAcceleratorABI.h", "scripts/*gpu*", "scripts/*gmu*", "scripts/*turnip*", "scripts/*metal*", "scripts/shader_tools.py", "scripts/data/**"]
+inputs = ["Adreno 810 (gen8, chip 0x44010000) at 0x3d00000 with GMU, RSCC and SMMU; firmware gen80300 from the pinned vendor repository."]
+configuration = ["sheng-gpu-power=19, sheng-gpu-addon=1, sheng-gpu-level=6 (763 MHz); the Metal plugin and Turnip are built on the Mac into the payload addon."]
+procedure = ["Build the kernel in CI, the addon with scripts/build-asteroids-metal-plugin.py --published, pack and boot."]
+findings = ["The render server composites on the A810 (window server ready in 1.9 s instead of 30.8 s).", "The GPU clock does not limit the frame rate: 1050 MHz was barely faster than 763 MHz."]
+completion = ["Core Animation renders through Metal on the GPU with measured frame times."]
+limits = ["Turnip runs without GMEM (TU_DEBUG=sysmem,nocb); Sm8550Platform is linked as Adreno740's dependency and not used."]
+next_action = ["Try GMEM rendering."]
+
+[[area.evidence]]
+kind = "device"
+reference = "package/GpuPowerProbe.cpp"
+command = "fastboot boot local/unixnu-asteroids-t34b-boot.img"
+revision = "e022e84a9721ea6408ea12665b5a23e9b89fc5f6"
+result = "GPU compositing and the GPU panel copy run stable."
+
+[[area]]
+id = "network"
+status = "planned"
+components = []
+paths = ["package/Wifi*"]
+inputs = ["The 3a's Wi-Fi and Bluetooth module; not yet identified for a driver."]
+configuration = ["None yet."]
+procedure = ["Identify the module and its bus from the live device tree."]
+findings = ["No network driver runs; bluetoothd is disabled."]
+completion = ["The device joins a network and passes traffic."]
+limits = ["No network."]
+next_action = ["Identify the Wi-Fi module."]
+evidence = []
+
+[[area]]
+id = "audio"
+status = "planned"
+components = []
+paths = ["package/Audio*", "package/*Adsp*"]
+inputs = ["The audio DSP and its firmware; sheng's ADSP, GLINK and QRTR stack is the reference."]
+configuration = ["None yet."]
+procedure = ["Boot the ADSP from its firmware partition as sheng does."]
+findings = ["No audio path yet."]
+completion = ["Playback and capture through the audio server."]
+limits = ["No audio."]
+next_action = ["Port the ADSP start after the battery work."]
+evidence = []
+
+[[area]]
+id = "power"
+status = "implemented"
+components = ["AppleKeyStoreState"]
+paths = ["package/ShengPlatformPower.cpp", "package/KeyStoreProbe.cpp", "scripts/build-asteroids-platform-power.py"]
+inputs = ["sheng's placeholder ApplePMGR provider; the AppleKeyStore stand-in."]
+configuration = ["sheng-pmgr=2 (required in board.toml by the payload check); sheng-aks=1 publishes the AppleKeyStore stand-in with persistent Data."]
+procedure = ["Boot and check that SpringBoard finishes booting (AppleKeyStore opens)."]
+findings = ["Without the AppleKeyStore stand-in on persistent Data, SpringBoard never finished booting (T20-T28)."]
+completion = ["The OS boots to the desktop with the platform power and keystore services it needs."]
+limits = ["No battery or charging status."]
+next_action = ["Port sheng's battery manager after the ADSP start."]
+
+[[area.evidence]]
+kind = "device"
+reference = "package/KeyStoreProbe.cpp"
+command = "fastboot boot local/unixnu-asteroids-t29-boot.img"
+revision = "adf900cf453a6b318864913757f588c9f661596f"
+result = "T29: with the stand-in, SpringBoard boots to the first picture."
+
+[[area]]
+id = "packaging"
+status = "implemented"
+components = []
+paths = ["patches/xnu/**", "dts/**"]
+inputs = ["The payload carries the kernel, the ADT from the shared generator, the trust caches and the GPU addon; the boot image carries the phone's live DTB."]
+configuration = ["[payload] size_mib = 80, panic_screen = true; the device patch series lists the fork's bring-up patches and the board CPU patches."]
+procedure = ["./unixnu build payload, then ./unixnu bootimg --dtb with the live DTB."]
+findings = ["Format 2 applies only the patches its series list; the fork's bring-up patches are listed in the device series with the arch: prefix."]
+completion = ["The boot image boots on the phone with the expected kernel arguments."]
+limits = ["The payload is built locally in the rootstock Podman machine."]
+next_action = ["Build the first format 2 kernel in CI and pack it."]
+
+[[area.evidence]]
+kind = "source"
+reference = "patches/xnu/series"
+result = "Board patch series after the arch, SoC and OS series."
+
+[[area]]
+id = "diagnostics"
+status = "implemented"
+components = []
+paths = ["package/BootWatchdogPolicy.c", "package/BootUiTrace*", "package/BootFault*", "package/BootProcess*", "package/BootDiagExport.c"]
+inputs = ["sheng's boot progress kit: the live page, fault evidence, the UI trace and the banner rows."]
+configuration = ["sheng-log=1 keeps a persistent kernel log; sheng-banner=1 draws the rows on the desktop."]
+procedure = ["Boot with the banner on and photograph it; pull Data for the unified log."]
+findings = ["Never boot a test without on-screen diagnostics: T24b had none and taught nothing."]
+completion = ["Each test boot shows its stage and counters on screen."]
+limits = ["The unified log needs a Data pull through recovery."]
+next_action = ["Keep the banner rows for each new driver."]
+
+[[area.evidence]]
+kind = "source"
+reference = "package/BootProgress.c"
+result = "Live page and banner rows."

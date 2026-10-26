@@ -1,5 +1,5 @@
 [submodule "drivers/NativeUfs"]
-	path = drivers/NativeUfs
+	path = drivers/ShengUfs
 	url = https://github.com/rootstockos/NativeUfs.git
 	branch = fix/unverified-build
 [submodule "kits/AdrenoFirmware"]
@@ -7,7 +7,7 @@
 	url = https://github.com/rootstockos/AdrenoFirmware.git
 	branch = asteroids-a8xx
 [submodule "drivers/NativeAdreno"]
-	path = drivers/NativeAdreno
+	path = drivers/Adreno740
 	url = https://github.com/rootstockos/NativeAdreno.git
 	branch = asteroids-a810
 [submodule "drivers/ShengHidInput"]
