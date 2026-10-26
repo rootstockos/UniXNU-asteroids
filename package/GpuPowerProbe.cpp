@@ -436,8 +436,12 @@ void gpuGx() {
         IOLog("ASTEROIDS GPU: gx skipped: cold start status %u\n", native_gpu_gmu_start_status);
         return;
     }
+    // T34: sheng-gpu-level picks the HFI level (1 = 264 MHz ... 9 = 1050 MHz on the 3a's bin, clamped); level 1 made
+    // the UI slow. 6 (763 MHz, 6.7 GB/s) stays below the top three while nothing throttles for temperature.
+    unsigned level = 6;
+    PE_parse_boot_argn("sheng-gpu-level", &level, sizeof level);
     unsigned bw = 0;
-    const unsigned perf = ShengGmuPerfVote(1, &bw);
+    const unsigned perf = ShengGmuPerfVote(level, &bw);
     IOLog("ASTEROIDS GPU: gx vote perf %u bw %u (%lluk), then OOB GPU_SET\n", perf, bw,
           static_cast<unsigned long long>(gStartup.gpu[perf].hz / 1000));
     native_gpu_power_stage = 0xa1;

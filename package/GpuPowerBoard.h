@@ -617,8 +617,8 @@ static inline void gpb_read_gmu_state(const struct gpb_io *io, struct gpb_result
 // mode 8 ran them on its A732, with the gen8 offsets of the pinned a6xx_gmu.xml / a6xx.xml:
 //   1 GMU2HOST_INTR_CLR ~0, then GMU2HOST_INTR_MASK ~CM3_FAULT (A6XX_HFI_IRQ_MASK), as after a6xx_hfi_start
 //   2 GMU_PWR_CLK_STATUS (A8XX 0x1f7e8): GX_HM_GDSC_POWER_OFF bit 0, GX_HM_CLK_OFF bit 1, as a8xx_gmu_gx_is_on reads it
-//   3 the HFI GX_BW_PERF_VOTE (a6xx_hfi_set_freq: id 30, {ack_type 1, freq index, bw index}), at the lowest real level
-//     (ShengGmuPerfVote(1)) where Linux starts at the top one; the vote waits for its acknowledgement
+//   3 the HFI GX_BW_PERF_VOTE (a6xx_hfi_set_freq: id 30, {ack_type 1, freq index, bw index}), at sheng-gpu-level
+//     (default 6, 763 MHz; T33 and before used the lowest, 1) where Linux starts at the top one; the vote waits for its acknowledgement
 //   4 a6xx_gmu_set_oob(GMU_OOB_GPU_SET), non-legacy bits: HOST2GMU_INTR_SET bit 30, GMU2HOST_INTR_INFO bit 31 within
 //     100 x 100 us, then GMU2HOST_INTR_CLR bit 31. The request is held (not cleared), so GX stays on.
 //   5 GMU_PWR_CLK_STATUS again; only when GX reports on: RBBM_STATUS, RBBM_GFX_STATUS, RBBM_GFX_BR_STATUS and
