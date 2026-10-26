@@ -3,4 +3,4 @@
 name = "sm7635"
 kind = "soc"
 git = "https://github.com/rootstockos/UniXNU-sm7635-common"
-commit = "b3c78cc31c87b02fe70609e8aeed888c8bd928a3"
+commit = "8dadec8f3136de8c089c6130dd4f2ced4c5bde34"

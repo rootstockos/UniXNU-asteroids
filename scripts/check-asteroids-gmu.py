@@ -29,10 +29,21 @@ if subprocess.run(['uname', '-m'], capture_output=True, text=True).stdout.strip(
         raise SystemExit('AdrenoHfi.c has another barrier')
     hfi = out / 'host-AdrenoHfi.c'
     hfi.write_text(text)
+# The GMU cold start and command DB are the SoC profile's kit: the build tree's kits/Sm7635Platform, or a UniXNU-sm7635-common
+# checkout: the one local.toml names, or one next to this repository.
+import tomllib
+candidates = [ROOT / 'kits/Sm7635Platform']
+if (ROOT / 'local.toml').is_file():
+    candidates += [(ROOT / e['local']).expanduser() / 'kits/Sm7635Platform'
+                   for e in tomllib.loads((ROOT / 'local.toml').read_text()).get('source', []) if e.get('kind') == 'soc' and e.get('local')]
+candidates.append(ROOT.parent / 'UniXNU-sm7635-common/kits/Sm7635Platform')
+soc_kit = next((p for p in candidates if (p / 'ShengGmu.c').is_file()), None)
+if soc_kit is None:
+    raise SystemExit('kits/Sm7635Platform not found (UniXNU-sm7635-common next to this repository)')
 subprocess.run(['clang', '-std=c11', '-O1', '-Wall', '-Wextra', '-Werror', '-DSHENG_GMU_HOST_TEST',
-                '-I', str(out), '-I', str(kit), '-I', str(ROOT / 'package'),
-                str(ROOT / 'package/ShengGmuGen8HostTests.c'), str(ROOT / 'package/ShengGmu.c'),
-                str(ROOT / 'package/ShengGmuVotes.c'), str(ROOT / 'package/ShengGmuCommandDb.c'), str(kit / 'AdrenoHfiVotes.c'),
+                '-I', str(out), '-I', str(kit), '-I', str(soc_kit), '-I', str(ROOT / 'package'),
+                str(ROOT / 'package/ShengGmuGen8HostTests.c'), str(soc_kit / 'ShengGmu.c'),
+                str(ROOT / 'package/ShengGmuVotes.c'), str(soc_kit / 'ShengGmuCommandDb.c'), str(kit / 'AdrenoHfiVotes.c'),
                 str(kit / 'AdrenoFirmware.c'), str(hfi), str(kit / 'AdrenoHfiStartup.c'),
                 '-o', str(binary)], check=True)
 subprocess.run([str(binary), str(ROOT / '.cache/firmware/asteroids-gpu/gen80300_gmu.bin')], check=True)

@@ -264,12 +264,16 @@ def kernel_cxx(src,obj,extra):
 # headers prepare-asteroids-gmu-votes.py --from-data writes (an earlier archive entry), and the AdrenoFirmware kit's HFI
 # vote, startup and message code (its submodule, branch asteroids-a8xx).
 gmu_gen=ROOT/'build/sheng-gmu';hfi_kit=ROOT/'kits/AdrenoFirmware'
+# The GMU cold start and command DB are the SoC profile's kit (UniXNU-sm7635-common kits/Sm7635Platform, like sm8550's
+# Sm8550Platform); the board's votes (ShengGmuVotes.c) stay in the device package.
+soc_kit=ROOT/'kits/Sm7635Platform'
+require((soc_kit/'ShengGmu.c').is_file(),'kits/Sm7635Platform is missing (select the Sm7635Platform component)')
 for header in ('ShengGmuVotesSource.h','ShengGmuCommandDbSource.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu-votes.py --from-data first')
 # Modes 9-10 run the GMU cold start (ShengGmu.c over AdrenoFirmware.c) on the generated registers and firmware.
 for header in ('ShengGmuSource.h','ShengGmuFirmware.h','ShengSqeFirmware.h','ShengZapFirmware.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu.py first')
-vote_flags=['-I',str(ROOT/'kits/asteroids'),'-I',str(hfi_kit),'-I',str(gmu_gen)]
+vote_flags=['-I',str(ROOT/'kits/asteroids'),'-I',str(soc_kit),'-I',str(hfi_kit),'-I',str(gmu_gen)]
 run(kernel_cxx(gpupower_source,gpupower_obj,adreno_flags+vote_flags),cwd=r['directory'])
 gmu_sources=[adreno/(n+'.cpp') for n in ('NativeAdrenoMemory','NativeAdrenoSmmuMemory','NativeAdrenoVm','NativeAdrenoGmuMemory',
                                           'NativeAdrenoSmmuContext','NativeAdrenoGmuContext','NativeAdrenoCpu',
@@ -338,9 +342,9 @@ for src in smmu_sources:
     gmu_objs.append(OUT/(src.stem+'.kit.o'))
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
         ['-I',str(smmu4k),'-I',str(pm4)],cwd=pr['directory'])
-vote_sources=[ROOT/'kits/asteroids/ShengGmuVotes.c',ROOT/'kits/asteroids/ShengGmuCommandDb.c',
+vote_sources=[ROOT/'kits/asteroids/ShengGmuVotes.c',soc_kit/'ShengGmuCommandDb.c',
               hfi_kit/'AdrenoHfiVotes.c',hfi_kit/'AdrenoHfiStartup.c',hfi_kit/'AdrenoHfi.c',
-              ROOT/'kits/asteroids/ShengGmu.c',hfi_kit/'AdrenoFirmware.c']
+              soc_kit/'ShengGmu.c',hfi_kit/'AdrenoFirmware.c']
 for src in vote_sources:
     gmu_objs.append(OUT/(src.stem+'.kit.o'))
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+

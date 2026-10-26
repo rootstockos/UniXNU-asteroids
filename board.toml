@@ -17,10 +17,11 @@ kit = "asteroids"
 # UniXNU's: drivers/Adreno740 (rootstockos/NativeAdreno asteroids-a810, the gen8 fork; its GPU code is compiled into the display
 # archive), drivers/ShengUfs (rootstockos/NativeUfs fix/unverified-build), drivers/ShengHidInput and kits/AdrenoFirmware
 # (rootstockos/AdrenoFirmware asteroids-a8xx). Dependencies (Sm8550Platform, VirtioMmioBlock, VerifiedRoot, ShengNovatekTouch)
-# are linked into the tree and not built.
+# are linked into the tree and not built. Sm7635Platform is the SoC profile's GMU kit (UniXNU-sm7635-common).
 [components]
 include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "RamBlock", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "AppleKeyStoreState",
-           "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "ShengHidInput"]
+           "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "ShengHidInput",
+           "Sm7635Platform"]
 
 # The hardware description: dts/asteroids.dts on the SoC's dts/sm7635.dtsi. The common ADT generator builds the ADT from it.
 [device_tree]

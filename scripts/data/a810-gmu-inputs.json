@@ -14,12 +14,12 @@
     "repository": "https://github.com/UniXNU/UniXNU-sheng",
     "commit": "fb2d4ed7ae02aa3fb53688c3d70bfaefd5c1b8f5",
     "files": [
-      "package/ShengGmu.c",
-      "package/ShengGmu.h",
+      "UniXNU-sm7635-common kits/Sm7635Platform/ShengGmu.c",
+      "UniXNU-sm7635-common kits/Sm7635Platform/ShengGmu.h",
       "package/ShengGmuVotes.c (b0ccf61522383c5e4dda1091252c5534213aeba5)",
-      "package/ShengGmuVotes.h (b0ccf61522383c5e4dda1091252c5534213aeba5)",
-      "package/ShengGmuCommandDb.c",
-      "package/ShengGmuCommandDb.h"
+      "UniXNU-sm7635-common kits/Sm7635Platform/ShengGmuVotes.h (b0ccf61522383c5e4dda1091252c5534213aeba5)",
+      "UniXNU-sm7635-common kits/Sm7635Platform/ShengGmuCommandDb.c",
+      "UniXNU-sm7635-common kits/Sm7635Platform/ShengGmuCommandDb.h"
     ],
     "licence": "BSD-2-Clause-Patent"
   },
