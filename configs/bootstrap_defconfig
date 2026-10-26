@@ -18,3 +18,10 @@ CONFIG_XNU_ARMVIRT_PLATFORM=n
 # CONFIG_XNU_BOOT_PROGRESS is not set
 # CONFIG_XNU_VERIFIED_ROOT_PROBE is not set
 # CONFIG_XNU_SOURCE_MOCKFS is not set
+# Format 2 applies the arch profile's common.config first; the bootstrap pass keeps its format 1 configuration, so the
+# options that fragment turns on are off here too (XNU_NATIVE_ARCH_TIMER would otherwise require XNU_ARMCPU).
+# CONFIG_XNU_BUILD_ARCHIVES is not set
+# CONFIG_XNU_NATIVE_ARCH_TIMER is not set
+# CONFIG_XNU_NATIVE_CS_HASH_CACHE is not set
+# CONFIG_XNU_NATIVE_PAN is not set
+# CONFIG_XNU_TRUST_CACHE_RUNTIME is not set
