@@ -133,6 +133,109 @@ panic_screen = true                   # kept: patches a copy of the kernel with 
                                       # the MMU) and panic() drawn on the framebuffer; the only way to read a panic without UART.
                                       # Board-independent (symbols from the kernel, 19.2 MHz timebase), needs the two scripts above
 
+kernel_args = [
+  "-v",                               # kept: verbose text console on the framebuffer
+  "-enable_kprintf_spam",             # from uke: DEVELOPMENT kernels keep kprintf off without it; with no UART it goes to
+                                      # the video console, so kernel diagnostics show on screen
+  "-textconsole",                     # our UniXNU fork (uke's -uketextconsole): text console with the framebuffer mapped;
+                                      # also prints the previous boot's panic log
+  "serial=3",                         # kept: serial console and kprintf on; no UART, so output stays on the video console (as on sheng)
+  "debug=0x14e",                      # kept: debug mask with kprintf (DB_KPRT) and panic detail
+  "kt_fixed_zones=120",               # kept: generic XNU zone sizing that sheng, fajita and uke all boot with
+  "-no_slto_panic",                   # kept: generic, avoids the SLTO panic on this non-Apple CPU
+  "ml-timeout-lock-panic-scale=40",   # kept: generic; a slow 4 KiB-page bring-up with diagnostics trips lock timeouts
+  "armcpu-diagnostics=1",             # kept: generic ArmCpu, prints the CPU and GIC state; first check if interrupts fail
+  "sheng-pmgr=2",                     # kept: also the code default, but UniXNU's payload check requires it here for the UFS root
+  # UFS root, step 2, after uke's working set (Allenwdk/UniXNU-uke board.toml) without its display and input:
+  "native-ufs-root=1",                # NativeUfs publishes the OS and SystemOS windows of the userdata root image
+  "native-ufs-allow-unverified=1",    # without the owner policy bundle (our NativeUfs fork); reads are not authenticated
+  "offline-apfs-load=1",              # load APFS (and IOStorageFamily) so the windows' volumes appear
+  "-apfs_shared_datavolume",          # as uke and sheng: the Data volume is shared with the root's volume group
+  "sheng-data-persist=2",             # Data writes go through to the store at the end of userdata
+  "sheng-log=1",                      # persistent kernel log at the end of userdata
+  # T23, as umi (an iPadOS 17.7.11 phone at Hello with a CPU display): only the four jobs of the XPC wait cycle are
+  # left out, not sheng-lite's list of about 25.
+  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,com.apple.coreduetd",  # T35: coreduetd as on sheng (d4c299b): one thread above 50 % of a core for the whole boot
+  # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
+  # Display, CPU-rendered, as uke boots it: load IOMobileGraphicsFamily, register NativeLegacyDisplay on the GOP
+  # framebuffer as the default surface, and present frames drawn by the CPU. offline-hid-* and offline-key-events publish
+  # the HID and key event services SpringBoard waits for (no touch hardware behind them yet).
+  "offline-mobile-graphics-load=1",
+  "offline-mobile-graphics-client=0",
+  "offline-legacy-register=1",
+  "offline-legacy-gop=1",
+  "offline-legacy-pm=1",
+  "offline-legacy-validate=1",
+  "offline-legacy-transfer=1",
+  "offline-legacy-cpu-present=1",
+  # T23: umi and sheng run without uke's offline-legacy-default-surface=1, offline-legacy-base-present=1 and
+  # offline-legacy-noconsole=1; all three are off.
+  "offline-legacy-phase=4",
+  # T24b: the refresh policy step of docs/porting/display.md. GopFramebuffer reports this rate through slot 301 and
+  # publishes IOMFBDisplayRefresh before registerService; the render server paces its display timer by it. 120 Hz is the
+  # 3a panel's rated mode, not a measured one (there is no DPU timing probe for the SM7635 yet).
+  "sheng-vsync=120",
+  # T25: the boot progress kit's live page and UI trace (docs/guide/debugging.md of UniXNU). The trace samples the render
+  # server's process, SpringBoard, and the two that decide launches and kills; one page every 8 s.
+  # T25b: T25 found all four idle and liveactivitiesd in a Swift trap loop, and the last display client was pid 71
+  # (PerfPowerServices on T24b's console). Slot 1 takes PerfPowerServices and slot 3 liveactivitiesd; backboardd moves to
+  # slot 4. boot-ui-follow=1 traces whatever SpringBoard sends to in slot 4 (and that process's own peer in slot 1); while
+  # SpringBoard only receives, both slots keep their names.
+  # T26: the page shows every display client (pid, selectors with calls/fails) on the HANDOFF and CLIENT rows.
+  # T27: boot-display-page=1 gives rows 6..20 to the display log: every open, client, call in order (argument shape and
+  # status), the state words and the display's property keys, paged every 6 s.
+  # T28: the display log adds each call's caller stack (k<n>), the state words a call or the time between calls changed, and
+  # every distinct main-thread stack of backboardd the trace samples (slot 4, so boot-ui-follow is off: it would move slot 4 off
+  # backboardd). t28-power-ack=1 answers a refused power-on (selector 12) with success while the powered word says on;
+  # T28b is the same kernel with t28-power-ack=0.
+  # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
+  # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
+  "sheng-build-tag=T35",
+  "boot-ui-focus4=backboardd",
+  # GPU power observation (package/GpuPowerProbe.cpp), one stage per test boot: 1 reads the GCC GPU branches, then GPUCC,
+  # SMMU and RBBM only where the previous block shows its clock or power on, and logs each block before touching it
+  # ("ASTEROIDS GPU: ..."). 2 adds the one write Linux makes (gcc_gpu_cfg_ahb_clk), 3 powers CX and the SMMU clocks, 4 tests
+  # the GMU pool, 5 builds the GMU's SMMU context on it (NativeAdrenoGmuContextBringup), 6 reads the GMU clock tree and the
+  # command DB and builds the HFI table (no writes), 7 brings up the GMU clocks (GPLL0 vote, PLL0, hub and gmu RCGs,
+  # gpu_cc_ahb) with the GMU still in reset, 8 then reads the GMU and RSCC state the cold start checks (no writes),
+  # 9 loads gen80300_gmu.bin and releases the GMU to HFI ready, 10 also sends the HFI startup messages, 11 then votes
+  # the lowest GPU level over HFI, asks the GMU for GX (OOB GPU_SET) and reads RBBM once GX is on, 12 then reads the SW
+  # fuse and CP state, builds the GPU's SMMU context (bank 0, SID 0, ACTLR 0x32b) and copies gen80300_sqe.fw into it, 13 runs
+  # a8xx hw_init's register writes, 14 starts the CP (ring, SQE, CP_ME_INIT, fenced
+  # WPTR writes) and has it write one word, 15 loads the zap shader (PAS 13) and leaves secure mode, 16 runs a first IB
+  # and has the GPU write a red/green/blue bar into the framebuffer, redrawn every 200 ms for 2 minutes, 17 adopts the BO
+  # pool, attaches fences and the timer, publishes NativeAdreno's user client and runs it from the kernel, 18 draws the bar
+  # once, does what 17 does, then prints for ten minutes what user space (the GPU addon's test daemon, sheng-gpu-addon=1)
+  # does with the service, 19 also publishes the AGXAccelerator for the original Metal discovery (the addon's Metal plugin
+  # then tests in backboardd; T18's published plugin returns a Metal device there instead). With 19, sheng-fb-gpu=1 lets
+  # the published plugin copy the display's frames to the scanout with the GPU (drivers/GopFramebuffer/NativeGOPPresenter.cpp);
+  # a frame nobody takes keeps the CPU copy.
+  # T33: mode 19 is GpuPowerProbe's default; sheng-gpu-power=0 turns it off.
+  # T24-T29: no sheng-gpu-power (GpuPowerProbe.cpp was not built).
+  # T30: mode 19 with T19's published Metal addon (metal2vulkan on Turnip in backboardd). T19 stopped at "encodes, never
+  # commits" while SpringBoard itself never finished booting (T28-T29: the missing AppleKeyStore).
+  # T33: these values are now the board package's defaults, so they are no longer passed: sheng-pmgr=2, sheng-aks=1,
+  # sheng-disable-watchdogd=1, offline-legacy-unit-scale=2, boot-progress=2, boot-display-page=1, offline-hid-home=1,
+  # offline-hid-input=1, offline-key-events=1, sheng-gpu-power=19 and asteroids-touch=6 (pass =0 to turn one off).
+  # T33: with mode 19 and the addon the display probe turns the GPU copy to the panel on by itself (sheng-fb-gpu=0 keeps the
+  # CPU copy, which took 143-285 ms a frame and showed stale patches), and the on-screen diagnostics are off once the UI runs
+  # (sheng-banner=1 brings them back; the rows go to the UFS log either way).
+  "sheng-gpu-addon=1",
+  # Touch: package/AsteroidsTouchProbe.cpp runs stage 6 by default (asteroids-touch=<n> for another stage, 0 for none) and
+  # publishes the FT3683G's contacts to TouchState; UniXNU's NativeHidInput hands them to backboardd only with this argument
+  # (read by the core driver, so it stays). The boot-ui-focus rows for PerfPowerServices and SpringBoard were dropped in T32.
+  "sheng-touch-hid=1",
+  "sheng-fb-gpu=1",                   # kept: UniXNU core's NativeGOPPresenter reads it (default off); without it T34 mixed GPU and CPU copy paths
+  # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
+  # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
+  # without a first frame.
+  "sheng-smp=1",
+  "armcpu-spi-ipi=1",
+  # Dropped: sheng-platform-stage and boot-ui-focus4.
+  # Not set: boot-progress=2. Its only reader is kits/sheng/BootProgress.c, which this kernel does not link; the
+  # argument would be inert. Add it back together with a ported boot progress kit (see the open questions).
+]
+
 [payload.adt]
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # the OS volume of 21H461, as on uke (same IPSW)
 packed_data_ramdisk = true             # the Data seed as a packed ramdisk for NativeRamBlock, as on uke
