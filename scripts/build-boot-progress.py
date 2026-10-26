@@ -48,6 +48,10 @@ for name, record, flags in [
         ('BootUiTraceProbe.c', osfmk, osfmk_flags),
         ('BootProcessProbe.c', osfmk, osfmk_flags),
         ('BootProgressStandins.c', osfmk, osfmk_flags),
+        # T37: sheng's UFS diagnostic log (sheng-log=1, through NativeUfs's log window) and its weak stand-ins for the probes this
+        # board does not build.
+        ('BootLog.c', osfmk, osfmk_flags),
+        ('BootLogStandins.c', osfmk, osfmk_flags),
         ('BootWatchdogPolicy.c', bsd, strict),
         ('BootDiagExport.c', bsd, strict)]:
     obj = OUT / (Path(name).stem + '.o')

@@ -228,11 +228,11 @@ result = "Board patch series after the arch, SoC and OS series."
 id = "diagnostics"
 status = "implemented"
 components = []
-paths = ["package/BootWatchdogPolicy.c", "package/BootUiTrace*", "package/BootFault*", "package/BootProcess*", "package/BootDiagExport.c"]
+paths = ["package/BootWatchdogPolicy.c", "package/BootUiTrace*", "package/BootFault*", "package/BootProcess*", "package/BootDiagExport.c", "package/BootLog*", "package/ShengAudioAbi.h", "scripts/read-sheng-log.py", "scripts/pull-asteroids-log.py", "scripts/build-boot-progress.py"]
 inputs = ["sheng's boot progress kit: the live page, fault evidence, the UI trace and the banner rows."]
 configuration = ["sheng-log=1 keeps a persistent kernel log; sheng-banner=1 draws the rows on the desktop."]
 procedure = ["Boot with the banner on and photograph it; pull Data for the unified log."]
-findings = ["Never boot a test without on-screen diagnostics: T24b had none and taught nothing."]
+findings = ["Never boot a test without on-screen diagnostics: T24b had none and taught nothing.", "T37 adds sheng's UFS diagnostic log (BootLog.c, sheng-log=1) through NativeUfs's log window (the last 32 MiB of userdata), with weak stand-ins (BootLogStandins.c) for the 104 references to probes this board does not build; scripts/pull-asteroids-log.py copies the window from recovery over adb and decodes it with sheng's read-sheng-log.py --decode. The unified log on Data cannot tell boots apart (one boot UUID and clock base for every boot)."]
 completion = ["Each test boot shows its stage and counters on screen."]
 limits = ["The unified log needs a Data pull through recovery."]
 next_action = ["Keep the banner rows for each new driver."]

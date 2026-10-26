@@ -25,5 +25,4 @@ WEAK volatile uint32_t native_cpufreq_stage;
 WEAK char native_touch_rows[4][120];
 WEAK volatile unsigned native_touch_stage_req;
 
-WEAK void boot_log_tick(unsigned now) { (void)now; }
 WEAK void sheng_cpufreq_poll(void) {}
