@@ -126,7 +126,7 @@ paths = ["drivers/ShengHidInput", "package/*Touch*", "package/HidInputProbe.cpp"
 inputs = ["FocalTech FT3683G on GENI SE0 SPI; PMK8550 PON power and RESIN, PMXR2230 GPIO 6 volume up, through the SPMI arbiter and PDC pin 1 (SPI 481)."]
 configuration = ["asteroids-touch=6 (package default) and sheng-touch-hid=1; sheng-buttons=1 for the buttons."]
 procedure = ["Boot, touch the desktop and press each button; read the BTN banner row."]
-findings = ["Touch is polled; stage 2's RPMh votes need a completion check.", "Every button constant equals sheng's (SPMI arbiter v7 at the same addresses, same PPIDs)."]
+findings = ["Touch is polled; stage 2's RPMh votes need a completion check.", "Every button constant equals sheng's (SPMI arbiter v7 at the same addresses, same PPIDs).", "TouchState.cpp's placeholder button sink is gone: ButtonProbe.cpp owns native_buttons_set_sink."]
 completion = ["Contacts and buttons reach backboardd as HID events."]
 limits = ["The buttons are not yet verified on the phone (T35); ShengNovatekTouch is linked as ShengHidInput's dependency and not used."]
 next_action = ["Boot T35a with sheng-buttons=1."]
