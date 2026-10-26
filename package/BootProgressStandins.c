@@ -26,3 +26,9 @@ WEAK char native_touch_rows[4][120];
 WEAK volatile unsigned native_touch_stage_req;
 
 WEAK void sheng_cpufreq_poll(void) {}
+// T39: the GPU row (GPUG) reads GpuPowerProbe.cpp's interrupt and clock counters.
+WEAK uint32_t native_gpu_irq[6];
+WEAK volatile uint32_t native_gpu_irq_count, native_gpu_mhz;
+// T39: the RTC row reads ArmDTPlatform's, QcomPmicRtc's and the kernel's offset-file counters.
+WEAK volatile int32_t armdt_platform_rtc_stats[5], qcom_pmic_rtc_stats[7];
+WEAK volatile int32_t native_rtc_offset_status[3] = {-1};

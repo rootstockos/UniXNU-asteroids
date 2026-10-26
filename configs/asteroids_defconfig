@@ -24,6 +24,12 @@ CONFIG_XNU_ARM_DT_PLATFORM=y
 # Archive: build/armcpu/libArmCpu.a (build-arm-driver.py ArmCpu)
 CONFIG_XNU_ARMCPU=y
 
+# T39 (2026-10-26): the wall clock. QcomPmicRtc reads the PMK8550 RTC through the SPMI arbiter and publishes IORTC;
+# ArmDTPlatform (this repository's copy, drivers/ArmDTPlatform) forwards the calendar to it and keeps the read-only
+# counter's offset, which the kernel saves on the Data volume (zzyd-native-rtc-offset.patch).
+# Archive: build/qcom-pmic-rtc/libQcomPmicRtc.a (build-arm-driver.py QcomPmicRtc)
+CONFIG_XNU_QCOM_PMIC_RTC=y
+
 # Added after the first boot (2026-10-22): XNU panicked "pthread kernel extension not loaded (function table is
 # NULL) @pthread_shims.c:318". The kernel registers pthread at early boot, long before launchd, so the source
 # component is needed for any boot.

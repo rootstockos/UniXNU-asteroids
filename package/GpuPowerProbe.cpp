@@ -429,6 +429,12 @@ int gxVote(void *, uint32_t perf, uint32_t bw, uint32_t *firmware_error) {
     return AdrenoHfiExchange(&gColdDevice.hfi, 30, vote, 3, 1000, hfiWaitOnce, out, 16, &count, firmware_error);
 }
 void gxDelay(void *, unsigned us) {IODelay(us);}
+extern "C" {
+// T39: the HFI level and bandwidth index last voted (BootLog's [clocks] row) and that level's MHz (the banner's GPUG row)
+uint32_t native_gpu_perf_vote[2];
+volatile uint32_t native_gpu_mhz;
+}
+unsigned gBootPerf;   // the level gpuGx voted; the governor's default ceiling
 // Mode 11: only after mode 10 returned success.
 void gpuGx() {
     native_gpu_power_stage = 0xa0;
@@ -448,6 +454,11 @@ void gpuGx() {
     gpb_gx_io io{nullptr, gxRead, gxWrite, gxVote, gxDelay};
     gpb_gx &x = native_gpu_gx;
     gpb_gx_on(&io, perf, bw, &x);
+    if (!x.failed) {
+        native_gpu_perf_vote[0] = perf; native_gpu_perf_vote[1] = bw;
+        native_gpu_mhz = uint32_t(gStartup.gpu[perf].hz / 1000000);
+        gBootPerf = perf;
+    }
     native_gpu_power_stage = 0xa2;
     static const char *const kFail[] = {"ok", "vote", "no-ack", "io", "gx-off"};
     IOLog("ASTEROIDS GPU: gx %s step=%u vote=%u fw=%08x oob=%u info=%08x gx %08x>%08x later=%08x\n",
@@ -603,7 +614,53 @@ int ringBarrier(void *) {return gColdDevice.io.barrier(gColdDevice.io.cookie);}
 int ringPublish(void *, const volatile uint32_t *, size_t) {return ringBarrier(nullptr);}
 int ringAcquire(void *, volatile uint32_t *, size_t) {return ringBarrier(nullptr);}
 uint64_t ringNow(void *) {uint64_t us = 0; gmuNowUs(nullptr, &us); return us;}
-int ringIdle(void *) {IODelay(20); return 0;}
+// T39: the fence waits' pause, after UniXNU-sheng's (GpuPowerProbe.cpp ringIdle/gpuIrq/irqAndTimer, BSD-2-Clause-Patent). Until T38
+// every wait spun 20 us at a time, so a core stayed at 100 % whenever a client waited on the GPU (the T38 banner's GOV row). Once
+// irqAttach() has the GPU line, a waiter that may block sleeps until the next GPU interrupt or `sheng-gpu-pause-us` (default 1000),
+// whichever is first; before that, or where it may not block, it spins 20 us as before. Every ring fence is CP_EVENT_WRITE7
+// CACHE_CLEAN with its IRQ bit (NativeAdrenoRing.cpp), which raises RBBM_INT_0 CP_CACHE_FLUSH_TS (bit 20), unmasked by hw_init's
+// A810_INIT_RBBM_INT_0_MASK 0x33d283c2. `sheng-gpu-irq=0` keeps the line detached and the old spin.
+extern "C" {
+// attach IOReturn (0xdead without ArmCpu, 0xff when off), GICD readback, interrupts after the attach / after a NOP fence, the
+// INT_0_STATUS bits seen, INT_0_STATUS then
+uint32_t native_gpu_irq[6];
+volatile uint32_t native_gpu_irq_count;
+volatile uint64_t native_gpu_idle_sleeps, native_gpu_idle_spins, native_gpu_idle_timeouts;
+int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
+int get_preemption_level(void);
+}
+constexpr uint32_t kGpuIntid = 32 + 300;   // live DT kgsl-3d0 "kgsl_3d0_irq" <0 0x12c 4>: SPI 300, level high
+volatile bool gIrqAttached;
+volatile uint32_t gIrqSeen, gIrqEmpty;
+unsigned gPauseUs = 1000;
+int ringIdle(void *) {
+    if (gIrqAttached && ml_get_interrupts_enabled() && !ml_at_interrupt_context() && get_preemption_level() == 0) {
+        assert_wait_timeout(event_t(&native_gpu_irq_count), THREAD_UNINT, gPauseUs, NSEC_PER_USEC);
+        if (thread_block(THREAD_CONTINUE_NULL) == THREAD_TIMED_OUT) native_gpu_idle_timeouts = native_gpu_idle_timeouts + 1;
+        native_gpu_idle_sleeps = native_gpu_idle_sleeps + 1;
+    } else {
+        IODelay(20);
+        native_gpu_idle_spins = native_gpu_idle_spins + 1;
+    }
+    return 0;
+}
+// a8xx_irq: read RBBM_INT_0_STATUS and clear it through RBBM_INT_CLEAR_CMD before the EOI, so the level line drops. A storm (the
+// line high with nothing to clear) masks the GPU interrupts instead of holding the boot CPU; the waiters then time out each pause.
+void gpuIrq(void *) {
+    uint32_t status = 0;
+    ringRead(nullptr, A810_RBBM_INT_0_STATUS, &status);
+    if (status) {ringWrite(nullptr, A810_RBBM_INT_CLEAR_CMD, status); ringBarrier(nullptr);}
+    gIrqSeen = gIrqSeen | status;
+    native_gpu_irq_count = native_gpu_irq_count + 1;
+    gIrqEmpty = status ? 0 : gIrqEmpty + 1;
+    if (gIrqEmpty > 100000) {ringWrite(nullptr, A810_RBBM_INT_0_MASK, 0); ringBarrier(nullptr);}
+    thread_wakeup(event_t(&native_gpu_irq_count));
+}
+unsigned bootArg(const char *name, unsigned fallback) {
+    unsigned value = fallback;
+    PE_parse_boot_argn(name, &value, sizeof value);
+    return value;
+}
 NativeAdrenoRing gRing;
 NativeAdrenoCpInit gCpInit;
 void cpState(const char *when) {
@@ -1301,6 +1358,158 @@ void userWatch() {
     userReport("end");
     cpState("user");
 }
+// T39: attach the GPU line (after mode 16, before the service is published, as sheng's irqAndTimer does after its zap step), then one
+// CP_NOP fence: a working line counts interrupts after the attach (bits latched by the earlier fences) and again after the fence.
+void irqAttach() {
+    uint32_t *q = native_gpu_irq;
+    if (!bootArg("sheng-gpu-irq", 1)) {q[0] = 0xff; IOLog("ASTEROIDS GPU: irq off (sheng-gpu-irq=0): fence waits spin\n"); return;}
+    const unsigned us = bootArg("sheng-gpu-pause-us", 1000);
+    if (us >= 20 && us <= 100000) gPauseUs = us;
+    uint64_t router = ~0ull;
+    q[0] = armcpu_spi_attach ? uint32_t(armcpu_spi_attach(kGpuIntid, false, gpuIrq, nullptr, &q[1], &router)) : 0xdead;
+    gIrqAttached = q[0] == 0;
+    IOSleep(20);
+    q[2] = native_gpu_irq_count;
+    uint32_t nop = 0, fence = 0, seen = 0;
+    const NativeAdrenoRingClock clock{nullptr, ringNow, ringIdle};
+    const bool fenced = AdrenoPM4Type7(0x10, 0, &nop) == AdrenoPM4Success && !gRing.submit(&nop, 1, &fence) &&
+                        !gRing.wait(fence, &clock, 200000, &seen);
+    IOSleep(20);
+    q[3] = native_gpu_irq_count;
+    q[4] = gIrqSeen;
+    ringRead(nullptr, A810_RBBM_INT_0_STATUS, &q[5]);
+    IOLog("ASTEROIDS GPU: irq intid %u attach %x gicd %x router %llx count %u, NOP fence %s then %u, seen %08x status %08x, pause %u us, "
+          "sleeps %llu spins %llu timeouts %llu\n", kGpuIntid, q[0], q[1], (unsigned long long)router, q[2], fenced ? "ok" : "failed", q[3],
+          q[4], q[5], gPauseUs, (unsigned long long)native_gpu_idle_sleeps, (unsigned long long)native_gpu_idle_spins,
+          (unsigned long long)native_gpu_idle_timeouts);
+}
+// T39: GPU frequency governor (`sheng-gpu-dcvs=1`, after the service is published), UniXNU-sheng's gpuDcvsThread (a338c71a, 36ec562c)
+// on the A810's levels. The GMU's XO power counter 0 counts 19.2 MHz ticks while the GPU is busy (hw_init's CX_BUSY_MASK 0xff000000,
+// countable 5, enable; read at its A8XX offsets). Every 16 ms it takes the frequency that would have kept that window 50 % busy and
+// goes up at once to the lowest level at or above 1.1 x of it, to the ceiling after a window over 85 % busy or 50 ms busy without a
+// break; it goes down one level after 4 windows in a row (5 right after a step up) that would have needed at most 0.8 x the next lower
+// level, and to the floor after 80 ms without work. Work after the idle drop starts at the lowest level at or above max(2 x now,
+// 578 MHz) for 50 ms, and a touch report holds the ceiling until `sheng-gpu-dcvs-boost-ms` (default 1000, 0 = off) after the last one.
+// Levels and MHz come from the startup table the GMU was given (1 = 264 ... 9 = 1050 MHz on the 3a's bin). `sheng-gpu-dcvs-min` is
+// the floor (default 3, 510 MHz); `sheng-gpu-dcvs-max` the ceiling, by default the boot vote (`sheng-gpu-level`, default 6, 763 MHz),
+// which T34 kept below the top three because nothing throttles the GPU for temperature yet. Each change is the boot's HFI
+// GX_BW_PERF_VOTE with that level's bandwidth.
+extern "C" {
+// [0] 1 running, [1] level now, [2] changes, [3] failed votes, [4] busy % over the last 10 s, [5..12] % of those 10 s at the eight
+// highest levels (2..9, 362..1050 MHz on the 3a's bin), [13] touch boosts, [14] wake boosts (sheng's layout, which BootLog.c reads)
+volatile uint32_t native_gpu_dcvs[15];
+extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import));
+}
+uint64_t gpuBusyTicks() {
+    uint32_t hi = 0, lo = 0, hi2 = 0;
+    gxRead(nullptr, GPB_WIN_GMU, GPB_GMU_XOCLK_0_H, &hi);
+    gxRead(nullptr, GPB_WIN_GMU, GPB_GMU_XOCLK_0_L, &lo);
+    gxRead(nullptr, GPB_WIN_GMU, GPB_GMU_XOCLK_0_H, &hi2);
+    if (hi2 != hi) gxRead(nullptr, GPB_WIN_GMU, GPB_GMU_XOCLK_0_L, &lo);
+    return (uint64_t)hi2 << 32 | lo;
+}
+uint64_t gpuMHz(unsigned level) {return gStartup.gpu[level].hz / 1000000;}
+bool gpuVote(unsigned level) {
+    unsigned bw = 0;
+    const unsigned perf = ShengGmuPerfVote(level, &bw);
+    uint32_t error = 0;
+    if (gxVote(nullptr, perf, bw, &error) || error) return false;
+    native_gpu_perf_vote[0] = perf; native_gpu_perf_vote[1] = bw;
+    native_gpu_mhz = uint32_t(gpuMHz(perf));
+    return true;
+}
+unsigned gpuLevelFor(uint64_t mhz, unsigned ceiling) {
+    unsigned l = 1;
+    while (l < ceiling && gpuMHz(l) < mhz) ++l;
+    return l;
+}
+void gpuDcvsThread(void *, wait_result_t) {
+    if (gStartup.gpu_count < 2 || gStartup.gpu_count > 16) return;
+    const unsigned top = unsigned(gStartup.gpu_count) - 1;
+    unsigned ceiling = bootArg("sheng-gpu-dcvs-max", gBootPerf ? gBootPerf : top);
+    if (ceiling < 1) ceiling = 1;
+    if (ceiling > top) ceiling = top;
+    unsigned floor = bootArg("sheng-gpu-dcvs-min", 3);
+    if (floor < 1) floor = 1;
+    if (floor > ceiling) floor = ceiling;
+    const unsigned base = top > 8 ? top - 7 : 1;   // the eight highest levels go to [5..12]
+    unsigned cur = native_gpu_perf_vote[0] ? native_gpu_perf_vote[0] : ceiling;
+    native_gpu_dcvs[0] = 1; native_gpu_dcvs[1] = cur;
+    uint64_t lastBusy = gpuBusyTicks(), lastT = mach_absolute_time(), idleSince = lastT;
+    uint64_t runNs = 0, winBusy = 0, winNs = 0, atLevel[16] = {};
+    unsigned down = 0, hold = 0;
+    uint64_t boostAbs = 0, touchEnd = 0, wakeEnd = 0, wakeAbs = 0;
+    nanoseconds_to_absolutetime((uint64_t)bootArg("sheng-gpu-dcvs-boost-ms", 1000) * 1000000, &boostAbs);
+    nanoseconds_to_absolutetime(50000000ull, &wakeAbs);
+    uint32_t touches = &native_hid_input_events ? native_hid_input_events[6] : 0;
+    bool idle = false;
+    for (;;) {
+        IOSleep(16);
+        const uint64_t busy = gpuBusyTicks(), t = mach_absolute_time();
+        uint64_t ns = 0;
+        absolutetime_to_nanoseconds(t - lastT, &ns);
+        uint64_t busyNs = (busy - lastBusy) * 625 / 12;   // 52.083 ns per XO tick
+        if (busyNs > ns) busyNs = ns;
+        lastBusy = busy; lastT = t;
+        if (!ns) continue;
+        winBusy += busyNs; winNs += ns; atLevel[cur] += ns;
+        uint32_t rptr = 0, wptr = 0;
+        ringRead(nullptr, A810_CP_RB_RPTR, &rptr);
+        ringRead(nullptr, A810_CP_RB_WPTR, &wptr);
+        const bool active = busyNs > 0 || rptr != wptr;
+        const uint64_t need = busyNs * gpuMHz(cur) * 2 / ns;
+        runNs = busyNs * 100 >= ns * 95 ? runNs + ns : 0;
+        unsigned want = cur;
+        if (busyNs * 100 > ns * 85 || runNs >= 50000000ull) {
+            want = ceiling;
+        } else if (gpuLevelFor(need * 11 / 10, ceiling) > cur) {
+            want = gpuLevelFor(need * 11 / 10, ceiling);
+        } else if (active) {
+            if (cur > floor && need * 10 <= gpuMHz(cur - 1) * 8) {
+                if (++down >= 4 + hold) want = cur - 1;
+            } else {
+                down = 0;
+            }
+        } else {
+            uint64_t idleNs = 0;
+            absolutetime_to_nanoseconds(t - idleSince, &idleNs);
+            if (idleNs >= 80000000ull) want = floor;
+        }
+        if (active) idleSince = t;
+        if (!active && want == floor) idle = true;
+        if (active && idle) {
+            idle = false; wakeEnd = t + wakeAbs; native_gpu_dcvs[14] = native_gpu_dcvs[14] + 1;
+        }
+        if (boostAbs && &native_hid_input_events && native_hid_input_events[6] != touches) {
+            touches = native_hid_input_events[6];
+            if (t >= touchEnd) native_gpu_dcvs[13] = native_gpu_dcvs[13] + 1;
+            touchEnd = t + boostAbs;
+        }
+        if (t < touchEnd) want = ceiling;
+        else if (t < wakeEnd) {
+            const unsigned wake = gpuLevelFor(gpuMHz(cur) * 2 > 578 ? gpuMHz(cur) * 2 : 578, ceiling);
+            if (want < wake) want = wake;
+        }
+        if (want < floor) want = floor;
+        if (want > ceiling) want = ceiling;
+        if (want != cur) {
+            if (gpuVote(want)) {hold = want > cur; cur = want; native_gpu_dcvs[1] = cur; native_gpu_dcvs[2] = native_gpu_dcvs[2] + 1;}
+            else native_gpu_dcvs[3] = native_gpu_dcvs[3] + 1;
+            down = 0;
+        }
+        if (winNs >= 10000000000ull) {
+            native_gpu_dcvs[4] = (uint32_t)(winBusy * 100 / winNs);
+            for (unsigned l = base; l <= top && l < base + 8; ++l) native_gpu_dcvs[5 + l - base] = (uint32_t)(atLevel[l] * 100 / winNs);
+            for (unsigned l = 0; l < 16; ++l) atLevel[l] = 0;
+            winBusy = winNs = 0;
+        }
+    }
+}
+void startGpuDcvs() {
+    thread_t thread = nullptr;
+    if (kernel_thread_start(gpuDcvsThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
+    IOLog("ASTEROIDS GPU: dcvs started at level %u (%u MHz)\n", native_gpu_perf_vote[0], native_gpu_mhz);
+}
 void probeThread(void *, wait_result_t) {
     IOSleep(10000);   // after the console and the late probes, as uke does
     native_gpu_power_stage = 2;
@@ -1371,11 +1580,13 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 14) cpStart();
     if (gMode >= 15) zapStart();
     if (gMode >= 16) barStart();
+    if (gMode >= 17 && native_gpu_bar[9] && !native_gpu_bar[10]) irqAttach();
     if (gMode >= 17) ucStart();
     if (gMode >= 19 && native_gpu_power_stage == 0x108) {
         publishMetal();
         metalReport("published");
     }
+    if (gMode >= 17 && native_gpu_power_stage == 0x108 && bootArg("sheng-gpu-dcvs", 0)) startGpuDcvs();
     if (gMode >= 18 && native_gpu_power_stage == 0x108) userWatch();
     native_gpu_power_stage = 4;
 }

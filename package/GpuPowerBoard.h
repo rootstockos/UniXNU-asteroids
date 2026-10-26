@@ -565,6 +565,11 @@ static inline void gpb_gmu_clocks_on(const struct gpb_io *io, struct gpb_result 
 #define GPB_GMU_CM3_CFG GPB_GMU_REG(0x1f82d)
 #define GPB_GMU_AO_COUNTER_L GPB_GMU_REG(0x1f840)
 #define GPB_GMU_AO_COUNTER_H GPB_GMU_REG(0x1f841)
+// T39: the busy counter hw_init enables (POWER_COUNTER_SELECT_XOCLK_0 countable 5, 19.2 MHz ticks while the GPU is busy), at its
+// A8XX offsets (a6xx_gmu.xml at torvalds/linux 734bef548a96: GMU_CX_GMU_POWER_COUNTER_XOCLK_0_L/H variants="A8XX-"; sheng's A740
+// reads 0x1f844/0x1f845).
+#define GPB_GMU_XOCLK_0_L GPB_GMU_REG(0x1fca0)
+#define GPB_GMU_XOCLK_0_H GPB_GMU_REG(0x1fca1)
 #define GPB_GMU_HFI_CTRL_STATUS GPB_GMU_REG(0x1f980)
 #define GPB_GMU_GMU2HOST_INTR_INFO GPB_GMU_REG(0x1f992)
 #define GPB_GMU_GENERAL_8 GPB_GMU_REG(0x1f9c8)

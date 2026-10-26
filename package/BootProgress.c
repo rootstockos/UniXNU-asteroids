@@ -949,6 +949,13 @@ extern volatile uint32_t native_cpufreq_frame[2] __attribute__((weak_import)),na
 extern volatile int32_t native_buttons_stats[10] __attribute__((weak_import));
 extern volatile int32_t native_panel_stats[16] __attribute__((weak_import));
 extern volatile int32_t native_adsp_stats[16] __attribute__((weak_import)),native_battery_stats[16] __attribute__((weak_import));
+extern uint32_t native_gpu_irq[6] __attribute__((weak_import)),native_gpu_perf_vote[2] __attribute__((weak_import));
+extern volatile uint32_t native_gpu_irq_count __attribute__((weak_import)),native_gpu_mhz __attribute__((weak_import));
+extern volatile uint32_t native_gpu_dcvs[15] __attribute__((weak_import));
+extern volatile uint64_t native_gpu_idle_sleeps __attribute__((weak_import)),native_gpu_idle_spins __attribute__((weak_import));
+extern volatile uint64_t native_gpu_idle_timeouts __attribute__((weak_import));
+extern volatile int32_t armdt_platform_rtc_stats[5] __attribute__((weak_import)),qcom_pmic_rtc_stats[7] __attribute__((weak_import));
+extern volatile int32_t native_rtc_offset_status[3] __attribute__((weak_import));
 extern char native_wi_log[4][100] __attribute__((weak_import));
 extern volatile unsigned native_wi_count __attribute__((weak_import));
 extern volatile uint64_t armcpu_timer_interrupts __attribute__((weak_import));
@@ -1046,7 +1053,7 @@ static void crash_banner(unsigned now) {
   if(&boot_ui_trace_role_rows) {
     unsigned fit=(display.height-8)/(14*display.scale),cap=fit>2?fit-2:0;if(cap>48)cap=48;
     static const unsigned roles[3]={1,3,0},limit[3]={8,7,6};
-    for(unsigned k=0;k<3 && n+16+6<=cap;++k){unsigned room=cap-16-n;unsigned got=boot_ui_trace_role_rows(roles[k],rows+n,room<limit[k]?room:limit[k],k==0);n+=got;stack_rows+=got;}
+    for(unsigned k=0;k<3 && n+18+6<=cap;++k){unsigned room=cap-18-n;unsigned got=boot_ui_trace_role_rows(roles[k],rows+n,room<limit[k]?room:limit[k],k==0);n+=got;stack_rows+=got;}
   }
   // Where the time goes: scheduler ticks since the last paint (user/system/idle percent over all cores) and UFS work since then
   // (hashing/verification ms, transport read ms, 4 KiB blocks verified, read requests).
@@ -1090,6 +1097,33 @@ static void crash_banner(unsigned now) {
     snprintf(rows[n++],120,"GOV   d0 c%u %uMHz %u%% | d1 c%u %uMHz %u%% | d2 c%u %uMHz %u%% | boost %u frame %u/%uw",
       native_cpufreq_gov[0],native_cpufreq_gov[1],native_cpufreq_gov[2],native_cpufreq_gov[3],native_cpufreq_gov[4],native_cpufreq_gov[5],
       native_cpufreq_gov[6],native_cpufreq_gov[7],native_cpufreq_gov[8],native_cpufreq_boosts,native_cpufreq_frame[0],native_cpufreq_frame[1]);
+  // asteroids T39: the GPU (GpuPowerProbe.cpp): HFI level and MHz now; the GPU line's attach status, its interrupts, fence waits that
+  // slept, slept to the pause, and spun; the governor's busy % over 10 s, level changes, failed votes, touch and wake boosts.
+  if(&native_gpu_mhz && native_gpu_mhz)
+    snprintf(rows[n++],120,"GPUG  L%u %uMHz | irq a=%x n=%u sleep=%llu to=%llu spin=%llu | dcvs %s busy=%u%% chg=%u fail=%u t=%u w=%u",
+      &native_gpu_perf_vote?native_gpu_perf_vote[0]:0,native_gpu_mhz,&native_gpu_irq?native_gpu_irq[0]:0,
+      &native_gpu_irq_count?native_gpu_irq_count:0,(unsigned long long)(&native_gpu_idle_sleeps?native_gpu_idle_sleeps:0),
+      (unsigned long long)(&native_gpu_idle_timeouts?native_gpu_idle_timeouts:0),(unsigned long long)(&native_gpu_idle_spins?native_gpu_idle_spins:0),
+      &native_gpu_dcvs&&native_gpu_dcvs[0]?"on":"off",&native_gpu_dcvs?native_gpu_dcvs[4]:0,&native_gpu_dcvs?native_gpu_dcvs[2]:0,
+      &native_gpu_dcvs?native_gpu_dcvs[3]:0,&native_gpu_dcvs?native_gpu_dcvs[13]:0,&native_gpu_dcvs?native_gpu_dcvs[14]:0);
+  // asteroids T39: the wall clock (docs/rtc.md): UTC now; ArmDTPlatform's RTC forwarding (1 an RTC declared, 2 found, 3 found
+  // read-only; reads, offset restores, offset stores, the last store's result); QcomPmicRtc (stage, arbiter version, APID, counter,
+  // reads, failed reads, last status); the offset file on Data (restore result, -1 not run; stores; the last store's errno).
+  if(&armdt_platform_rtc_stats && armdt_platform_rtc_stats[0]) {
+    clock_sec_t secs=0;clock_usec_t usecs=0;clock_get_calendar_microtime(&secs,&usecs);
+    // days since 1970-01-01 to the civil date (Howard Hinnant's days_from_civil, inverted)
+    long z=(long)(secs/86400)+719468,era=z/146097;unsigned doe=(unsigned)(z-era*146097),yoe=(doe-doe/1460+doe/36524-doe/146096)/365;
+    unsigned doy=doe-(365*yoe+yoe/4-yoe/100),mp=(5*doy+2)/153,day=doy-(153*mp+2)/5+1,mon=mp<10?mp+3:mp-9;
+    unsigned year=(unsigned)(yoe+era*400+(mon<=2)),sod=(unsigned)(secs%86400);
+    snprintf(rows[n++],120,"RTC   %04u-%02u-%02u %02u:%02u:%02u | plat %d r%d rst%d st%d/%d | pmic %d v%x a%d c%u r%d f%d s%x | file %d st%d e%d",
+      year,mon,day,sod/3600,sod/60%60,sod%60,armdt_platform_rtc_stats[0],armdt_platform_rtc_stats[1],armdt_platform_rtc_stats[2],
+      armdt_platform_rtc_stats[3],armdt_platform_rtc_stats[4],&qcom_pmic_rtc_stats?qcom_pmic_rtc_stats[0]:0,
+      &qcom_pmic_rtc_stats?qcom_pmic_rtc_stats[1]:0,&qcom_pmic_rtc_stats?qcom_pmic_rtc_stats[2]:0,
+      &qcom_pmic_rtc_stats?(unsigned)qcom_pmic_rtc_stats[3]:0,&qcom_pmic_rtc_stats?qcom_pmic_rtc_stats[4]:0,
+      &qcom_pmic_rtc_stats?qcom_pmic_rtc_stats[5]:0,&qcom_pmic_rtc_stats?qcom_pmic_rtc_stats[6]:0,
+      &native_rtc_offset_status?native_rtc_offset_status[0]:-1,&native_rtc_offset_status?native_rtc_offset_status[1]:0,
+      &native_rtc_offset_status?native_rtc_offset_status[2]:0);
+  }
   // asteroids T35: sheng's B log row (ButtonProbe.cpp): stage, interrupts, reports, pressed mask, APIDs, other APIDs cleared, PDC version,
   // last error, spurious interrupts.
   if(&native_buttons_stats && native_buttons_stats[0])

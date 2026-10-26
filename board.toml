@@ -18,10 +18,12 @@ kit = "asteroids"
 # archive), drivers/ShengUfs (rootstockos/NativeUfs fix/unverified-build), drivers/ShengHidInput and kits/AdrenoFirmware
 # (rootstockos/AdrenoFirmware asteroids-a8xx). Dependencies (Sm8550Platform, VirtioMmioBlock, VerifiedRoot, ShengNovatekTouch)
 # are linked into the tree and not built. Sm7635Platform is the SoC profile's GMU kit (UniXNU-sm7635-common).
+# drivers/ArmDTPlatform is a plain copy of UniXNU/ArmDTPlatform 417ff95 plus the wall-clock forwarding to IORTC (T39), until it
+# has a fork repository; QcomPmicRtc is in-tree in rootstockos/UniXNU t36 (drivers/QcomPmicRtc).
 [components]
 include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "RamBlock", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "AppleKeyStoreState",
            "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "ShengHidInput",
-           "Sm7635Platform"]
+           "Sm7635Platform", "QcomPmicRtc"]
 
 # The hardware description: dts/asteroids.dts on the SoC's dts/sm7635.dtsi. The common ADT generator builds the ADT from it.
 [device_tree]
@@ -56,6 +58,8 @@ archives = [
   # Kept: the platform expert (XNU_ARM_DT_PLATFORM) the first boot is meant to reach. Board-independent: it reads
   # /cpus, /arm-io, /defaults, /options and the /chosen NVRAM proxy from the ADT.
   "component:ArmDTPlatform",
+  # T39: the PMK8550 RTC behind the SPMI arbiter (CONFIG_XNU_QCOM_PMIC_RTC), published as IORTC for the platform expert.
+  "component:QcomPmicRtc",
   # Kept: the CPU, GICv3 and timer provider (XNU_ARMCPU). The GIC layout (dist 0x17100000, redist 0x17180000, stride
   # 0x40000) and 19.2 MHz timer are sheng's, taken from the ADT. Secondaries stay off without sheng-smp=1.
   "component:ArmCpu",
@@ -196,7 +200,7 @@ kernel_args = [
   # T28b is the same kernel with t28-power-ack=0.
   # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
   # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
-  "sheng-build-tag=T38",
+  "sheng-build-tag=T39",
   "sheng-cpufreq=4",                  # T35: sheng's CPU governor (touch boost, frame floor); T35b/T36a ran it stable
   "sheng-buttons=1",                  # T35: power and volume through the PMIC interrupt; T36a: work in iOS
   "asteroids-panel=3",                # T37: iOS brightness and panel sleep over DSI0 DCS commands; T37d: works
