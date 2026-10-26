@@ -55,10 +55,10 @@ archives = [
   "build-corecrypto-14.py --namespace",
   # Kept: the platform expert (XNU_ARM_DT_PLATFORM) the first boot is meant to reach. Board-independent: it reads
   # /cpus, /arm-io, /defaults, /options and the /chosen NVRAM proxy from the ADT.
-  "build-arm-driver.py ArmDTPlatform",
+  "component:ArmDTPlatform",
   # Kept: the CPU, GICv3 and timer provider (XNU_ARMCPU). The GIC layout (dist 0x17100000, redist 0x17180000, stride
   # 0x40000) and 19.2 MHz timer are sheng's, taken from the ADT. Secondaries stay off without sheng-smp=1.
-  "build-arm-driver.py ArmCpu",
+  "component:ArmCpu",
   # Restored after the first boot: XNU registers pthread at early boot (panic "pthread kernel extension not loaded"
   # at pthread_shims.c:318 without it). XNU_SOURCE_PTHREAD links this archive.
   "build-libpthread-kernel.py",
@@ -72,16 +72,16 @@ archives = [
   # 0x9e000) and branches (0x77018...0x770e4) are at SM8550's offsets (gcc-volcano.c, the 3a's live DT). Built
   # without the verified-root check (scripts/build-arm-driver.py), which needs signed volume policies not built yet.
   # drivers/NativeUfs is our fork (rootstockos/NativeUfs, fix/unverified-build): upstream did not build that way.
-  "build-arm-driver.py NativeUfs",
+  "component:ShengUfs",
   # NativeUfsBlock's IOBlockStorageDevice imports, bound to the original class in the prelinked bootstrap candidate
   # (uke's binder; CI makes the candidate with scripts/ci-bootstrap-candidate.sh as pre_build).
   "build-ufs-original-bindings.py --candidate build/xnu-prelink/bootstrap-candidate.macho",
   # UFS root, step 2, as on uke: the Data volume (NativeRamBlock, which needs NativeAES; UniXNU binds NativeAES from
   # its recorded original addresses, scripts/data/native-aes-original-bindings.S) and the mockfs fixture.
   # NativeRamBlock's IOBlockStorageDevice imports resolve against NativeUfs's bindings.
-  "build-arm-driver.py NativeAES",
+  "component:SoftwareAES",
   "build-native-aes-bindings.py",
-  "build-arm-driver.py NativeRamBlock",
+  "component:RamBlock",
   "build-mockfs-fixture.py",
   # T25: the boot progress kit (sheng's diagnostics, package/Boot*.c): the live page, user fault evidence, the UI trace of the
   # boot-ui-focus processes, and our launchd watchdog policy (uke's BootWatchdogPolicy.c, formerly build-watchdog-policy.py:
@@ -99,6 +99,12 @@ archives = [
   # The GMU cold start's generated registers and the pinned firmware as a C array (modes 9-10); reads the device repo's
   # .cache, which the CI bootstrap fills (extract-files.py, prepare-asteroids-gmu.py --fetch).
   "prepare-asteroids-gmu.py",
+  # Format 2: every selected component with a kernel recipe needs an entry. AppleKeyStoreState and ShengHidInput build archives the
+  # display archive also compiles from the same sources (harmless); Adreno740 skips itself with XNU_NATIVE_ADRENO off
+  # (scripts/build-arm-driver.py), its GPU code being in the display archive.
+  "component:AppleKeyStoreState",
+  "component:Adreno740",
+  "component:ShengHidInput",
   "build-native-legacy-display.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
   # storage drivers (NativeVirtioBlock, NativeRamBlock); uke's first-console config reached the XNU entry without it.

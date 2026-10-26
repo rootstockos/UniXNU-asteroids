@@ -35,6 +35,14 @@ if (args.verified_root or args.negative_verified_block) and args.component != 'N
 if args.negative_verified_block and not args.verified_root:
     parser.error('The isolated input fault requires verified block mode')
 component = args.component
+# asteroids: format 2 builds every selected component's recipe. A driver whose configuration switch is off is linked by
+# nothing (format 1 never built it), so its recipe is skipped: the GPU driver's code goes into the display archive instead,
+# and there is no VirtIO block device.
+import os, sys
+switch = {'NativeAdreno': 'XNU_NATIVE_ADRENO', 'NativeVirtioBlock': 'XNU_NATIVE_VIRTIO_BLOCK'}.get(component)
+if switch and os.environ.get(switch) == '0':
+    print(f'build-arm-driver: {identifier} skipped ({switch} is off)')
+    sys.exit(0)
 recipe = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
 record = json.loads(recipe.read_text().strip().rstrip(','))
 directory = 'GopFramebuffer' if runtime in ('NativeLegacyDisplay', 'NativeGOPPresenter') else 'AdrenoMetal' if runtime in ('NativeOfflineGPU', 'NativeOfflineAccelerator', 'NativeIOGPUProviderProbe') else identifier
