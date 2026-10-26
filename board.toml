@@ -200,7 +200,7 @@ kernel_args = [
   "sheng-log=1",                      # persistent kernel log at the end of userdata
   # T23, as umi (an iPadOS 17.7.11 phone at Hello with a CPU display): only the four jobs of the XPC wait cycle are
   # left out, not sheng-lite's list of about 25.
-  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd",
+  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,com.apple.coreduetd",  # T35: coreduetd as on sheng (d4c299b): one thread above 50 % of a core for the whole boot
   # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
   # Display, CPU-rendered, as uke boots it: load IOMobileGraphicsFamily, register NativeLegacyDisplay on the GOP
   # framebuffer as the default surface, and present frames drawn by the CPU. offline-hid-* and offline-key-events publish
@@ -235,7 +235,7 @@ kernel_args = [
   # T28b is the same kernel with t28-power-ack=0.
   # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
   # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
-  "sheng-build-tag=T34",
+  "sheng-build-tag=T35",
   "boot-ui-focus4=backboardd",
   # GPU power observation (package/GpuPowerProbe.cpp), one stage per test boot: 1 reads the GCC GPU branches, then GPUCC,
   # SMMU and RBBM only where the previous block shows its clock or power on, and logs each block before touching it

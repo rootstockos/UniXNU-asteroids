@@ -725,9 +725,11 @@ void native_legacy_display_late_probe(void);
 extern void native_hid_input_probe(void);
 extern void native_keystore_probe(void);
 extern void sheng_gpu_power_probe(void);
+extern "C" void sheng_cpufreq_probe(void);
 extern "C" void asteroids_touch_probe(void);
 void native_legacy_display_late_probe(void) {
     native_keystore_probe();
+    sheng_cpufreq_probe();     // asteroids T35: CPU clocks (package/CpuFreqProbe.cpp); nothing without sheng-cpufreq
     sheng_gpu_power_probe();   // asteroids T30: GPU power (package/GpuPowerProbe.cpp); nothing without sheng-gpu-power
     asteroids_touch_probe();   // asteroids T30: touch stage 1 (package/AsteroidsTouchProbe.cpp); nothing without asteroids-touch
     native_hid_input_probe();

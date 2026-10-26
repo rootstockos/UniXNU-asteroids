@@ -134,7 +134,12 @@ def main():
                                    ('reg', struct.pack('<I', reg)),
                                    ('device_type', b'cpu\0'),
                                    ('compatible', b'arm,cortex-a520\0' if reg < 0x400 else b'arm,cortex-a720\0'),
-                                   ('timebase-frequency', struct.pack('<I', TIMEBASE))])
+                                   ('timebase-frequency', struct.pack('<I', TIMEBASE)),
+                                   # T35: XNU reads cluster-type as the character 'E' or 'P' (ml_parse_cpu_topology). The A520 cores
+                                   # are the E cluster, the A720 cores the P cluster, for the Edge scheduler of UniXNU's
+                                   # zzyf-board-amp.patch (MAX_CPU_CLUSTERS 2). A kernel without that patch has one cluster and
+                                   # must not get these: pack an older kernel with its own device commit.
+                                   ('cluster-type', struct.pack('<I', ord('E' if reg < 0x400 else 'P')))])
             for index, reg in enumerate(cpu_regs)]
     tree = node('device-tree', [
         # hw.product/hw.machine/hw.target come from the root 'model'/'target-type' (IODTPlatformExpert);

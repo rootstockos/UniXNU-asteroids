@@ -944,6 +944,8 @@ extern volatile uint64_t native_legacy_copy_sum __attribute__((weak_import));
 extern volatile uint64_t native_legacy_copy_bytes_last __attribute__((weak_import));
 extern volatile uint64_t native_legacy_copy_bytes_sum __attribute__((weak_import));
 extern char native_cpufreq_row[120] __attribute__((weak_import));
+extern volatile uint32_t native_cpufreq_gov[9] __attribute__((weak_import)),native_cpufreq_boosts __attribute__((weak_import));
+extern volatile uint32_t native_cpufreq_frame[2] __attribute__((weak_import)),native_cpufreq_throttle[9] __attribute__((weak_import));
 extern char native_wi_log[4][100] __attribute__((weak_import));
 extern volatile unsigned native_wi_count __attribute__((weak_import));
 extern volatile uint64_t armcpu_timer_interrupts __attribute__((weak_import));
@@ -1079,6 +1081,16 @@ static void crash_banner(unsigned now) {
     for(unsigned i=0;i<3 && i<c;++i)snprintf(rows[n++],120,"%s",native_wi_log[(c-1-i)%4]);
   }
   if(&native_cpufreq_row && native_cpufreq_row[0])snprintf(rows[n++],120,"CPU   %.110s",native_cpufreq_row);
+  // asteroids T35: sheng's [cpu gov] and [cpu throttle] log rows (BootLog.c there): per domain over the last 10 s, level changes, mean MHz
+  // and mean busy % of the busiest CPU; touch boosts, frame floors and their 16 ms windows; busy windows, throttled ones, lowest MHz.
+  if(&native_cpufreq_gov && (native_cpufreq_gov[1] || native_cpufreq_gov[4] || native_cpufreq_gov[7]))
+    snprintf(rows[n++],120,"GOV   d0 c%u %uMHz %u%% | d1 c%u %uMHz %u%% | d2 c%u %uMHz %u%% | boost %u frame %u/%uw",
+      native_cpufreq_gov[0],native_cpufreq_gov[1],native_cpufreq_gov[2],native_cpufreq_gov[3],native_cpufreq_gov[4],native_cpufreq_gov[5],
+      native_cpufreq_gov[6],native_cpufreq_gov[7],native_cpufreq_gov[8],native_cpufreq_boosts,native_cpufreq_frame[0],native_cpufreq_frame[1]);
+  if(&native_cpufreq_throttle && (native_cpufreq_throttle[0] || native_cpufreq_throttle[3] || native_cpufreq_throttle[6]))
+    snprintf(rows[n++],120,"THROT d0 %u/%u low %u | d1 %u/%u low %u | d2 %u/%u low %u",
+      native_cpufreq_throttle[1],native_cpufreq_throttle[0],native_cpufreq_throttle[2],native_cpufreq_throttle[4],native_cpufreq_throttle[3],
+      native_cpufreq_throttle[5],native_cpufreq_throttle[7],native_cpufreq_throttle[6],native_cpufreq_throttle[8]);
   // The extension slots are drawn only on the boot page (display bound); the GPU slots 2-7 also go to the live banner.
   // Slots 2 and 3 carry the IPI self-test and the exec observer from the GPU probe once it has run (before that they hold the early
   // zap/interrupt lines, which are worth seeing too), so the banner shows slots 2-7 as GPU1-GPU6.
