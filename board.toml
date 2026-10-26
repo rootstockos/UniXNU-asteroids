@@ -190,6 +190,7 @@ kernel_args = [
   "-no_slto_panic",                   # kept: generic, avoids the SLTO panic on this non-Apple CPU
   "ml-timeout-lock-panic-scale=40",   # kept: generic; a slow 4 KiB-page bring-up with diagnostics trips lock timeouts
   "armcpu-diagnostics=1",             # kept: generic ArmCpu, prints the CPU and GIC state; first check if interrupts fail
+  "sheng-pmgr=2",                     # kept: also the code default, but UniXNU's payload check requires it here for the UFS root
   # UFS root, step 2, after uke's working set (Allenwdk/UniXNU-uke board.toml) without its display and input:
   "native-ufs-root=1",                # NativeUfs publishes the OS and SystemOS windows of the userdata root image
   "native-ufs-allow-unverified=1",    # without the owner policy bundle (our NativeUfs fork); reads are not authenticated
