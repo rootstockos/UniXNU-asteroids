@@ -256,7 +256,11 @@ require(int(re.search(r'#define GPB_UC_OPEN_TYPE (0x[0-9A-Fa-f]+)u',board_h).gro
         int(re.search(r'NativeAdrenoPluginOpenType=(0x[0-9A-Fa-f]+)',(ROOT/'drivers/Adreno740/NativeAdrenoPublish.cpp').read_text()).group(1),16),
         'GpuPowerBoard.h GPB_UC_OPEN_TYPE and NativeAdreno NativeAdrenoPluginOpenType differ')
 adreno=ROOT/'drivers/Adreno740';smmu4k=ROOT/'kits/ArmSmmu4K';pm4=ROOT/'kits/AdrenoPM4'
-adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-I',str(pm4),'-Wno-incompatible-sysroot',
+# The GMU cold start and command DB are the SoC profile's kit (UniXNU-sm7635-common kits/Sm7635Platform, like sm8550's
+# Sm8550Platform); the board's votes (ShengGmuVotes.c) stay in the device package. NativeAdreno's GMU headers include ShengGmu.h too.
+soc_kit=ROOT/'kits/Sm7635Platform'
+require((soc_kit/'ShengGmu.c').is_file(),'kits/Sm7635Platform is missing (select the Sm7635Platform component)')
+adreno_flags=['-I',str(adreno),'-I',str(smmu4k),'-I',str(pm4),'-I',str(soc_kit),'-Wno-incompatible-sysroot',
               '-DSHENG_GMU_POOL_BASE=UINT64_C(%#x)'%pool_base,'-DSHENG_GMU_POOL_BYTES=%#xu'%pool_bytes]
 def kernel_cxx(src,obj,extra):
     return [str(src) if str(arg)==str(source) else str(obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+extra
@@ -264,10 +268,6 @@ def kernel_cxx(src,obj,extra):
 # headers prepare-asteroids-gmu-votes.py --from-data writes (an earlier archive entry), and the AdrenoFirmware kit's HFI
 # vote, startup and message code (its submodule, branch asteroids-a8xx).
 gmu_gen=ROOT/'build/sheng-gmu';hfi_kit=ROOT/'kits/AdrenoFirmware'
-# The GMU cold start and command DB are the SoC profile's kit (UniXNU-sm7635-common kits/Sm7635Platform, like sm8550's
-# Sm8550Platform); the board's votes (ShengGmuVotes.c) stay in the device package.
-soc_kit=ROOT/'kits/Sm7635Platform'
-require((soc_kit/'ShengGmu.c').is_file(),'kits/Sm7635Platform is missing (select the Sm7635Platform component)')
 for header in ('ShengGmuVotesSource.h','ShengGmuCommandDbSource.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu-votes.py --from-data first')
 # Modes 9-10 run the GMU cold start (ShengGmu.c over AdrenoFirmware.c) on the generated registers and firmware.
