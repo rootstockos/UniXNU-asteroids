@@ -104,7 +104,7 @@ if component in ('NativeVirtioBlock', 'NativeRamBlock', 'NativeUfs'):
         command += ['-DNATIVE_VERIFIED_BLOCK_MULTI_POLICY=1']
 if component == 'NativeUfs':
     # asteroids: the verified-root bundle (owner keys and signed volume policies) is not built yet, so NativeUfs (our fork,
-    # rootstockos/NativeUfs fix/unverified-build) is built without NATIVE_VERIFIED_BLOCK; the kernel reads the root
+    # rootstockos/NativeUfs asteroids) is built without NATIVE_VERIFIED_BLOCK; the kernel reads the root
     # with native-ufs-allow-unverified=1.
     command += ['-I', str(ROOT / 'kits/VerifiedRoot/include'), '-I', str(ROOT / 'drivers/VirtioMmioBlock'),
                 '-mgeneral-regs-only']

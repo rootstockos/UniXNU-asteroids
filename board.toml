@@ -14,9 +14,9 @@ description = "Nothing Phone (3a)"
 kit = "asteroids"
 
 # Components from UniXNU's catalog. Four are this repository's own submodules at their catalog paths, which take precedence over
-# UniXNU's: drivers/Adreno740 (rootstockos/NativeAdreno asteroids-a810, the gen8 fork; its GPU code is compiled into the display
-# archive), drivers/ShengUfs (rootstockos/NativeUfs fix/unverified-build), drivers/ShengHidInput and kits/AdrenoFirmware
-# (rootstockos/AdrenoFirmware asteroids-a8xx). Dependencies (Sm8550Platform, VirtioMmioBlock, VerifiedRoot, ShengNovatekTouch)
+# UniXNU's: drivers/Adreno740 (rootstockos/NativeAdreno asteroids, the gen8 fork; its GPU code is compiled into the display
+# archive), drivers/ShengUfs (rootstockos/NativeUfs asteroids), drivers/ShengHidInput and kits/AdrenoFirmware
+# (rootstockos/AdrenoFirmware asteroids). Dependencies (Sm8550Platform, VirtioMmioBlock, VerifiedRoot, ShengNovatekTouch)
 # are linked into the tree and not built. Sm7635Platform is the SoC profile's GMU kit (UniXNU-sm7635-common).
 # drivers/ArmDTPlatform is a plain copy of UniXNU/ArmDTPlatform 417ff95 plus the wall-clock forwarding to IORTC (T39), until it
 # has a fork repository; QcomPmicRtc is in-tree in rootstockos/UniXNU t36 (drivers/QcomPmicRtc).
@@ -75,7 +75,7 @@ archives = [
   # facts hold on SM7635: host 0x1d84000, apps SMMU 0x15000000 with UFS stream 0x60, and the GCC UFS GDSCs (0x77004,
   # 0x9e000) and branches (0x77018...0x770e4) are at SM8550's offsets (gcc-volcano.c, the 3a's live DT). Built
   # without the verified-root check (scripts/build-arm-driver.py), which needs signed volume policies not built yet.
-  # drivers/NativeUfs is our fork (rootstockos/NativeUfs, fix/unverified-build): upstream did not build that way.
+  # drivers/NativeUfs is our fork (rootstockos/NativeUfs, asteroids): upstream did not build that way.
   "component:ShengUfs",
   # NativeUfsBlock's IOBlockStorageDevice imports, bound to the original class in the prelinked bootstrap candidate
   # (uke's binder; CI makes the candidate with scripts/ci-bootstrap-candidate.sh as pre_build).
@@ -270,7 +270,7 @@ owned_memory_size = "0x130000000"
 payload_in_kernel = true
 
 # Adreno 810 (gen8), from the phone's device tree and mainline Linux; see docs/asteroids-gpu-gen8.md in
-# rootstockos/iosonandng. Not used by the build yet: NativeAdreno (rootstockos/NativeAdreno, asteroids-a810) recognises
+# rootstockos/iosonandng. Not used by the build yet: NativeAdreno (rootstockos/NativeAdreno, asteroids) recognises
 # this chip and refuses to start it until its gen8 paths exist. The firmware is in proprietary-files.txt.
 [gpu]
 model = "Adreno810"

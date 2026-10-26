@@ -288,7 +288,7 @@ def kernel_cxx(src,obj,extra):
     return [str(src) if str(arg)==str(source) else str(obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+extra
 # Mode 6 parses the command DB into the HFI startup table: the device package's ShengGmuVotes.c/ShengGmuCommandDb.c over the
 # headers prepare-asteroids-gmu-votes.py --from-data writes (an earlier archive entry), and the AdrenoFirmware kit's HFI
-# vote, startup and message code (its submodule, branch asteroids-a8xx).
+# vote, startup and message code (its submodule, branch asteroids).
 gmu_gen=ROOT/'build/sheng-gmu';hfi_kit=ROOT/'kits/AdrenoFirmware'
 for header in ('ShengGmuVotesSource.h','ShengGmuCommandDbSource.h'):
     require((gmu_gen/header).is_file(),'build/sheng-gmu/'+header+' is missing; run prepare-asteroids-gmu-votes.py --from-data first')

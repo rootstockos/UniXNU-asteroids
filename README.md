@@ -16,10 +16,10 @@ UniXNU's:
 
 | Module | Repository | Use |
 |---|---|---|
-| `drivers/ShengUfs` | [rootstockos/NativeUfs](https://github.com/rootstockos/NativeUfs) (branch `fix/unverified-build`) | UFS root in `userdata` |
-| `drivers/Adreno740` | [rootstockos/NativeAdreno](https://github.com/rootstockos/NativeAdreno) (branch `asteroids-a810`) | Adreno 810 (gen8): GMU, ring, submits and the user client |
+| `drivers/ShengUfs` | [rootstockos/NativeUfs](https://github.com/rootstockos/NativeUfs) (branch `asteroids`) | UFS root in `userdata` |
+| `drivers/Adreno740` | [rootstockos/NativeAdreno](https://github.com/rootstockos/NativeAdreno) (branch `asteroids`) | Adreno 810 (gen8): GMU, ring, submits and the user client |
 | `drivers/ShengHidInput` | [UniXNU/ShengHidInput](https://github.com/UniXNU/ShengHidInput) | HID touch and buttons |
-| `kits/AdrenoFirmware` | [rootstockos/AdrenoFirmware](https://github.com/rootstockos/AdrenoFirmware) (branch `asteroids-a8xx`) | GMU/HFI kit with the A8xx performance table and votes |
+| `kits/AdrenoFirmware` | [rootstockos/AdrenoFirmware](https://github.com/rootstockos/AdrenoFirmware) (branch `asteroids`) | GMU/HFI kit with the A8xx performance table and votes |
 
 ## State (2026-10-26)
 

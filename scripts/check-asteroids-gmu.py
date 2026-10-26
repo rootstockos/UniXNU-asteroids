@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 args = parser.parse_args()
-kit = ROOT / 'kits/AdrenoFirmware'   # rootstockos/AdrenoFirmware asteroids-a8xx (submodule)
+kit = ROOT / 'kits/AdrenoFirmware'   # rootstockos/AdrenoFirmware asteroids (submodule)
 subprocess.run(['python3', str(ROOT / 'scripts/prepare-asteroids-gmu.py'), '--check'], check=True)
 subprocess.run(['python3', str(ROOT / 'scripts/prepare-asteroids-gmu-votes.py'), '--check'], check=True)
 out = ROOT / 'build/sheng-gmu'
