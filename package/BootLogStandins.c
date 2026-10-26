@@ -110,6 +110,10 @@ WEAK volatile uint64_t native_gpu_idle_spins;
 WEAK uint32_t native_gpu_perf_vote[2];
 WEAK volatile uint32_t native_gpu_dcvs[15];
 
+// Missed by the first generation: defined only in sources this board does not compile (NativeAdrenoService.cpp, sheng's Wi-Fi).
+WEAK volatile uint64_t native_adreno_fence_phys;
+WEAK struct {uint32_t stage, scans, frames, beacons, bss_seen; int last_err;} nw_wifi_stats;
+
 WEAK uint64_t native_ufs_export_blocks(void) { return 0; }
 WEAK int native_ufs_extra_fault(uint32_t *fault) { (void)fault; return 0; }
 WEAK uint32_t native_ufs_dpu_live(unsigned reg) { (void)reg; return 0xdead; }
