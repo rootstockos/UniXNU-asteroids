@@ -42,6 +42,9 @@
 @end
 
 #ifdef ASTEROIDS_METAL_PUBLISH
+// T35: AdrenoMetal's frontend (ce5e19e) reports shader priming (the PR row) from counters UniXNU's own plugin defines through
+// PrimeShaders.h. This plugin does not prime yet, so they stay zero.
+extern "C" {volatile uint32_t native_prime_compiling, native_prime_libraries_done, native_prime_libraries_total, native_prime_made, native_prime_rate;}
 namespace publish {
 // Whether a file of this name is readable beside the bundle (the union view of /System/Library/Extensions; the bundle's own seal stays untouched).
 // T20: where backboardd's threads wait. Each thread that has a QuartzCore frame (the render server's), apart from this plugin's own two, as
