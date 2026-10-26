@@ -36,25 +36,4 @@ void native_touch_published(void) {
     if (sink) sink(gSinkContext);
 }
 
-// The button sink NativeHidInput registers for the power and volume keys; a key driver calls native_buttons_published
-// with its bit mask. Nothing calls it yet on asteroids.
-extern "C" {
-void native_buttons_set_sink(void (*sink)(void *, uint32_t), void *context);
-void native_buttons_published(uint32_t buttons);
-}
-
-namespace {
-void (*gButtonSink)(void *, uint32_t);
-void *gButtonContext;
-}
-
-void native_buttons_set_sink(void (*sink)(void *, uint32_t), void *context) {
-    __atomic_store_n(&gButtonSink, nullptr, __ATOMIC_SEQ_CST);
-    __atomic_store_n(&gButtonContext, context, __ATOMIC_SEQ_CST);
-    __atomic_store_n(&gButtonSink, sink, __ATOMIC_SEQ_CST);
-}
-
-void native_buttons_published(uint32_t buttons) {
-    void (*sink)(void *, uint32_t) = __atomic_load_n(&gButtonSink, __ATOMIC_SEQ_CST);
-    if (sink) sink(__atomic_load_n(&gButtonContext, __ATOMIC_SEQ_CST), buttons);
-}
+// T35: the button sink (native_buttons_set_sink) is ButtonProbe.cpp's, sheng's driver for the power and volume keys.
