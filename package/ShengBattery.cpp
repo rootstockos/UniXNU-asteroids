@@ -7,7 +7,9 @@
 // Design: everything runs on the service's work loop. The DSP thread's callbacks only copy a message into a small ring and signal an
 // IOInterruptEventSource (no provider: a software event), so the DSP thread never waits for this driver. One request is in flight at a
 // time; a 2 s timer gives up on an unanswered one. Battery notifications start a refresh at once, and a 60 s timer refreshes in any case
-// (the fields that hardly change, every tenth time). Charging itself is the DSP firmware's; the one setting written is the input current
+// (the fields that hardly change, every tenth time). asteroids (T38d): the notifications are asked for in both forms, the 3a's downstream
+// one first (ShengBattmgr.h), since with no notifications a plug or unplug showed only at the next 60 s refresh; and a change of the
+// external or charging state is published as soon as its field is read, without waiting for the rest of the cycle. Charging itself is the DSP firmware's; the one setting written is the input current
 // limit on a computer's USB port (ShengBattmgr.c; boot argument sheng-usb-sdp-ma, 0 leaves the firmware's limit).
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
@@ -29,7 +31,7 @@ extern "C" {
 extern "C" ShengAdspChannel *sheng_adsp_channel(const char *, uint32_t, uint32_t, int, const ShengAdspClient *, void *) __attribute__((weak_import));
 extern "C" int sheng_adsp_send(ShengAdspChannel *, const void *, uint32_t) __attribute__((weak_import));
 // [0] stage (1 class up, 2 channel registered, 3 channel up, 4 published; negative: the step that failed), [1] percent, [2] mV,
-// [3] mA, [4] temperature (raw), [5] flags (bit 0 present, 1 external, 2 charging, 3 full, 4 notifications enabled), [6] refresh
+// [3] mA, [4] temperature (raw), [5] flags (bit 0 present, 1 external, 2 charging, 3 full, 4-5 the enable forms acknowledged), [6] refresh
 // cycles, [7] answers, [8] timeouts | errors << 16, [9] notifications, [10] USB type (raw), [11] full mAh, [12] design mAh,
 // [13] cycles, [14] messages dropped (ring full) | ignored << 16, [15] send refusals
 extern "C" {extern volatile int32_t native_battery_stats[16];}
@@ -56,7 +58,7 @@ class ShengBattery : public IOPMPowerSource {
     struct {uint32_t length; uint8_t data[kMessage];} ring[kRing];
     uint32_t ringHead = 0, ringCount = 0;
     volatile uint32_t channelUp = 0, channelChanged = 0;
-    bool wasUp = false, published = false;
+    bool wasUp = false, published = false, shownExternal = false, shownCharging = false;
     uint32_t refreshes = 0;
     ShengBattmgr bm;
     uint32_t sdpLimit = 0;
@@ -169,7 +171,16 @@ class ShengBattery : public IOPMPowerSource {
             registerService();
             native_battery_stats[0] = 4;
         }
+        shownExternal = s.external;
+        shownCharging = s.charging;
         updateStatus();
+    }
+    // An answer in the middle of a cycle: publish now when it changed whether a charger is connected or the battery charges.
+    bool plugChanged() {
+        if (!published) return false;
+        ShengBatterySnapshot s;
+        sheng_battmgr_snapshot(&bm, &s);
+        return (bool)s.external != shownExternal || (bool)s.charging != shownCharging;
     }
     void counters() {
         native_battery_stats[6] = (int32_t)bm.cycles_done;
@@ -179,7 +190,7 @@ class ShengBattery : public IOPMPowerSource {
         native_battery_stats[14] = (native_battery_stats[14] & 0xffff) | (int32_t)(bm.ignored << 16);
     }
     void handle(int result) {
-        if (result == BmCycleDone) publish();
+        if (result == BmCycleDone || (result == BmAnswer && plugChanged())) publish();
         pump();
         counters();
     }
@@ -192,7 +203,8 @@ class ShengBattery : public IOPMPowerSource {
             if (up && !self->wasUp) {
                 native_battery_stats[0] = self->published ? 4 : 3;
                 uint8_t enable[SHENG_BATTMGR_ENABLE_BYTES];
-                sheng_adsp_send(self->channel, enable, sheng_battmgr_enable_request(enable));
+                sheng_adsp_send(self->channel, enable, sheng_battmgr_enable_request(enable, SHENG_BATTMGR_TYPE_NOTIFY));
+                sheng_adsp_send(self->channel, enable, sheng_battmgr_enable_request(enable, SHENG_BATTMGR_TYPE_REQUEST));
                 sheng_battmgr_refresh(&self->bm, 1);
                 self->pump();
                 self->refresh->setTimeoutMS(kRefreshMs);

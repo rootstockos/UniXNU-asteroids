@@ -63,13 +63,15 @@ void sheng_battmgr_init(ShengBattmgr *b)
     b->limit_port = -1;
 }
 
-uint32_t sheng_battmgr_enable_request(uint8_t out[SHENG_BATTMGR_ENABLE_BYTES])
+uint32_t sheng_battmgr_enable_request(uint8_t out[SHENG_BATTMGR_ENABLE_BYTES], uint32_t type)
 {
+    const int notify = type == SHENG_BATTMGR_TYPE_NOTIFY;
     header(out, SHENG_BATTMGR_OP_REQUEST_NOTIFICATION);
-    put32(out + 12, 0);    /* battery 0 */
-    put32(out + 16, 0);    /* power state */
-    put32(out + 20, 1);    /* low capacity notification threshold, percent */
-    put32(out + 24, 100);  /* high */
+    put32(out + 4, notify ? SHENG_BATTMGR_TYPE_NOTIFY : SHENG_BATTMGR_TYPE_REQUEST);
+    put32(out + 12, 0);               /* battery 0 */
+    put32(out + 16, 0);               /* power state */
+    put32(out + 20, notify ? 0 : 1);  /* low capacity notification threshold, percent */
+    put32(out + 24, notify ? 0 : 100);  /* high */
     return SHENG_BATTMGR_ENABLE_BYTES;
 }
 
@@ -169,8 +171,9 @@ int sheng_battmgr_receive(ShengBattmgr *b, const uint8_t *data, uint32_t length)
         sheng_battmgr_refresh(b, 0);
         return BmNotified;
     }
+    /* The acknowledgement echoes the enable request's header, so it comes back with either type. */
+    if (opcode == SHENG_BATTMGR_OP_REQUEST_NOTIFICATION) {b->enabled |= type == SHENG_BATTMGR_TYPE_NOTIFY ? 2 : 1; return BmEnabled;}
     if (type != SHENG_BATTMGR_TYPE_REQUEST) {b->ignored++; return BmIgnored;}
-    if (opcode == SHENG_BATTMGR_OP_REQUEST_NOTIFICATION) {b->enabled = 1; return BmEnabled;}
     if (opcode == SHENG_BATTMGR_OP_USB_SET) {
         if (!b->limit_in_flight || length < 24) {b->ignored++; return BmIgnored;}
         b->limit_result = (int32_t)le32(data + 20);

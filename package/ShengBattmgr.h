@@ -40,7 +40,8 @@ enum {
 typedef struct {
     int32_t value[BmFields];
     uint32_t valid;               /* bit per field */
-    uint8_t cursor, in_flight, enabled, slow_due;
+    uint8_t cursor, in_flight, slow_due;
+    uint8_t enabled;              /* the enable requests the firmware acknowledged: bit 0 the request form, bit 1 the notify form */
     uint32_t cycles_done, responses, notifications, errors, timeouts, ignored;
     uint32_t refresh_wanted;      /* a notification asked for a new cycle while one ran */
     int last_timeout;             /* the field the last timeout skipped, -1 none */
@@ -71,8 +72,10 @@ typedef struct {
 enum {BmIgnored = 0, BmAnswer = 1, BmCycleDone = 2, BmNotified = 3, BmEnabled = 4};
 
 void sheng_battmgr_init(ShengBattmgr *b);
-/* The notification enable request (sent once the channel is up). */
-uint32_t sheng_battmgr_enable_request(uint8_t out[SHENG_BATTMGR_ENABLE_BYTES]);
+/* The notification enable request (sent once the channel is up). type SHENG_BATTMGR_TYPE_REQUEST is upstream Linux's form (qcom_battmgr:
+ * thresholds 1 and 100 percent); SHENG_BATTMGR_TYPE_NOTIFY is the form Qualcomm's downstream driver sends (qti_battery_charger.c, the
+ * 3a's: type notify, every field 0). */
+uint32_t sheng_battmgr_enable_request(uint8_t out[SHENG_BATTMGR_ENABLE_BYTES], uint32_t type);
 /* Starts a refresh cycle (no effect while one runs: it is remembered and runs after). slow: also the fields that hardly change. */
 void sheng_battmgr_refresh(ShengBattmgr *b, int slow);
 /* The next request: an input current limit due after the last cycle, else the running cycle's next field; 0 when nothing is to be
