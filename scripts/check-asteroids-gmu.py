@@ -46,4 +46,4 @@ subprocess.run(['clang', '-std=c11', '-O1', '-Wall', '-Wextra', '-Werror', '-DSH
                 str(ROOT / 'package/ShengGmuVotes.c'), str(soc_kit / 'ShengGmuCommandDb.c'), str(kit / 'AdrenoHfiVotes.c'),
                 str(kit / 'AdrenoFirmware.c'), str(hfi), str(kit / 'AdrenoHfiStartup.c'),
                 '-o', str(binary)], check=True)
-subprocess.run([str(binary), str(ROOT / '.cache/firmware/asteroids-gpu/gen80300_gmu.bin')], check=True)
+subprocess.run([str(binary), str(ROOT / '.cache/firmware/gen80300_gmu.bin')], check=True)

@@ -28,11 +28,11 @@ result = "Format 2 board configuration with the SM7635 SoC and 21H461 OS profile
 id = "firmware"
 status = "implemented"
 components = ["DarwinBoot"]
-paths = ["scripts/fetch-asteroids-gpu-firmware.py", "scripts/patch-xnu-entry-probe.py", "scripts/xnu-panic-screen.c"]
+paths = ["proprietary-files.txt", "scripts/extract-files.py", "scripts/fetch-asteroids-gpu-firmware.py", "scripts/patch-xnu-entry-probe.py", "scripts/xnu-panic-screen.c"]
 inputs = ["rootstockos/uefi-asteroids (Mu-Silicium VolcanoPkg and asteroidsPkg) with UniXNU, UniXNUDxe and DarwinBoot.", "The 3a's ABL loads the boot image with fastboot boot; it ignores the boot image's ramdisk."]
 configuration = ["[bootimg] payload_in_kernel = true: the payload rides in the kernel image and ShengBootMemoryDxe finds it in the Kernel memory region."]
 procedure = ["Build the payload and boot image with ./unixnu build payload and ./unixnu bootimg --dtb (the phone's live DTB), then fastboot boot the image."]
-findings = ["The ABL passes the vendor_boot and init_boot ramdisks plus bootconfig as the initrd, never the boot image's own ramdisk."]
+findings = ["The ABL passes the vendor_boot and init_boot ramdisks plus bootconfig as the initrd, never the boot image's own ramdisk.", "Proprietary files follow sheng's method: proprietary-files.txt with an @fetch source and SHA-256 per file, put in .cache/firmware by scripts/extract-files.py (which falls back to curl when Python has no CA store)."]
 completion = ["Firmware image builds, enters UniXNU, publishes the framebuffer and preserves the documented memory reservations."]
 limits = ["Images are booted from RAM only (fastboot boot); nothing is flashed."]
 next_action = ["Record the firmware revision with each boot image."]
@@ -143,7 +143,7 @@ id = "gpu"
 status = "implemented"
 components = ["Adreno740", "AdrenoFirmware", "AdrenoPM4", "ArmSmmu4K", "Sm7635Platform", "Sm8550Platform"]
 paths = ["drivers/Adreno740", "drivers/NativeAdreno", "kits/AdrenoFirmware", "package/Gpu*", "package/ShengGmu*", "package/AsteroidsMetalPlugin.mm", "package/AsteroidsGpuUserTest.cpp", "package/OriginalAcceleratorABI.h", "scripts/*gpu*", "scripts/*gmu*", "scripts/*turnip*", "scripts/*metal*", "scripts/shader_tools.py", "scripts/data/**"]
-inputs = ["Adreno 810 (gen8, chip 0x44010000) at 0x3d00000 with GMU, RSCC and SMMU; firmware gen80300 from the pinned vendor repository."]
+inputs = ["Adreno 810 (gen8, chip 0x44010000) at 0x3d00000 with GMU, RSCC and SMMU; firmware gen80300 from proprietary-files.txt (scripts/extract-files.py, the pinned NullDebris vendor repository)."]
 configuration = ["sheng-gpu-power=19, sheng-gpu-addon=1, sheng-gpu-level=6 (763 MHz); the Metal plugin and Turnip are built on the Mac into the payload addon."]
 procedure = ["Build the kernel in CI, the addon with scripts/build-asteroids-metal-plugin.py --published, pack and boot."]
 findings = ["The gen8 GMU cold start and command-database parser are the SoC kit Sm7635Platform (UniXNU-sm7635-common), as sheng's are Sm8550Platform; the board keeps ShengGmuVotes.c. scripts/check-asteroids-gmu.py passes against the kit.", "The render server composites on the A810 (window server ready in 1.9 s instead of 30.8 s).", "The GPU clock does not limit the frame rate: 1050 MHz was barely faster than 763 MHz."]

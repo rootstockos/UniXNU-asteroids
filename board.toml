@@ -97,7 +97,7 @@ archives = [
   # come from scripts/data/a810-gmu-votes.json (derived locally from the phone's DT, which is not committed).
   "prepare-asteroids-gmu-votes.py --from-data",
   # The GMU cold start's generated registers and the pinned firmware as a C array (modes 9-10); reads the device repo's
-  # .cache, which the CI bootstrap fills (fetch-asteroids-gpu-firmware.py, prepare-asteroids-gmu.py --fetch).
+  # .cache, which the CI bootstrap fills (extract-files.py, prepare-asteroids-gmu.py --fetch).
   "prepare-asteroids-gmu.py",
   "build-native-legacy-display.py",
   # Dropped: "build-arm-driver.py NativeAES" and "build-native-aes-bindings.py". NativeAES is only needed by the
@@ -151,10 +151,7 @@ payload_in_kernel = true
 
 # Adreno 810 (gen8), from the phone's device tree and mainline Linux; see docs/asteroids-gpu-gen8.md in
 # rootstockos/iosonandng. Not used by the build yet: NativeAdreno (rootstockos/NativeAdreno, asteroids-a810) recognises
-# this chip and refuses to start it until its gen8 paths exist. The firmware is Qualcomm's and is never committed:
-# it is staged in .cache/firmware/asteroids-gpu (ignored), taken from the public 3a vendor-blob repositories
-# NullDebris/ and Asteroids-AOSPA/proprietary_vendor_nothing_asteroids (proprietary/vendor/firmware), which have
-# identical files. The pins below are what a build checks.
+# this chip and refuses to start it until its gen8 paths exist. The firmware is in proprietary-files.txt.
 [gpu]
 model = "Adreno810"
 chip_id = "0x44010000"                 # mainline a6xx_catalog.c; the phone's DT has no qcom,chipid, so the ADT must add it
@@ -188,26 +185,8 @@ preempt_record_bytes = "0x473800"      # 4558 KiB
 ubwc_version = 4                       # mainline milos_data, and qcom,ubwc-mode = <4> in the DT
 highest_bank_bit = 14                  # LPDDR4X (the DT display node: DDR type 7 -> 14, type 8 -> 15)
 zap_region = "gpu_microcode_region@9ea9a000"
-firmware_sqe = ["gen80300_sqe.fw"]
-firmware_gmu = ["gen80300_gmu.bin"]
-firmware_zap = ["gen80300_zap.mbn"]
-# Fetched at build time by scripts/fetch-asteroids-gpu-firmware.py from this one source and commit only, checked against
-# the pins below, never committed. The blobs are identical on every NullDebris branch from lineage-23.1 to 24.0.
-firmware_repository = "https://gitlab.com/NullDebris/proprietary_vendor_nothing_asteroids"
-firmware_commit = "7d498e06705f7de4ecbe6fb932ac19ce0995e148"   # lineage-24.0, 2026-10-18
-firmware_path = "proprietary/vendor/firmware"
-
-[gpu.firmware_pins."gen80300_sqe.fw"]
-bytes = 85844
-sha256 = "046f5aea37fd8ec09af247edb07b9266bfecdbf6220ed5b2b56ed988fc6f5d5f"
-
-[gpu.firmware_pins."gen80300_gmu.bin"]
-bytes = 88708
-sha256 = "6adcbf43b162fb4bdc00154824f44c5f96d82a223cfbe7012d5904098f5bf2fc"
-
-[gpu.firmware_pins."gen80300_zap.mbn"]
-bytes = 12088
-sha256 = "c236c61cb64c3340c7003df5e580769fc4ab1fd054ee016469197bfdbb0b3ed5"
+# The firmware (gen80300 sqe, gmu and zap) is Qualcomm's and never committed: proprietary-files.txt pins it, and
+# scripts/extract-files.py puts it in .cache/firmware from NullDebris's vendor repository at one commit.
 
 [firmware]
 config = "asteroids"               # Resources/Configs/asteroids.toml in the Mu-Silicium checkout (--uefi)

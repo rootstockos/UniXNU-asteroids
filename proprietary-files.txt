@@ -1,0 +1,10 @@
+# Firmware paths and SHA-256 digests for scripts/extract-files.py.
+# Files are written under .cache/firmware/.
+# Format: path|sha256. Prefix a path with - for an optional file.
+# The one source: NullDebris's 3a vendor repository on GitLab (https://gitlab.com/NullDebris/proprietary_vendor_nothing_asteroids), lineage-24.0, 2026-10-18.
+@fetch https://gitlab.com/NullDebris/proprietary_vendor_nothing_asteroids/-/raw/7d498e06705f7de4ecbe6fb932ac19ce0995e148/proprietary/vendor/firmware/
+
+# GPU (Adreno 810, gen80300)
+gen80300_sqe.fw|046f5aea37fd8ec09af247edb07b9266bfecdbf6220ed5b2b56ed988fc6f5d5f
+gen80300_gmu.bin|6adcbf43b162fb4bdc00154824f44c5f96d82a223cfbe7012d5904098f5bf2fc
+gen80300_zap.mbn|c236c61cb64c3340c7003df5e580769fc4ab1fd054ee016469197bfdbb0b3ed5

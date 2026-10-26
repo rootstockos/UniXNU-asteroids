@@ -26,10 +26,10 @@ heartbeat() {
 heartbeat &
 beat=$!
 trap 'kill "$beat" 2>/dev/null || true' EXIT
-# The A810 firmware, from board.toml's one pinned source; checked against its pins. The workflow's last step deletes
-# device/.cache/firmware.
+# The A810 firmware: proprietary-files.txt's files from its one pinned source, checked against their SHA-256
+# (scripts/extract-files.py, as sheng does). The workflow's last step deletes device/.cache/firmware.
 stage "fetch the A810 firmware"
-python3 "$device/scripts/fetch-asteroids-gpu-firmware.py"
+python3 "$device/scripts/extract-files.py" --device "$device"
 # The pinned linux sources for the GMU register header (sparse checkout in device/.cache/linux-a8xx); the archive step
 # generates the tree's copy from the same inputs.
 stage "fetch the pinned linux sources for the GMU header"
