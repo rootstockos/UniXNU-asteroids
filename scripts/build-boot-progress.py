@@ -53,7 +53,9 @@ for name, record, flags in [
         ('BootLog.c', osfmk, osfmk_flags),
         ('BootLogStandins.c', osfmk, osfmk_flags),
         ('BootWatchdogPolicy.c', bsd, strict),
-        ('BootDiagExport.c', bsd, strict)]:
+        ('BootDiagExport.c', bsd, strict),
+        # T38: the audio DSP's firmware reader (sheng's AdspFirmware.c: the modem partition, or files through the VFS).
+        ('AdspFirmware.c', bsd, strict)]:
     obj = OUT / (Path(name).stem + '.o')
     compile_command(record, KIT / name, obj, flags, record == osfmk)
     objects.append(obj)

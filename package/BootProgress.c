@@ -948,6 +948,7 @@ extern volatile uint32_t native_cpufreq_gov[9] __attribute__((weak_import)),nati
 extern volatile uint32_t native_cpufreq_frame[2] __attribute__((weak_import)),native_cpufreq_throttle[9] __attribute__((weak_import));
 extern volatile int32_t native_buttons_stats[10] __attribute__((weak_import));
 extern volatile int32_t native_panel_stats[16] __attribute__((weak_import));
+extern volatile int32_t native_adsp_stats[16] __attribute__((weak_import)),native_battery_stats[16] __attribute__((weak_import));
 extern char native_wi_log[4][100] __attribute__((weak_import));
 extern volatile unsigned native_wi_count __attribute__((weak_import));
 extern volatile uint64_t armcpu_timer_interrupts __attribute__((weak_import));
@@ -1095,6 +1096,15 @@ static void crash_banner(unsigned now) {
     snprintf(rows[n++],120,"BTN   st=%d irq=%d rep=%d mask=%x apid=%d/%d off=%d pdc=%x err=%d spur=%d",native_buttons_stats[0],
       native_buttons_stats[1],native_buttons_stats[2],(unsigned)native_buttons_stats[3],native_buttons_stats[4],native_buttons_stats[5],
       native_buttons_stats[6],(unsigned)native_buttons_stats[7],native_buttons_stats[8],native_buttons_stats[9]);
+  // asteroids T38: the audio DSP (AdspProbe.cpp: stage, last error, IPCC interrupts, its SMP2P bits, SMEM items found, firmware KiB, ms to
+  // ready, GLINK in/out, channels) and the battery (ShengBattery.cpp: stage, percent, mV, mA, flags, answers, timeouts|errors<<16).
+  if(&native_adsp_stats && native_adsp_stats[0])
+    snprintf(rows[n++],120,"DSP   st=%d err=%d ipcc=%d s2p=%x items=%x fw=%dK rdy=%dms gl=%d/%d ch=%x | BAT st=%d %d%% %dmV %dmA f=%x a=%d t=%x",
+      native_adsp_stats[0],native_adsp_stats[1],native_adsp_stats[2],(unsigned)native_adsp_stats[3],(unsigned)native_adsp_stats[4],
+      native_adsp_stats[7],native_adsp_stats[8],native_adsp_stats[9],native_adsp_stats[10],(unsigned)native_adsp_stats[11],
+      &native_battery_stats?native_battery_stats[0]:0,&native_battery_stats?native_battery_stats[1]:0,&native_battery_stats?native_battery_stats[2]:0,
+      &native_battery_stats?native_battery_stats[3]:0,&native_battery_stats?(unsigned)native_battery_stats[5]:0u,
+      &native_battery_stats?native_battery_stats[7]:0,&native_battery_stats?(unsigned)native_battery_stats[8]:0u);
   // asteroids T37: the panel (PanelProbe.cpp): stage, DSI0 HW_VERSION, DSI_CTRL, DMA_CTRL, TRIG_CTRL, INT_CTRL, VIDEO_MODE_ACTIVE_V, commands
   // sent / timed out, last command's microseconds, last level, panel on, brightness requests, last error, scheduled line.
   if(&native_panel_stats && native_panel_stats[0])

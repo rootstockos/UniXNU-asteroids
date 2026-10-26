@@ -238,6 +238,17 @@ backlight_obj=OUT/'AsteroidsBacklight.o';backlight_late=OUT/'AsteroidsBacklight.
 run([str(backlight_source) if str(arg)==str(source) else str(backlight_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_AsteroidsBacklight.cpp',
      backlight_obj,backlight_late])
+adsp_source=ROOT/'kits/asteroids/AdspProbe.cpp'
+adsp_obj=OUT/'AdspProbe.o'
+run([str(adsp_source) if str(arg)==str(source) else str(adsp_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+battery_source=ROOT/'kits/asteroids/BatteryProbe.cpp'
+battery_obj=OUT/'BatteryProbe.o'
+run([str(battery_source) if str(arg)==str(source) else str(battery_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+battery_class_source=ROOT/'kits/asteroids/ShengBattery.cpp'
+battery_class_obj=OUT/'ShengBattery.o';battery_class_late=OUT/'ShengBattery.late.o'
+run([str(battery_class_source) if str(arg)==str(source) else str(battery_class_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
+run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_ShengBattery.cpp',
+     battery_class_obj,battery_class_late])
 # asteroids T35: sheng's power and volume buttons (package/ButtonProbe.cpp, sheng-buttons=1) with its arbiter helpers (BootResetCore.h).
 buttons_source=ROOT/'kits/asteroids/ButtonProbe.cpp'
 buttons_obj=OUT/'ButtonProbe.o'
@@ -361,8 +372,11 @@ for src in vote_sources:
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
         vote_flags,cwd=pr['directory'])
 touch_kit_sources=[geni/'GeniSpi.c',ROOT/'kits/asteroids/QcomRpmh.c']
+# asteroids T38: sheng's audio DSP bring-up (sheng-adsp) and its protocol cores, without sheng's audio and Wi-Fi modules; QcomRpmh.c is
+# shared with touch. The battery power source (sheng-battery, ShengBattery.cpp) stages its class as the brightness service does.
+adsp_kit_sources=[ROOT/'kits/asteroids'/(n+'.c') for n in ('QcomMdt','FatVolume','QcomQrtr','ShengQrtr','QcomSmem','QcomSmp2p','QcomGlink','QcomQmp','ShengBattmgr')]
 touch_kit_objs=[]
-for src in touch_kit_sources:
+for src in touch_kit_sources+adsp_kit_sources:
     touch_kit_objs.append(OUT/(src.stem+'.touch.o'))
     run([str(src) if arg==str(process_source) else str(touch_kit_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
         ['-I',str(geni),'-I',str(ROOT/'kits/asteroids')],cwd=pr['directory'])
@@ -382,10 +396,10 @@ run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func',
      keyevents/'NativeKeyStoreEvents.o',keyevents_late])
 require(code((keyevents/'NativeKeyStoreEvents.o').read_bytes(),macho((keyevents/'NativeKeyStoreEvents.o').read_bytes()))==
         code(keyevents_late.read_bytes(),macho(keyevents_late.read_bytes())),'Owned event-service instructions unchanged by late init staging')
-run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,cpufreq_obj,buttons_obj,panel_obj,backlight_late,keystore_obj,
+run(['xcrun','ar','rcs',archive,late,OUT/'original-bindings.o',OUT/'LegacyDisplayProbe.o',hid_obj,cpufreq_obj,buttons_obj,panel_obj,backlight_late,adsp_obj,battery_obj,battery_class_late,keystore_obj,
      hid_dir/'NativeHidInput.late.o',hid_dir/'hid-original-bindings.o',keyevents_late,stub_obj,touch_state_obj,touch_probe_obj,*touch_kit_objs,gpupower_obj,*gmu_objs])
 sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
-         ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,hid_source,cpufreq_source,buttons_source,panel_source,backlight_source,ROOT/'kits/asteroids/BootResetCore.h',keystore_source,
+         ROOT/'drivers/GopFramebuffer/NativeLegacyRequest.h',source,hid_source,cpufreq_source,buttons_source,panel_source,backlight_source,adsp_source,battery_source,battery_class_source,*adsp_kit_sources,ROOT/'kits/asteroids/BootResetCore.h',keystore_source,
          ROOT/'drivers/ShengHidInput/NativeHidInput.cpp',ROOT/'scripts/build-sheng-hid-input.py',
          ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,touch_probe_source,*touch_kit_sources,ROOT/'kits/asteroids/QcomRpmh.h',
          ROOT/'kits/asteroids/SmmuBypass.h',geni/'GeniSpi.h',gpupower_source,

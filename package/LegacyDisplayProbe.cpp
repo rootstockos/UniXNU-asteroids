@@ -728,6 +728,8 @@ extern void sheng_gpu_power_probe(void);
 extern "C" void sheng_cpufreq_probe(void);
 extern "C" void sheng_buttons_probe(void);
 extern "C" void asteroids_panel_probe(void);
+extern "C" void sheng_adsp_probe(void);
+extern "C" void sheng_battery_probe(void);
 extern "C" void asteroids_touch_probe(void);
 void native_legacy_display_late_probe(void) {
     native_keystore_probe();
@@ -736,6 +738,8 @@ void native_legacy_display_late_probe(void) {
     asteroids_touch_probe();   // asteroids T30: touch stage 1 (package/AsteroidsTouchProbe.cpp); nothing without asteroids-touch
     sheng_buttons_probe();     // asteroids T35: power and volume buttons (package/ButtonProbe.cpp); nothing without sheng-buttons=1
     asteroids_panel_probe();   // asteroids T37: panel brightness and sleep (package/PanelProbe.cpp); nothing without asteroids-panel
+    sheng_adsp_probe();        // asteroids T38: the audio DSP (package/AdspProbe.cpp); nothing without sheng-adsp
+    sheng_battery_probe();     // asteroids T38: battery and charger from the DSP (package/BatteryProbe.cpp); nothing without sheng-battery
     native_hid_input_probe();
     IOService *display=pendingLegacyDisplay;if(!display)return;pendingLegacyDisplay=nullptr;
     native_legacy_surface_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface");
