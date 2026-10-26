@@ -696,7 +696,8 @@ void cpStart() {
     if (ringWrite(nullptr, A810_CP_SQE_INSTR_BASE, uint32_t(sqe)) || ringWrite(nullptr, A810_CP_SQE_INSTR_BASE + 1, uint32_t(sqe >> 32))) {
         IOLog("ASTEROIDS GPU: cp SQE base write failed\n"); return;
     }
-    const NativeAdrenoRingIo rio{nullptr, ringWrite, ringRead, ringBarrier};
+    // No GMU AHB fence status yet (fence_cookie, fence_status): WPTR writes are not checked, as before Adreno740 5c8c145.
+    const NativeAdrenoRingIo rio{nullptr, ringWrite, ringRead, ringBarrier, nullptr, nullptr};
     const NativeAdrenoRingCache cache{nullptr, ringPublish, ringAcquire};
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
