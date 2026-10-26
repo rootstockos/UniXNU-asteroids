@@ -197,6 +197,9 @@ kernel_args = [
   # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
   # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
   "sheng-build-tag=T37",
+  "sheng-cpufreq=4",                  # T35: sheng's CPU governor (touch boost, frame floor); T35b/T36a ran it stable
+  "sheng-buttons=1",                  # T35: power and volume through the PMIC interrupt; T36a: work in iOS
+  "asteroids-panel=3",                # T37: iOS brightness and panel sleep over DSI0 DCS commands; T37d: works
   "boot-ui-focus4=backboardd",
   # GPU power observation (package/GpuPowerProbe.cpp), one stage per test boot: 1 reads the GCC GPU branches, then GPUCC,
   # SMMU and RBBM only where the previous block shows its clock or power on, and logs each block before touching it
