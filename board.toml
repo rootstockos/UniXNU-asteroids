@@ -200,8 +200,17 @@ kernel_args = [
   # T28b is the same kernel with t28-power-ack=0.
   # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
   # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
-  "sheng-build-tag=T39",
+  "sheng-build-tag=T40",
   "sheng-cpufreq=4",                  # T35: sheng's CPU governor (touch boost, frame floor); T35b/T36a ran it stable
+  # T40c: sheng's GPU governor (GpuPowerProbe gpuDcvsThread, UniXNU-sheng a338c71/36ec562) on, as sheng runs it. sheng's floor
+  # (level 3) is 510 MHz on the 3a and held every frame there in T39b; the floor is the former fixed level 6 (763 MHz), so frames
+  # never run slower than before. The ceiling is level 7 (895 MHz), not the top: nothing throttles the GPU for temperature yet, a
+  # touch holds the ceiling for a second, and 1050 MHz (T34b-l9) gained almost nothing.
+  "sheng-gpu-dcvs=1",
+  "sheng-gpu-dcvs-min=6",
+  "sheng-gpu-dcvs-max=7",
+  # T39b: fence waiters that sleep for the GPU interrupt timed out on 72 % of waits (the wake comes late), so they spin, as T37.
+  "sheng-gpu-irq=0",
   "sheng-buttons=1",                  # T35: power and volume through the PMIC interrupt; T36a: work in iOS
   "asteroids-panel=3",                # T37: iOS brightness and panel sleep over DSI0 DCS commands; T37d: works
   "boot-ui-focus4=backboardd",
