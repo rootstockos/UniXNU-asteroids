@@ -85,7 +85,15 @@ jobs:
 
       - name: metal2vulkan bridge for iOS
         working-directory: unixnu
-        run: python3 scripts/build-adreno-metal-bridge.py --target ios
+        run: |
+          # The translator at its pin (scripts/data/gpu-metal-vulkan-inputs.json); the build script checks the revision and
+          # applies drivers/AdrenoMetal/bridge/patches itself.
+          read -r repo commit < <(python3 -c "import json; t = json.load(open('scripts/data/gpu-metal-vulkan-inputs.json'))['translator']; print(t['repository'], t['commit'])")
+          src=.cache/gpu-reference/metal2vulkan
+          git init -q "$src"
+          git -C "$src" fetch -q --depth 1 --filter=blob:none "$repo" "$commit"
+          git -C "$src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          python3 scripts/build-adreno-metal-bridge.py --target ios
 
       - name: Metal plugin, addon and owner trust bundle
         run: |
