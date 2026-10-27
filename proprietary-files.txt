@@ -8,3 +8,6 @@
 gen80300_sqe.fw|046f5aea37fd8ec09af247edb07b9266bfecdbf6220ed5b2b56ed988fc6f5d5f
 gen80300_gmu.bin|6adcbf43b162fb4bdc00154824f44c5f96d82a223cfbe7012d5904098f5bf2fc
 gen80300_zap.mbn|c236c61cb64c3340c7003df5e580769fc4ab1fd054ee016469197bfdbb0b3ed5
+
+# Speaker amplifiers (2x NXP TFA9873, I2C 0x34/0x35): the settings container scripts/prepare-asteroids-tfa.py reads
+tfa98xx.cnt|f25b729d1d361cd70d30f61d571dd3c4afc5709312911eacf89ac40bb06681ef
