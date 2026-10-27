@@ -212,6 +212,8 @@ kernel_args = [
   # touch holds the ceiling for a second, and 1050 MHz (T34b-l9) gained almost nothing.
   # T40e: with nothing to draw for 80 ms the GPU drops below the floor to sheng-gpu-dcvs-idle (package default level 1, 264 MHz);
   # T40d idled at 763 MHz.
+  # T40g: GPU-written imports (render targets) get no per-submission cache maintenance, read-only imports keep their clean (driver
+  # default; sheng-gpu-import-policy=0 maintains every import as before). T40f-skip found GPU-side imports needed none.
   "sheng-gpu-dcvs=1",
   "sheng-gpu-dcvs-min=6",
   "sheng-gpu-dcvs-max=7",

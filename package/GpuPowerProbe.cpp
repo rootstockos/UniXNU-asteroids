@@ -1160,6 +1160,9 @@ int ucBurst(IOService *svc, UcSteps &step) {
 extern "C" volatile uint32_t native_adreno_io_coherent __attribute__((weak));
 // T40f test: sheng-gpu-import-skip=1 has the driver skip the per-submission clean of imports without coherence (NativeAdrenoVm.cpp).
 extern "C" volatile uint32_t native_adreno_import_skip __attribute__((weak));
+// T40g: the driver's import policy (NativeAdrenoVm.cpp, default 1): GPU-written imports skip per-submission maintenance, read-only ones
+// keep their clean. sheng-gpu-import-policy=0 maintains every import around every submission, as before.
+extern "C" volatile uint32_t native_adreno_import_policy __attribute__((weak));
 extern "C" {char native_gpu_coherence_row[120]; uint32_t native_gpu_coherence[8];}
 // A throwaway uncached kernel mapping (io_map with VM_WIMG_IO), not IOMemoryDescriptor::map, which would change the page's own
 // cache attribute for every mapping of it (sheng int-098).
@@ -1305,6 +1308,7 @@ void ucStart() {
     if (u[3] || u[4]) {native_gpu_power_stage = 0x10f; return;}
     coherenceProbe(vm, bits);
     if (&native_adreno_import_skip) native_adreno_import_skip = bootArg("sheng-gpu-import-skip", 0) == 1 ? 1 : 0;
+    if (&native_adreno_import_policy) native_adreno_import_policy = bootArg("sheng-gpu-import-policy", 1) ? 1 : 0;
     u[0] = 3;
     native_gpu_power_stage = 0x103;
     u[5] = uint32_t(native_adreno_publish(vm, &gSubmit, &gRing, &clock, &gTimer, &gDeviceInfo, 31, bits));
