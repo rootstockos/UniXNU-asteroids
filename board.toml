@@ -210,6 +210,8 @@ kernel_args = [
   # (level 3) is 510 MHz on the 3a and held every frame there in T39b; the floor is the former fixed level 6 (763 MHz), so frames
   # never run slower than before. The ceiling is level 7 (895 MHz), not the top: nothing throttles the GPU for temperature yet, a
   # touch holds the ceiling for a second, and 1050 MHz (T34b-l9) gained almost nothing.
+  # T40e: with nothing to draw for 80 ms the GPU drops below the floor to sheng-gpu-dcvs-idle (package default level 1, 264 MHz);
+  # T40d idled at 763 MHz.
   "sheng-gpu-dcvs=1",
   "sheng-gpu-dcvs-min=6",
   "sheng-gpu-dcvs-max=7",

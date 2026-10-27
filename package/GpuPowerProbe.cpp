@@ -1501,11 +1501,13 @@ void irqAttach() {
 // countable 5, enable; read at its A8XX offsets). Every 16 ms it takes the frequency that would have kept that window 50 % busy and
 // goes up at once to the lowest level at or above 1.1 x of it, to the ceiling after a window over 85 % busy or 50 ms busy without a
 // break; it goes down one level after 4 windows in a row (5 right after a step up) that would have needed at most 0.8 x the next lower
-// level, and to the floor after 80 ms without work. Work after the idle drop starts at the lowest level at or above max(2 x now,
+// level, and to the idle level after 80 ms without work. Work after the idle drop starts at the lowest level at or above max(2 x now,
 // 578 MHz) for 50 ms, and a touch report holds the ceiling until `sheng-gpu-dcvs-boost-ms` (default 1000, 0 = off) after the last one.
 // Levels and MHz come from the startup table the GMU was given (1 = 264 ... 9 = 1050 MHz on the 3a's bin). `sheng-gpu-dcvs-min` is
 // the floor (default 3, 510 MHz); `sheng-gpu-dcvs-max` the ceiling, by default the boot vote (`sheng-gpu-level`, default 6, 763 MHz),
-// which T34 kept below the top three because nothing throttles the GPU for temperature yet. Each change is the boot's HFI
+// which T34 kept below the top three because nothing throttles the GPU for temperature yet. asteroids T40e: `sheng-gpu-dcvs-idle`
+// (default 1, 264 MHz) is the level after the idle drop, below the floor, which then applies only while there is work (or the wake
+// boost runs): with the board's floor at level 6 the GPU otherwise sat at 763 MHz with nothing to draw. Each change is the boot's HFI
 // GX_BW_PERF_VOTE with that level's bandwidth.
 extern "C" {
 // [0] 1 running, [1] level now, [2] changes, [3] failed votes, [4] busy % over the last 10 s, [5..12] % of those 10 s at the eight
@@ -1545,6 +1547,9 @@ void gpuDcvsThread(void *, wait_result_t) {
     unsigned floor = bootArg("sheng-gpu-dcvs-min", 3);
     if (floor < 1) floor = 1;
     if (floor > ceiling) floor = ceiling;
+    unsigned idleLevel = bootArg("sheng-gpu-dcvs-idle", 1);
+    if (idleLevel < 1) idleLevel = 1;
+    if (idleLevel > floor) idleLevel = floor;
     const unsigned base = top > 8 ? top - 7 : 1;   // the eight highest levels go to [5..12]
     unsigned cur = native_gpu_perf_vote[0] ? native_gpu_perf_vote[0] : ceiling;
     native_gpu_dcvs[0] = 1; native_gpu_dcvs[1] = cur;
@@ -1586,10 +1591,10 @@ void gpuDcvsThread(void *, wait_result_t) {
         } else {
             uint64_t idleNs = 0;
             absolutetime_to_nanoseconds(t - idleSince, &idleNs);
-            if (idleNs >= 80000000ull) want = floor;
+            if (idleNs >= 80000000ull) want = idleLevel;
         }
         if (active) idleSince = t;
-        if (!active && want == floor) idle = true;
+        if (!active && want == idleLevel) idle = true;
         if (active && idle) {
             idle = false; wakeEnd = t + wakeAbs; native_gpu_dcvs[14] = native_gpu_dcvs[14] + 1;
         }
@@ -1603,7 +1608,9 @@ void gpuDcvsThread(void *, wait_result_t) {
             const unsigned wake = gpuLevelFor(gpuMHz(cur) * 2 > 578 ? gpuMHz(cur) * 2 : 578, ceiling);
             if (want < wake) want = wake;
         }
-        if (want < floor) want = floor;
+        // The floor holds while there is work or the wake boost runs; only an idle GPU goes below it.
+        const unsigned low = active || t < wakeEnd || t < touchEnd ? floor : idleLevel;
+        if (want < low) want = low;
         if (want > ceiling) want = ceiling;
         if (want != cur) {
             if (gpuVote(want)) {hold = want > cur; cur = want; native_gpu_dcvs[1] = cur; native_gpu_dcvs[2] = native_gpu_dcvs[2] + 1;}
