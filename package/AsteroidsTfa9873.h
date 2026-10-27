@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 /* The two NXP TFA9873 speaker amplifiers of the Nothing Phone (3a): "P" at I2C 0x34 and "S" at 0x35 on QUPv3 wrapper 1 SE6 (SE13,
- * 0x898000, pins 59/60), each with its own reset line (gpio141, gpio142, active low). They take one I2S/TDM stream from the primary MI2S
+ * 0x898000, pins 59/60), each with its own reset line (gpio141, gpio142; RST is active high: NXP's driver pulses it high, then holds it low). They take one I2S/TDM stream from the primary MI2S
  * (pins 15-18) as clock slaves, two 32-bit slots at 48 kHz: P plays slot 0, S slot 1. The TFA9873 has no DSP of its own here: the 3a's
  * container (tfa98xx.cnt) carries a dummy patch and register settings only, which scripts/prepare-asteroids-tfa.py turns into
  * build/asteroids-tfa/AsteroidsTfaConfig.h. Registers are 8-bit addresses with 16-bit values, most significant byte first on the wire.

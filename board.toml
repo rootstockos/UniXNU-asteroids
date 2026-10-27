@@ -103,6 +103,9 @@ archives = [
   # The GMU cold start's generated registers and the pinned firmware as a C array (modes 9-10); reads the device repo's
   # .cache, which the CI bootstrap fills (extract-files.py, prepare-asteroids-gmu.py --fetch).
   "prepare-asteroids-gmu.py",
+  # The speaker amplifiers' settings from the 3a's own container (tfa98xx.cnt, fetched by extract-files.py) for
+  # package/AsteroidsTfa9873.c.
+  "prepare-asteroids-tfa.py",
   # Format 2: every selected component with a kernel recipe needs an entry. AppleKeyStoreState and ShengHidInput build archives the
   # display archive also compiles from the same sources (harmless); Adreno740 skips itself with XNU_NATIVE_ADRENO off
   # (scripts/build-arm-driver.py), its GPU code being in the display archive.

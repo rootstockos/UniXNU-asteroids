@@ -13,9 +13,12 @@ import struct
 import sys
 from pathlib import Path
 
-DEVICE = Path(__file__).resolve().parents[1]
+# Run from the device repository or from the build tree (as a board.toml recipe): the container is the device repository's, the header
+# goes to the tree's build/ (as prepare-asteroids-gmu.py does).
+ROOT = Path(__file__).resolve().parents[1]
+DEVICE = ROOT if (ROOT / 'board.toml').exists() else (ROOT / 'kits/asteroids').resolve().parent
 SOURCE = DEVICE / '.cache/firmware/tfa98xx.cnt'
-OUT = DEVICE / 'build/asteroids-tfa/AsteroidsTfaConfig.h'
+OUT = ROOT / 'build/asteroids-tfa/AsteroidsTfaConfig.h'
 DEVICE_TYPE, PROFILE_TYPE, REGISTER_TYPE, BITFIELD_TYPE, DEFAULT_TYPE = 0, 1, 2, 16, 17
 # The devices in amplifier order (AsteroidsTfa9873.h: 0 = P at 0x34, 1 = S at 0x35) and the profiles the driver uses.
 DEVICES, SPEAKER, STANDBY = ('P', 'S'), 'speaker', 'Powerdown_All.standby'
