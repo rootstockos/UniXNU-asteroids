@@ -704,7 +704,8 @@ bool micRails() {
 // reads the power key. Off by default: an observer read of a peripheral another EE owns may end in a synchronous external abort.
 constexpr uint64_t kSpmiCore = 0x0c400000ULL, kSpmiObsrvr = 0x0c440000ULL, kSpmiCnfg = 0x0c42d000ULL;
 void micPmic() {
-    native_mic_extra[2] = native_mic_extra[4] = 0xffu << 24;
+    native_mic_extra[2] = 0xffu << 24;
+    native_mic_extra[4] = 0xffu << 24;
     uint32_t want = 0;
     PE_parse_boot_argn("asteroids-mic-pmic", &want, sizeof want);
     if (want != 1) return;
