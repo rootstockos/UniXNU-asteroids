@@ -57,7 +57,11 @@ jobs:
 
       - name: UniXNU's GPU submodules
         working-directory: unixnu
-        run: git submodule update --init --depth 1 drivers/AdrenoMetal kits/AdrenoPM4
+        run: |
+          git submodule update --init --depth 1 drivers/AdrenoMetal drivers/GopFramebuffer kits/AdrenoPM4
+          # AdrenoMetal's GpuScanoutClient.h includes ../NativeMobileDisplay/NativeGOPWire.h: GopFramebuffer's legacy name,
+          # which unixnu's tree makes as a link.
+          ln -s GopFramebuffer drivers/NativeMobileDisplay
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -80,8 +84,69 @@ jobs:
           url=$(python3 -c "import tomllib; print(tomllib.load(open('profiles/os/ipados-17.7.11-21H461/profile.toml', 'rb'))['ipsw']['url'])")
           python3 scripts/build-original-system-trust.py --ipsw "$url"
 
+      # Caches. Turnip: the Mesa tree only on an exact match of its pin and patches (prepare-asteroids-turnip.py keeps a tree at
+      # the pinned commit without reapplying patches), the build directory also across ABI changes (ninja rebuilds what changed).
+      # Bridge: cargo's registry and target directory (cargo rebuilds what changed). Each is saved right after its step, so a
+      # later failure keeps it. Nothing from the IPSW is cached.
+      - name: Cache keys
+        id: keys
+        working-directory: unixnu
+        run: |
+          mesa=$(python3 -c "
+          import hashlib, json
+          pins = open('scripts/data/adreno-compiler-inputs.json', 'rb').read()
+          digest = hashlib.sha256(pins)
+          for patch in json.loads(pins)['patches']:
+              digest.update(open(patch, 'rb').read())
+          print(digest.hexdigest()[:16])")
+          abi=$(shasum -a 256 ../device/drivers/Adreno740/NativeAdrenoABI.h | cut -c1-16)
+          # mesa-venv links to setup-python's interpreter, so a new Python starts the Turnip cache over.
+          py=$(python3 -c 'import platform; print(platform.python_version())')
+          echo "turnip=turnip-${{ runner.arch }}-xcode${{ inputs.xcode }}-py$py-$mesa" >> "$GITHUB_OUTPUT"
+          echo "abi=$abi" >> "$GITHUB_OUTPUT"
+          echo "bridge=bridge-${{ runner.arch }}-xcode${{ inputs.xcode }}-${{ hashFiles('unixnu/scripts/data/gpu-metal-vulkan-inputs.json', 'unixnu/drivers/AdrenoMetal/bridge/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Turnip
+        id: turnip-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            unixnu/.cache/mesa-work
+            unixnu/.cache/mesa-venv
+            unixnu/.cache/mesa-tools
+            unixnu/.cache/shader-tools
+            unixnu/build/mesa-tu-ios
+            unixnu/build/mesa-tu-ios.cross
+          key: ${{ steps.keys.outputs.turnip }}-${{ steps.keys.outputs.abi }}
+          restore-keys: ${{ steps.keys.outputs.turnip }}-
+
       - name: Turnip for iOS
         run: python3 device/scripts/prepare-asteroids-turnip.py --unixnu unixnu
+
+      - name: Save Turnip
+        if: steps.turnip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            unixnu/.cache/mesa-work
+            unixnu/.cache/mesa-venv
+            unixnu/.cache/mesa-tools
+            unixnu/.cache/shader-tools
+            unixnu/build/mesa-tu-ios
+            unixnu/build/mesa-tu-ios.cross
+          key: ${{ steps.keys.outputs.turnip }}-${{ steps.keys.outputs.abi }}
+
+      - name: Restore the bridge build
+        id: bridge-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            unixnu/build/m2v-target
+          key: ${{ steps.keys.outputs.bridge }}-${{ github.run_id }}
+          restore-keys: ${{ steps.keys.outputs.bridge }}-
 
       - name: metal2vulkan bridge for iOS
         working-directory: unixnu
@@ -94,6 +159,16 @@ jobs:
           git -C "$src" fetch -q --depth 1 --filter=blob:none "$repo" "$commit"
           git -C "$src" -c advice.detachedHead=false checkout -q FETCH_HEAD
           python3 scripts/build-adreno-metal-bridge.py --target ios
+
+      - name: Save the bridge build
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            unixnu/build/m2v-target
+          key: ${{ steps.keys.outputs.bridge }}-${{ github.run_id }}
 
       - name: Metal plugin, addon and owner trust bundle
         run: |
