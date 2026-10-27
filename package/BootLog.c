@@ -112,6 +112,7 @@ extern volatile uint32_t native_legacy_surfaces[14] __attribute__((weak_import))
 extern volatile uint32_t native_legacy_direct[9] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
+extern volatile uint32_t native_ufs_dpu_dump[20] __attribute__((weak_import));
 extern uint32_t native_ufs_dpu_live(unsigned reg) __attribute__((weak_import));
 extern volatile int32_t native_adsp_stats[16] __attribute__((weak_import));
 extern volatile int32_t native_audio_stats[16] __attribute__((weak_import));
@@ -895,6 +896,15 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
       n += snprintf(row + n, sizeof row - (size_t)n, " | flips %u mapped %u mapfail %u latch>50ms %u max %uus mean %uus released %u copied %u to boot %u",
                     d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8]);
     }
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // T40i: the display bank's registers at the end of NativeUfs dpuEnable (fault or not), and the global fault registers.
+  if (&native_ufs_dpu_dump && native_ufs_dpu_dump[18]) {
+    char row[300];
+    const volatile uint32_t *d = native_ufs_dpu_dump;
+    snprintf(row, sizeof row, "[dpu dump] v%x sctlr=%x tcr2=%x ttbr0=%x%08x tcr=%x mair0=%x fsr=%x far=%x%08x fsynr0=%x fsynr1=%x cbar=%x cba2r=%x "
+             "cbfrsynra=%x sgfsr=%x sgfsynr0=%x sgfsynr1=%x sgfar=%x contextidr=%x",
+             d[18], d[0], d[1], d[3], d[2], d[4], d[5], d[6], d[8], d[7], d[9], d[10], d[11], d[12], d[13], d[14], d[15], d[16], d[17], d[19]);
     at = put(out, at, cap, row, sizeof row);
   }
   // The display streams in the apps SMMU as the boot loader left them (NativeUfs, sheng-dpu=2): per stream group|bank, SMR, S2CR, CBAR,

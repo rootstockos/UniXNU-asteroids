@@ -75,6 +75,7 @@ WEAK volatile uint32_t native_dpu_pipes[54];
 WEAK volatile uint32_t native_dpu_more[40];
 WEAK volatile uint32_t native_ufs_dpu_smmu[24];
 WEAK volatile uint32_t native_ufs_dpu_check[8];
+WEAK volatile uint32_t native_ufs_dpu_dump[20];
 WEAK volatile int32_t native_adsp_stats[16];
 WEAK volatile int32_t native_audio_stats[16];
 WEAK volatile uint32_t native_audio_amps[6][4];
