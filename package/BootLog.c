@@ -109,7 +109,7 @@ extern volatile uint32_t native_dpu_pipes[54] __attribute__((weak_import));
 extern volatile uint32_t native_dpu_more[40] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_surfaces[14] __attribute__((weak_import));
-extern volatile uint32_t native_legacy_direct[13] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_direct[17] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_dump[20] __attribute__((weak_import));
@@ -126,6 +126,7 @@ extern volatile uint64_t native_audio_requests[17] __attribute__((weak_import));
 extern volatile int32_t native_audio_passed __attribute__((weak_import));
 extern volatile uint32_t native_mic_regs[16] __attribute__((weak_import));
 extern volatile int32_t native_mic_capture[8] __attribute__((weak_import));
+extern volatile uint32_t native_mic_extra[8] __attribute__((weak_import));
 #include "ShengAudioAbi.h"
 extern const ShengAudioDiag *sheng_audio_diag(void) __attribute__((weak_import));
 extern volatile uint64_t native_audio_pa __attribute__((weak_import));
@@ -886,7 +887,7 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
   }
   // Direct scanout (sheng-dpu-scanout): the display bank's stage 1 (NativeUfs), then the flips (NativeLegacyDisplay.cpp native_legacy_direct).
   if (&native_ufs_dpu_state && native_ufs_dpu_state) {
-    char row[420];
+    char row[480];
     const volatile uint32_t *c = native_ufs_dpu_check;
     int n = snprintf(row, sizeof row, "[direct scanout] bank %x ttbr0=%x tcr=%x fsr %x->%x far=%x%08x fsynr0=%x watched %uus now sctlr=%x fsr=%x",
                      native_ufs_dpu_state, c[0], c[1], c[2], c[3], c[5], c[4], c[6], c[7],
@@ -894,8 +895,9 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     if (&native_legacy_direct) {
       const volatile uint32_t *d = native_legacy_direct;
       n += snprintf(row + n, sizeof row - (size_t)n, " | flips %u mapped %u mapfail %u latch>50ms %u max %uus mean %uus released %u copied %u to boot %u"
-                    " | start %u waited %ums vig0 %x pipes %x",
-                    d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8], d[9], d[10], d[11], d[12]);
+                    " | start %u waited %ums vig0 %x pipes %x | gpu waits %u max %uus mean %uus gave up %u",
+                    d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8], d[9], d[10], d[11], d[12],
+                    d[13], d[14], d[13] ? d[15] / d[13] : 0, d[16]);
     }
     at = put(out, at, cap, row, sizeof row);
   }
@@ -1122,6 +1124,13 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
              native_mic_stats[6], native_mic_stats[7], native_mic_stats[8], native_mic_stats[9], native_mic_stats[10], native_mic_stats[11],
              native_mic_stats[12], native_mic_stats[13], native_mic_stats[14], native_mic_stats[15]);
     at = put(out, at, cap, row, sizeof row);
+    // T42: the codec reset pin read back, LDO B7/B8 from the PMIC (asteroids-mic-pmic=1), the master's COMP_STATUS at 1 ms, 100 ms, 1 s.
+    if (&native_mic_extra) {
+      snprintf(row, sizeof row, "[mic extra] reset=%x ldo7=%x/%x ldo8=%x/%x comp 1ms=%x 100ms=%x end=%x", native_mic_extra[0],
+               native_mic_extra[1], native_mic_extra[2], native_mic_extra[3], native_mic_extra[4], native_mic_extra[5], native_mic_extra[6],
+               native_mic_extra[7]);
+      at = put(out, at, cap, row, sizeof row);
+    }
     if (&native_mic_capture && native_mic_capture[0]) {
       snprintf(row, sizeof row, "[mic capture] st=%d status=%d asked=%d back=%d bytes=%d peak=%d mean=%d nonzero=%d", native_mic_capture[0],
                native_mic_capture[1], native_mic_capture[2], native_mic_capture[3], native_mic_capture[4], native_mic_capture[5],

@@ -36,6 +36,7 @@ extern "C" {
 #include "SmmuBypass.h"
 #include "QcomRpmh.h"
 #include "ShengAudioAbi.h"
+#include "BootResetCore.h"
 }
 #include <IOKit/IOService.h>
 #include <libkern/OSKextLib.h>
@@ -637,6 +638,11 @@ extern "C" {volatile uint32_t native_mic_regs[16];}
 // tx 0x0/0x4/0x100/0x400, va 0x0/0x4/0x80 (from stage 6; up to stage 5 the first seven are tx 0x0/0x4/0x8, the VA clock source switch,
 // va 0x0/0x4/0x8, read when the master is up or fails), swr 0x4/0x101c/0x1044/0x104c/0x200/0x14/0x1124, LPI gpio0 control, slew
 extern "C" {volatile int32_t native_mic_capture[8];}
+// T42 diagnostics for a master whose link never comes up: [0] the codec reset pin's IN_OUT register after release (bit 0 the level read
+// back), [1]/[3] LDO B7/B8 (the codec's rails, PM7550 at SPMI SID 1, peripherals 0x46/0x47): APID | STATUS1 << 12 | EN_CTL << 20, read
+// only with asteroids-mic-pmic=1, [2]/[4] VSET low | VSET high << 8 | MODE << 16 | read status << 24 (0xff not read), [5]/[6]/[7] the
+// master's COMP_STATUS 1 ms, 100 ms and 1 s after it was enabled.
+extern "C" {volatile uint32_t native_mic_extra[8];}
 // [0] stage, [1] last DSP status, [2] periods asked, [3] returned, [4] bytes, [5] peak, [6] mean absolute value, [7] non-zero samples
 // The VA macro's clock source switch (DT qcom,va-island-mode-muxsel; va-clk-mux-select = 1, use-clk-id 3 = VA core clock): the vendor's
 // clock manager sets it to 1 once the VA core clock runs. asteroids-mic-mux=1 does the same (T41: the master's link never came up with
@@ -692,6 +698,40 @@ bool micRails() {
     }
     native_mic_stats[2] = native_mic_stats[2] | 4;
     return true;
+}
+
+// The codec's two LDOs as the PMIC sees them (asteroids-mic-pmic=1): read through the SPMI arbiter's observer channel, as ButtonProbe
+// reads the power key. Off by default: an observer read of a peripheral another EE owns may end in a synchronous external abort.
+constexpr uint64_t kSpmiCore = 0x0c400000ULL, kSpmiObsrvr = 0x0c440000ULL, kSpmiCnfg = 0x0c42d000ULL;
+void micPmic() {
+    native_mic_extra[2] = native_mic_extra[4] = 0xffu << 24;
+    uint32_t want = 0;
+    PE_parse_boot_argn("asteroids-mic-pmic", &want, sizeof want);
+    if (want != 1) return;
+    Region core, cnfg, obs;
+    if (!mapRegion(kSpmiCore, 0x3000, core) || !mapRegion(kSpmiCnfg, 0x4000, cnfg)) return;
+    br_arbiter arb = {reinterpret_cast<volatile uint32_t *>(core.va), reinterpret_cast<volatile uint32_t *>(cnfg.va), 0};
+    const uint32_t version = arb.core[0], apids = arb.core[BR_FEATURES / 4] & BR_FEATURES_APIDS_MASK;
+    if (version < BR_VERSION_V7_MIN || version >= BR_VERSION_V8_MIN || !apids || apids > 1024) return;
+    if (!mapRegion(kSpmiObsrvr, ((uint64_t)BR_OBS_APID_STRIDE * apids + 0xfff) & ~0xfffull, obs)) return;
+    static const uint32_t ppids[2] = {0x146, 0x147};
+    for (unsigned k = 0; k < 2; ++k) {
+        int apid = -1;
+        for (uint32_t i = 0; i < apids; ++i) {
+            const uint32_t map = arb.core[(BR_APID_MAP + 4 * i) / 4];
+            if (map && ((map >> 8) & 0xfff) == ppids[k]) {apid = (int)i; break;}
+        }
+        if (apid < 0) continue;
+        uint8_t status = 0, en = 0, lb = 0, ub = 0, mode = 0;
+        volatile uint32_t *o = reinterpret_cast<volatile uint32_t *>(obs.va);
+        int rc = br_read8(o, &arb, apid, 0x08, &status);
+        if (!rc) rc = br_read8(o, &arb, apid, 0x46, &en);
+        if (!rc) rc = br_read8(o, &arb, apid, 0x40, &lb);
+        if (!rc) rc = br_read8(o, &arb, apid, 0x41, &ub);
+        if (!rc) rc = br_read8(o, &arb, apid, 0x45, &mode);
+        native_mic_extra[1 + 2 * k] = (uint32_t)apid | (uint32_t)status << 12 | (uint32_t)en << 20;
+        native_mic_extra[2 + 2 * k] = lb | (uint32_t)ub << 8 | (uint32_t)mode << 16 | (uint32_t)(rc & 0xff) << 24;
+    }
 }
 
 // PRM: [1] macro | dcodec << 8 | VA core clock << 16 | TX core clock << 24, each the DSP's status (0xff no answer).
@@ -820,11 +860,18 @@ bool micMaster() {
     wr32(m, 0x204, 0x1fdfd);
     wr32(m, 0x210, 0x1fdfd);
     wr32(m, 0x004, 3);
+    const uint64_t enabled = nowMs();
+    IODelay(1000);
+    native_mic_extra[5] = rd32(m, 0x14);
     for (unsigned i = 0; i < 200 && !(rd32(m, 0x14) & 1); ++i) IODelay(500);
     native_mic_stats[4] = (int32_t)rd32(m, 0x14);
     wr32(m, 0x314, rd32(m, 0x314) | 0x80000000u);
     uint32_t slaves = 0;
-    for (unsigned i = 0; i < 200 && !((slaves = rd32(m, 0x1090)) & 0x3fffcu); ++i) IOSleep(5);
+    for (unsigned i = 0; i < 200 && !((slaves = rd32(m, 0x1090)) & 0x3fffcu); ++i) {
+        IOSleep(5);
+        if (!native_mic_extra[6] && nowMs() - enabled >= 100) native_mic_extra[6] = rd32(m, 0x14) | 0x80000000u;
+    }
+    native_mic_extra[7] = rd32(m, 0x14);
     native_mic_stats[5] = (int32_t)slaves;
     native_mic_stats[12] = (int32_t)rd32(m, 0x200);
     gSwr.dev = 0;
@@ -994,6 +1041,8 @@ void micBringUp(unsigned want) {
     IOSleep(1);
     wr32(reset.va, 4, 1u << 1);             // out of reset (active state: output high)
     IOSleep(5);
+    native_mic_extra[0] = rd32(reset.va, 4);
+    micPmic();
     micStage(10);
     if (want < 2) return;
     if (!micPrm()) {micFail(2); return;}
