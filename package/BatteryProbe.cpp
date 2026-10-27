@@ -15,8 +15,9 @@ extern "C" void sheng_battery_start(void);
 extern "C" {volatile int32_t native_battery_stats[16];}
 
 extern "C" void sheng_battery_probe(void) {
-    unsigned enabled = 0, adsp = 0;
-    if (!PE_parse_boot_argn("sheng-battery", &enabled, sizeof enabled)) enabled = PE_parse_boot_argn("sheng-adsp", &adsp, sizeof adsp) && adsp == 2;
+    unsigned enabled = 0, adsp = 2;   // sheng-adsp defaults to 2 (AdspProbe.cpp), so the battery service is on by default
+    PE_parse_boot_argn("sheng-adsp", &adsp, sizeof adsp);
+    if (!PE_parse_boot_argn("sheng-battery", &enabled, sizeof enabled)) enabled = adsp == 2;
     if (enabled != 1 || native_battery_stats[0]) return;
     void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
     if (!handle) {native_battery_stats[0] = -10; return;}

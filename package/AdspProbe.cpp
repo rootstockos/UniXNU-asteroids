@@ -625,7 +625,7 @@ bool startGlink() {
 
 void adspThread(void *, wait_result_t) {
     thread_set_thread_name(current_thread(), "sheng-adsp");
-    unsigned mode = 0;
+    unsigned mode = 2;   // T40d: the DSP and GLINK start by default (battery); sheng-adsp=1 surveys only, 0 skips the DSP
     PE_parse_boot_argn("sheng-adsp", &mode, sizeof mode);
     if (!mapWindow(gSmemW, kSmem, kSmemSize) || !mapWindow(gMutex, kMutex, 0x1000) || !mapWindow(gIpcc, kIpcc, 0x1000) ||
         !mapWindow(gAoss, kAoss, 0x1000) || !mapWindow(gRsc, kRscDrv, 0x10000)) {
@@ -687,8 +687,9 @@ extern "C" int sheng_adsp_send(ShengAdspChannel *c, const void *data, uint32_t l
 }
 
 extern "C" void sheng_adsp_probe(void) {
-    unsigned mode = 0;
-    if (!PE_parse_boot_argn("sheng-adsp", &mode, sizeof mode) || !mode || native_adsp_stats[0]) return;
+    unsigned mode = 2;   // as adspThread: on by default
+    PE_parse_boot_argn("sheng-adsp", &mode, sizeof mode);
+    if (!mode || native_adsp_stats[0]) return;
     gClientLock = IOLockAlloc();
     if (gClientLock && mode >= 2) sheng_qrtr_start();  // the router link registers before the DSP can open it
     thread_t thread = nullptr;

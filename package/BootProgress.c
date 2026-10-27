@@ -1198,8 +1198,9 @@ static void touch_overlay(void) {
   // sheng-banner=0 switches every on-screen diagnostic painting off once the system owns the display (the UFS log carries the same rows):
   // the painters hold render_busy for about a million uncached stores, which a swap's scanout hand-off has to wait for.
   static int banner_off=-1;
-  // asteroids T33: off by default once the UI runs (sheng-banner=1 brings the painting back); the rows still reach the UFS log.
-  if(banner_off<0){unsigned v=0;PE_parse_boot_argn("sheng-banner",&v,sizeof(v));banner_off=v==0;}
+  // asteroids T33 turned it off by default once the UI runs; T40d: on by default again (the diagnostics are wanted on screen during testing),
+  // sheng-banner=0 switches it off. The rows reach the UFS log either way.
+  if(banner_off<0){unsigned v=1;PE_parse_boot_argn("sheng-banner",&v,sizeof(v));banner_off=v==0;}
   if(banner_off)return;
   __atomic_fetch_add(&touch_passes,1,__ATOMIC_RELAXED);
   // Same rule as the text renderer: draw only while holding render_busy, so a display handoff (which takes it before

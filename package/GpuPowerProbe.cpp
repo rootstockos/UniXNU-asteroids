@@ -1186,7 +1186,9 @@ bool gpuCopyPage(uint64_t src, uint64_t dst) {
 unsigned gCoherenceAttempts;
 void coherenceProbe(NativeAdrenoVm *vm, unsigned bits) {
     uint32_t *k = native_gpu_coherence;
-    const unsigned wanted = bootArg("sheng-gpu-coherent", 1);
+    // Off by default since T40d: the probe passed on the 3a, but with coherence on the GPU stopped at the 134th submission
+    // (every later fence wait timed out, the UI never drew). sheng-gpu-coherent=1 runs the probe.
+    const unsigned wanted = bootArg("sheng-gpu-coherent", 0);
     if (!wanted || !vm || !&native_adreno_io_coherent) {
         snprintf(native_gpu_coherence_row, sizeof native_gpu_coherence_row, "H skip (arg %u vm %d)", wanted, vm != nullptr);
         return;

@@ -244,8 +244,9 @@ kernel_args = [
   # sheng-disable-watchdogd=1, offline-legacy-unit-scale=2, boot-progress=2, boot-display-page=1, offline-hid-home=1,
   # offline-hid-input=1, offline-key-events=1, sheng-gpu-power=19 and asteroids-touch=6 (pass =0 to turn one off).
   # T33: with mode 19 and the addon the display probe turns the GPU copy to the panel on by itself (sheng-fb-gpu=0 keeps the
-  # CPU copy, which took 143-285 ms a frame and showed stale patches), and the on-screen diagnostics are off once the UI runs
-  # (sheng-banner=1 brings them back; the rows go to the UFS log either way).
+  # CPU copy, which took 143-285 ms a frame and showed stale patches). T40d: the on-screen diagnostics stay on once the UI runs
+  # (package default; sheng-banner=0 switches them off, the rows go to the UFS log either way), the audio DSP and battery service
+  # start by default (sheng-adsp=2) and the GPU IO coherence probe is off by default (sheng-gpu-coherent=1 runs it).
   "sheng-gpu-addon=1",
   # Touch: package/AsteroidsTouchProbe.cpp runs stage 6 by default (asteroids-touch=<n> for another stage, 0 for none) and
   # publishes the FT3683G's contacts to TouchState; UniXNU's NativeHidInput hands them to backboardd only with this argument
