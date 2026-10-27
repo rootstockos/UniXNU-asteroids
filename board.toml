@@ -163,9 +163,13 @@ kernel_args = [
   "-apfs_shared_datavolume",          # as uke and sheng: the Data volume is shared with the root's volume group
   "sheng-data-persist=2",             # Data writes go through to the store at the end of userdata
   "sheng-log=1",                      # persistent kernel log at the end of userdata
-  # T23, as umi (an iPadOS 17.7.11 phone at Hello with a CPU display): only the four jobs of the XPC wait cycle are
-  # left out, not sheng-lite's list of about 25.
-  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.bluetoothd,com.apple.coreduetd",  # T35: coreduetd as on sheng (d4c299b): one thread above 50 % of a core for the whole boot
+  # T40d: sheng-lite=1 as sheng runs it (UniXNU-sheng board.toml): BootWatchdogPolicy.c's list of jobs with nothing to do on this
+  # phone (network, iCloud, photo analysis) and the respawn loops (fairplayd.A2 relaunched every few seconds through T40c). It holds
+  # T23's XPC wait cycle (identityservicesd, locationd, CommCenter). With the GPU addon it keeps bluetoothd for the addon's daemon;
+  # the upstream plugin needs no daemon, so bluetoothd stays off below, with coreduetd (T35, as sheng d4c299b: one thread above
+  # 50 % of a core for the whole boot).
+  "sheng-lite=1",
+  "sheng-disable-jobs=com.apple.bluetoothd,com.apple.coreduetd",
   # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
   # Display, CPU-rendered, as uke boots it: load IOMobileGraphicsFamily, register NativeLegacyDisplay on the GOP
   # framebuffer as the default surface, and present frames drawn by the CPU. offline-hid-* and offline-key-events publish
