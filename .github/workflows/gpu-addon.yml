@@ -1,0 +1,130 @@
+name: GPU addon
+
+# The 3a's Metal plugin as the payload's GPU addon (scripts/build-asteroids-metal-plugin.py --published) and the owner
+# trust bundle that carries its CDHashes. Kept apart from rootstockos/UniXNU's macOS kernel build: the addon depends only on
+# this repository's NativeAdreno ABI, Turnip, the metal2vulkan bridge and the plugin source, so it is rebuilt when those
+# change, not with every kernel. The two outputs are made together because the trust bundle hashes the signed addon.
+# Both are uploaded encrypted (ARTIFACT_PASSPHRASE): the trust bundle holds Apple's original trust-cache modules.
+#   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in gpu-addon.tar.gz.enc -pass file:KEYFILE | tar xz
+
+on:
+  workflow_dispatch:
+    inputs:
+      unixnu_ref:
+        description: rootstockos/UniXNU ref (Turnip, bridge and Metal frontend sources)
+        required: true
+        default: asteroids-dev
+      runner:
+        description: Hosted runner (macos-26 is arm64; macos-26-intel when the arm64 pool has no capacity)
+        type: choice
+        options:
+          - macos-26
+          - macos-26-intel
+        default: macos-26
+      xcode:
+        description: Xcode version of the macos-26 image (/Applications/Xcode_<version>.app)
+        required: true
+        default: "26.6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpu-addon-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  addon:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 180
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ inputs.xcode }}.app/Contents/Developer
+    steps:
+      - name: Check out the device repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: device
+          submodules: true
+          persist-credentials: false
+
+      - name: Check out UniXNU
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rootstockos/UniXNU
+          ref: ${{ inputs.unixnu_ref }}
+          path: unixnu
+          persist-credentials: false
+
+      - name: UniXNU's GPU submodules
+        working-directory: unixnu
+        run: git submodule update --init --depth 1 drivers/AdrenoMetal kits/AdrenoPM4
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install host tools
+        run: |
+          [ -d "$DEVELOPER_DIR" ] || { echo "::error::Xcode not found at $DEVELOPER_DIR; installed: $(printf '%s ' /Applications/Xcode_*.app)"; exit 1; }
+          # llvm-as for the bridge's AIR fixtures (build-adreno-metal-bridge.py looks in Homebrew's keg first); the bridge
+          # pins Rust 1.98.0 with the iOS target.
+          brew install llvm
+          rustup toolchain install 1.98.0 --profile minimal --target aarch64-apple-ios
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Original trust bundle
+        working-directory: unixnu
+        run: |
+          url=$(python3 -c "import tomllib; print(tomllib.load(open('profiles/os/ipados-17.7.11-21H461/profile.toml', 'rb'))['ipsw']['url'])")
+          python3 scripts/build-original-system-trust.py --ipsw "$url"
+
+      - name: Turnip for iOS
+        run: python3 device/scripts/prepare-asteroids-turnip.py --unixnu unixnu
+
+      - name: metal2vulkan bridge for iOS
+        working-directory: unixnu
+        run: python3 scripts/build-adreno-metal-bridge.py --target ios
+
+      - name: Metal plugin, addon and owner trust bundle
+        run: |
+          python3 device/scripts/build-asteroids-metal-plugin.py --unixnu unixnu --published \
+            --trust-cache unixnu/build/original-static-system-trust/original-static-system.bundle
+          out=device/build/asteroids-metal-plugin-published
+          {
+            echo "device $(git -C device rev-parse HEAD)"
+            echo "adreno740 $(git -C device/drivers/Adreno740 rev-parse HEAD)"
+            echo "unixnu $(git -C unixnu rev-parse HEAD)"
+            shasum -a 256 "$out/asteroids-metal.addon" "$out/owner-trust.bundle"
+          } | tee "$out/inputs.txt"
+
+      - name: Encrypt
+        id: encrypt
+        env:
+          ARTIFACT_PASSPHRASE: ${{ secrets.ARTIFACT_PASSPHRASE }}
+        run: |
+          [ -n "$ARTIFACT_PASSPHRASE" ] || { echo "::error::No ARTIFACT_PASSPHRASE secret: nothing is uploaded."; exit 1; }
+          mkdir -p "$RUNNER_TEMP/encrypted"
+          tar -C device/build/asteroids-metal-plugin-published -czf - asteroids-metal.addon owner-trust.bundle inputs.txt \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ARTIFACT_PASSPHRASE \
+              -out "$RUNNER_TEMP/encrypted/gpu-addon.tar.gz.enc"
+
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asteroids-gpu-addon-encrypted
+          path: ${{ runner.temp }}/encrypted/gpu-addon.tar.gz.enc
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asteroids-gpu-addon-logs
+          path: |
+            unixnu/build/adreno-metal-bridge/*.log
+            unixnu/build/mesa-tu-ios/meson-logs/*.txt
+          if-no-files-found: ignore
+          retention-days: 7
