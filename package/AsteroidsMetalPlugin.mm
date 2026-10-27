@@ -213,7 +213,7 @@ static id clientDevice(unsigned port) {
         if (tried) return device;
         tried = true;
         if (!listedClient()) return nil;
-        setenv("TU_DEBUG", "sysmem,nocb", 1);
+        setenv("TU_DEBUG", "nocb", 1);   // T40e: GMEM or system memory per pass, as deviceForPort
         char turnip[1024];
         if (!turnip::libraryPath(turnip, sizeof turnip) || access(turnip, R_OK) != 0) {clientFailure(port, "no-turnip", ""); return nil;}
         uint64_t registryID = 0;
@@ -257,8 +257,10 @@ static id deviceForPort(unsigned port) {
     @synchronized([NativeAdrenoMetalDevice class]) {
         if (tried) return gDevice;
         tried = true;
-        // A8xx: Turnip renders in system memory and without concurrent binning (pandora's A840 needed both; T17 passed with them).
-        setenv("TU_DEBUG", "sysmem,nocb", 1);
+        // A8xx: Turnip renders without concurrent binning (pandora's A840 needed it; T17 passed with it). T40e: no longer sysmem for
+        // every pass; Turnip's autotune picks GMEM or system memory per pass, as UniXNU AdrenoMetal 461a842 does on sheng (forced
+        // sysmem left that GPU 19 % busy; autotune ran 600 s without a stall at 70 fps p50). T34b ran every pass in sysmem.
+        setenv("TU_DEBUG", "nocb", 1);
         // The discovery releases the accelerator port when it is done; the status and scanout threads keep using it.
         void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL);
         if (!iokit) return nil;
@@ -452,9 +454,9 @@ static void sampleOnly(unsigned port) {
             if (matching && getService) {
                 if (const unsigned own = getService(0, matching("IOAcceleratorES"))) port = own;
             }
-            // A8xx: Turnip renders in system memory and without command-buffer reuse (pandora's A840 needed both). NativeTurnipSmoke.h sets
-            // TU_DARWIN_SERVICE to IOAcceleratorES when unset, which is this accelerator.
-            setenv("TU_DEBUG", "sysmem,nocb", 1);
+            // A8xx: Turnip renders without command-buffer reuse (pandora's A840 needed it); T40e: GMEM or system memory per pass, as
+            // deviceForPort. NativeTurnipSmoke.h sets TU_DARWIN_SERVICE to IOAcceleratorES when unset, which is this accelerator.
+            setenv("TU_DEBUG", "nocb", 1);
             adrenoUserTest(port, "backboardd");
             delete j;
             return nullptr;
