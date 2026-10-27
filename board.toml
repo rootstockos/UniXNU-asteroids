@@ -256,7 +256,10 @@ kernel_args = [
   # publishes the FT3683G's contacts to TouchState; UniXNU's NativeHidInput hands them to backboardd only with this argument
   # (read by the core driver, so it stays). The boot-ui-focus rows for PerfPowerServices and SpringBoard were dropped in T32.
   "sheng-touch-hid=1",
-  "sheng-fb-gpu=1",                   # kept: UniXNU core's NativeGOPPresenter reads it (default off); without it T34 mixed GPU and CPU copy paths
+  "sheng-fb-gpu=1",
+  # T40g: the 3a's panel is scanned out by VIG 0 alone (recovery's DPU registers: VIG 0 source = the frame, CTL 0 stages only VIG 0; DMA 0-2
+  # empty), so direct scanout (sheng-dpu-scanout=2, drivers/GopFramebuffer fork) flushes bit 0 only. Inert while direct scanout is off.
+  "sheng-dpu-flush=1",                   # kept: UniXNU core's NativeGOPPresenter reads it (default off); without it T34 mixed GPU and CPU copy paths
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
   # without a first frame.

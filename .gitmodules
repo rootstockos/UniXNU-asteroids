@@ -17,3 +17,7 @@
 	path = drivers/ArmDTPlatform
 	url = https://github.com/rootstockos/ArmDTPlatform.git
 	branch = asteroids
+[submodule "drivers/GopFramebuffer"]
+	path = drivers/GopFramebuffer
+	url = https://github.com/rootstockos/GopFramebuffer.git
+	branch = asteroids
