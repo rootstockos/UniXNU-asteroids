@@ -4,8 +4,8 @@ name: Data seed
 # every step needs hdiutil/diskutil:
 #   1. UniXNU's prepare-owner-data-fixture.py: a 32 MiB APFS volume holding the IPSW OS volume's private/var (mounted read-only);
 #   2. DarwinBoot's packed_ramdisk.py: the raw image packed (DBRDISK1);
-#   3. seed-data-grow.py --gib: the container grown to the persistent store's size on the 3a's userdata;
-#   4. seed-data-skip-setup.py (optional): Setup marked as done.
+#   3. seed-data-skip-setup.py (optional): Setup marked as done, on the small seed;
+#   4. seed-data-grow.py --gib: the container grown to the persistent store's size on the 3a's userdata.
 # The new volume's UUID is printed: CONFIG_XNU_OWNER_DATA_VOLUME_UUID in configs/asteroids_defconfig must match it. Any new seed
 # starts the persistent Data store over (its header carries the seed digest). Uploaded encrypted (ARTIFACT_PASSPHRASE): the seed
 # holds files from the IPSW.
@@ -81,12 +81,14 @@ jobs:
           python3 scripts/prepare-owner-data-fixture.py
           hdiutil detach .cache/firmware/target-volumes/os-mount
           python3 drivers/DarwinBoot/Test/packed_ramdisk.py build/owner-data-fixture/owner-data-32.cdr build/owner-data-32.dbr
-          python3 scripts/seed-data-grow.py --gib "$GROW_GIB" build/owner-data-32.dbr build/owner-data-grown.dbr
+          # Setup is marked on the 32 MiB seed, before the grow: skip-setup mounts its image read-write, and on the grown 200 GiB
+          # container that kept the step busy for over 15 minutes (run 40478905791). The grow keeps the files and the volume UUID.
+          base=build/owner-data-32.dbr
           if [ "$SKIP_SETUP" = true ]; then
-            python3 scripts/seed-data-skip-setup.py build/owner-data-grown.dbr out-seed/data.dbr
-          else
-            cp build/owner-data-grown.dbr out-seed/data.dbr
+            python3 scripts/seed-data-skip-setup.py build/owner-data-32.dbr build/owner-data-32-setup.dbr
+            base=build/owner-data-32-setup.dbr
           fi
+          python3 scripts/seed-data-grow.py --gib "$GROW_GIB" "$base" out-seed/data.dbr
           cp build/owner-data-fixture/seed.json out-seed/
           uuid=$(python3 -c "import json; print(json.load(open('out-seed/seed.json'))['volume_uuid'])")
           {
