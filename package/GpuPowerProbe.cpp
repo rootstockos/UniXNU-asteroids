@@ -1538,6 +1538,7 @@ unsigned gpuLevelFor(uint64_t mhz, unsigned ceiling) {
     while (l < ceiling && gpuMHz(l) < mhz) ++l;
     return l;
 }
+extern "C" volatile uint32_t native_adreno_submit_ibs[4] __attribute__((weak_import));   // [0] submissions (NativeAdrenoSubmit.cpp)
 void gpuDcvsThread(void *, wait_result_t) {
     if (gStartup.gpu_count < 2 || gStartup.gpu_count > 16) return;
     const unsigned top = unsigned(gStartup.gpu_count) - 1;
@@ -1556,6 +1557,7 @@ void gpuDcvsThread(void *, wait_result_t) {
     uint64_t lastBusy = gpuBusyTicks(), lastT = mach_absolute_time(), idleSince = lastT;
     uint64_t runNs = 0, winBusy = 0, winNs = 0, atLevel[16] = {};
     unsigned down = 0, hold = 0;
+    uint32_t lastSubmits = &native_adreno_submit_ibs ? native_adreno_submit_ibs[0] : 0;
     uint64_t boostAbs = 0, touchEnd = 0, wakeEnd = 0, wakeAbs = 0;
     nanoseconds_to_absolutetime((uint64_t)bootArg("sheng-gpu-dcvs-boost-ms", 1000) * 1000000, &boostAbs);
     nanoseconds_to_absolutetime(50000000ull, &wakeAbs);
@@ -1571,10 +1573,11 @@ void gpuDcvsThread(void *, wait_result_t) {
         lastBusy = busy; lastT = t;
         if (!ns) continue;
         winBusy += busyNs; winNs += ns; atLevel[cur] += ns;
-        uint32_t rptr = 0, wptr = 0;
-        ringRead(nullptr, A810_CP_RB_RPTR, &rptr);
-        ringRead(nullptr, A810_CP_RB_WPTR, &wptr);
-        const bool active = busyNs > 0 || rptr != wptr;
+        // T40e2: activity is new submissions or a busy share over 2 % of the window. busyNs > 0 || rptr != wptr never settled on the 3a:
+        // 4 submissions in two minutes at 0 % busy and the idle drop never fired (T40e2 log, 63-194 s).
+        const uint32_t submits = &native_adreno_submit_ibs ? native_adreno_submit_ibs[0] : 0;
+        const bool active = submits != lastSubmits || busyNs * 50 > ns;
+        lastSubmits = submits;
         const uint64_t need = busyNs * gpuMHz(cur) * 2 / ns;
         runNs = busyNs * 100 >= ns * 95 ? runNs + ns : 0;
         unsigned want = cur;
