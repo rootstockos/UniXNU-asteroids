@@ -58,8 +58,8 @@ CONFIG_XNU_OWNER_CACHE_MOUNT=y
 CONFIG_XNU_OWNER_CACHE_STARTUP=y
 CONFIG_XNU_OWNER_DATA_MOUNT=y
 CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
-# The APFS volume UUID of our Data seed (UniXNU build/owner-data-fixture/seed.json, 2026-10-23).
-CONFIG_XNU_OWNER_DATA_VOLUME_UUID="07DEE194-37A6-4A05-8602-8476EB2F65AE"
+# The APFS volume UUID of our Data seed (seed.json of the Data seed workflow, run 40478905791, 2026-10-27).
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="4A3A41B3-E55C-43FE-951E-6D54E7B59FF0"
 # The launchd watchdog policy (uke's BootWatchdogPolicy.c: sheng-disable-watchdogd, sheng-disable-jobs, the Gunyah watchdog
 # pet) is linked by the boot progress kit below since T25; the standalone archive would duplicate it.
 # CONFIG_XNU_WATCHDOG_POLICY is not set
