@@ -43,6 +43,9 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+MIRROR = 'https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git'
+
+
 def fetch():
     if not (SRC / '.git').exists():
         SRC.mkdir(parents=True, exist_ok=True)
@@ -50,10 +53,17 @@ def fetch():
         subprocess.run(['git', '-C', str(SRC), 'remote', 'add', 'origin', PIN['repository']], check=True)
     subprocess.run(['git', '-C', str(SRC), 'sparse-checkout', 'set', '--no-cone',
                     '/drivers/gpu/drm/msm/adreno/', '/drivers/gpu/drm/msm/registers/adreno/'], check=True)
-    # The fetch takes all the commit's trees (minutes on a hosted runner) and the checkout the sparse paths' blobs.
-    print('fetching', PIN['repository'], PIN['commit'], 'trees only', flush=True)
-    subprocess.run(['git', '-C', str(SRC), 'fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin',
-                    PIN['commit']], check=True)
+    # The fetch takes all the commit's trees (minutes on a hosted runner) and the checkout the sparse paths' blobs. GitHub answers
+    # hosted runners' clones of torvalds/linux with 429 at times (T40d's first two runs), so kernel.org's copy of the same commit is
+    # the fallback; it ignores the blob filter (a bigger fetch), and the files are checked by sha256 whatever the source.
+    for repository in (PIN['repository'], MIRROR):
+        subprocess.run(['git', '-C', str(SRC), 'remote', 'set-url', 'origin', repository], check=True)
+        print('fetching', repository, PIN['commit'], 'trees only', flush=True)
+        if subprocess.run(['git', '-C', str(SRC), 'fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin',
+                           PIN['commit']]).returncode == 0:
+            break
+    else:
+        raise SystemExit('linux %s: no source answered' % PIN['commit'])
     print('checking out the adreno sources', flush=True)
     subprocess.run(['git', '-C', str(SRC), 'checkout', '-q', 'FETCH_HEAD'], check=True)
 
