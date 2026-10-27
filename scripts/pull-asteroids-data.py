@@ -104,7 +104,7 @@ def main():
     script = args.out / 'pull.sh'
     base = start + 1 + bitmap_blocks
     script.write_text(''.join(f'dd if={device} bs={BLOCK} skip={base + i} count={n} 2>/dev/null\n' for i, n in runs))
-    remote = '/data/local/tmp/pull.sh' if adb('shell', 'test -d /data/local/tmp && echo y') == 'y' else '/tmp/pull.sh'
+    remote = '/data/local/tmp/pull.sh' if adb('shell', 'test -d /data/local/tmp && echo y || true') == 'y' else '/tmp/pull.sh'
     adb('push', str(script), remote)
     pulled = adb('exec-out', f'sh {remote}', data=True)
     if len(pulled) != len(present) * BLOCK:
