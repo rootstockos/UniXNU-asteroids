@@ -735,7 +735,8 @@ extern "C" IOBufferMemoryDescriptor *sheng_audio_memory(uint32_t type) {
 }
 
 // [audio-requests]: the plug-in's last 16 requests, each ms since boot << 4 | selector, oldest first from [16] (the next slot). Input
-// requests are refused: the 3a has no capture path yet.
+// requests are taken and do nothing, as on sheng before its microphone test passed: the 3a has no capture path yet (the input ring stays
+// silent).
 extern "C" {volatile uint64_t native_audio_requests[17];}
 extern "C" int sheng_audio_request(uint32_t selector) {
     if (!__atomic_load_n(&gAudio.serving, __ATOMIC_ACQUIRE)) return -1;
@@ -744,7 +745,7 @@ extern "C" int sheng_audio_request(uint32_t selector) {
     switch (selector) {
     case ShengAudioStartOutput: __atomic_or_fetch(&gAudio.want, ShengAudioOutputRunning, __ATOMIC_ACQ_REL); break;
     case ShengAudioStopOutput: __atomic_and_fetch(&gAudio.want, ~ShengAudioOutputRunning, __ATOMIC_ACQ_REL); break;
-    case ShengAudioStopInput: break;
+    case ShengAudioStartInput: case ShengAudioStopInput: break;
     default: return -1;
     }
     IOLockWakeup(gAudio.lock, &gAudio.ringCount, false);

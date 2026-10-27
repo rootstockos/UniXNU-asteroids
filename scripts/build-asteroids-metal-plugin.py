@@ -13,8 +13,8 @@ Output in build/asteroids-metal-plugin, or build/asteroids-metal-plugin-publishe
                              /private/var/ngpu): addons/NativeAdrenoMetal.bundle/*. Test-only: no NativeAdrenoMetal.publish beside it, so the
                              plugin only tests. Published: the bundle also holds UniXNU's native Metal frontend (NativeBridgeMetalFrontend.mm)
                              and the bridge, built with ASTEROIDS_METAL_PUBLISH, and addons/NativeAdrenoMetal.publish is beside it. No daemon,
-                             no launchd job either way.
-  owner-trust.bundle         for `--owner-trust-cache`: one owner module with the two CDHashes, then the original modules of
+                             no launchd job either way. T41: also audio/ShengAudio.driver/*, the audio server plug-in (--no-audio leaves it out).
+  owner-trust.bundle         for `--owner-trust-cache`: one owner module with the CDHashes (plugin, Turnip, audio plug-in), then the original modules of
                              ORIGINAL.bundle byte for byte
 The kernel's addon mount presents addons/ over /System/Library/Extensions, where the original discovery loads <MetalPluginName>.bundle;
 GPU power mode 19 publishes the accelerator that names it. shader_tools.py builds glslang and SPIRV-Tools when missing."""
@@ -44,6 +44,7 @@ parser.add_argument('--published', action='store_true', help='T18: the published
 parser.add_argument('--clients', default='CollectionsPoster PosterBoard iconservicesagent',
                     help='T31: the Metal clients beside backboardd (NativeAdrenoMetal.clients); empty for none')
 parser.add_argument('--sample-only', action='store_true', help='T22, with --published: no Metal device, only the stack samples')
+parser.add_argument('--no-audio', action='store_true', help='T41: leave out the audio server plug-in (audio/ShengAudio.driver)')
 args = parser.parse_args()
 ROOT = args.unixnu.resolve()
 if args.published:
@@ -130,12 +131,24 @@ run(['codesign', '--force', '--sign', '-', '--pagesize', '4096', '--identifier',
 for path in (bundle, turnip):
     run(['codesign', '--verify', '--strict', path])
 hashes = {'plugin_cdhash': cdhash(bundle), 'turnip_cdhash': cdhash(turnip)}
+# T41: sheng's audio server plug-in (hal/ShengAudioPlugIn.c, scripts/build-sheng-audio-hal.py), which opens the kernel's audio service
+# (package/AsteroidsAudioProbe.cpp, sheng-audio). The addon carries it as audio/ShengAudio.driver; the kernel mounts audio/ over
+# /System/Library/Audio/Plug-Ins/HAL (patches/xnu/zzyd-board-audio-addon-mount.patch), and its CDHash joins the owner trust module.
+audio = None
+if not args.no_audio:
+    run([sys.executable, DEVICE / 'scripts/build-sheng-audio-hal.py', OUT / 'audio-hal'])
+    audio = OUT / 'audio-hal/ShengAudio.driver'
+    hashes['audio_cdhash'] = cdhash(audio)
 
 # 4. The addon (make-gpu-addon.py's NGPUADD2 layout): every file of the bundle, executables 0755.
 files = []
 for path in sorted(p for p in bundle.rglob('*') if p.is_file()):
     mode = 0o755 if path in (exe, turnip) else 0o644
     files.append(('addons/NativeAdrenoMetal.bundle/' + path.relative_to(bundle).as_posix(), mode, path.read_bytes()))
+if audio:
+    for path in sorted(p for p in audio.rglob('*') if p.is_file()):
+        files.append(('audio/ShengAudio.driver/' + path.relative_to(audio).as_posix(), 0o755 if path.name == 'ShengAudio' else 0o644,
+                      path.read_bytes()))
 if args.published:
     # The marker the plugin looks for beside the bundle; outside the bundle, so its seal and CDHash are the same either way.
     files.append(('addons/NativeAdrenoMetal.sample', 0o644, b'sample\n') if args.sample_only else

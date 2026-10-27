@@ -1,6 +1,9 @@
 # Board patches in application order, after the arch, SoC and OS series. The first entries are rootstockos/UniXNU's bring-up
 # patches, which format 1 applied as part of every patches/xnu file and no shared series lists.
 arch:../../../patches/xnu/offline-owner-root-auth-bypass.patch
+# sheng's audio server plug-in mount (UniXNU-sheng 08cde20 zzyd): the GPU addon's audio/ directory over
+# /System/Library/Audio/Plug-Ins/HAL (nothing without that directory on Data).
+zzyd-board-audio-addon-mount.patch
 # sheng's CPU governor idle helper and the E/P Edge scheduler (UniXNU-sheng 08cde20 zzye/zzyf).
 zzye-board-cpu-idle.patch
 zzyf-board-amp.patch
