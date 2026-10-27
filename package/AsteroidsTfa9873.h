@@ -26,8 +26,8 @@ extern "C" {
 /* Registers and bitfields used directly (16-bit codes: register << 8 | first bit << 4 | width - 1). */
 #define TFA_REG_SYS_CONTROL0 0x00
 #define TFA_REG_REVISION 0x03
-#define TFA_REG_STATUS0 0x10   /* VDDS, OTDS, OCDS, UVDS, MANALARM, CLKS (bit 6), MTPB, NOCLK, TDMERR */
-#define TFA_REG_STATUS1 0x11   /* PLLS (bit 6), SWS (bit 13), AMPS (bit 14) */
+#define TFA_REG_STATUS0 0x10   /* VDDS, DCOCPOK, OTDS, OCDS, UVDS, MANALARM, CLKS (bit 6), MTPB, NOCLK (8), TDMERR (10) */
+#define TFA_REG_STATUS1 0x11   /* DCIL, DCDCA, PLLS (bit 6), SWS (bit 13), AMPS (bit 14), AREFS (bit 15) */
 #define TFA_BF_PWDN 0x0000
 #define TFA_BF_I2CR 0x0010
 #define TFA_BF_AMPE 0x0030
@@ -35,7 +35,11 @@ extern "C" {
 #define TFA_BF_FSSYNCEN 0x0480
 #define TFA_BF_MTPK 0xa107
 #define TFA_STATUS0_CLKS (1u << 6)
-#define TFA_STATUS0_ERRORS ((1u << 1) | (1u << 2) | (1u << 3) | (1u << 4))   /* OTDS, OCDS, UVDS, MANALARM (sticky ones clear on read) */
+/* NXP's TFA9873 field list: bits 1, 2 and 4 (DCOCPOK, OTDS, UVDS) are "ok" flags, set when all is well; bits 3, 5, 8 and 10 (OCDS,
+ * MANALARM, NOCLK, TDMERR) are alarms. Sticky ones clear on read. */
+#define TFA_STATUS0_OK ((1u << 1) | (1u << 2) | (1u << 4))
+#define TFA_STATUS0_ALARMS ((1u << 3) | (1u << 5) | (1u << 8) | (1u << 10))
+#define TFA_STATUS0_FAULT(s) ((((s) & TFA_STATUS0_OK) != TFA_STATUS0_OK) || ((s) & TFA_STATUS0_ALARMS))
 #define TFA_REVISIONS_KNOWN(r) (((r) & 0xff) == 0x73)
 
 enum {TfaWrite = 1, TfaUpdate = 2, TfaRead = 3, TfaDelayMs = 4, TfaPoll = 5, TfaCopyXor = 6};

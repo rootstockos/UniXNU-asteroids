@@ -158,7 +158,8 @@ int main(void)
     n = gpr_encode(b, sizeof b, &r, words, 8);
     CHECK(ar_parse(b, n, &a) == ArPrmDone && a.status == 0);
 
-    /* asteroids: the 3a's port (primary MI2S, SD0) with 32-bit slots on the wire, and the converter widening the 16-bit stream to it. */
+    /* asteroids: the 3a's port (primary MI2S, here SD0; the board's default is SD1) with 32-bit slots on the wire, and the converter
+     * widening the 16-bit stream to it. */
     const ArFormat wide = {48000, 32, 2};
     const ArI2s primary = {AR_I2S_PRIMARY, AR_I2S_SD0};
     n = ar_config_speaker_device(b, sizeof b, 1, 11, &wide, &primary);

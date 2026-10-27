@@ -15,7 +15,8 @@
 //      for sheng-audio-tone-ms (default 1500), attenuated by sheng-audio-atten dB (default 30)
 // The amplifiers take two 32-bit slots per frame (TDMSSIZE/TDMSLLN 31 in the container: P slot 0, S slot 1), so the speaker device runs
 // 32-bit while the stream stays 16-bit; the stream graph's converter widens it. asteroids-audio-i2s = interface | data lines << 8 | bits
-// << 16 overrides the port (default primary, SD0, 32). asteroids-audio-prm (bits, default 3): 1 LPASS core vote, 2 MI2S bit clock.
+// << 16 overrides the port (default primary, SD1, 32: the 3a's amplifiers take their data on gpio17, T40k-spk-sd1; SD0 gave clocks but
+// silence). asteroids-audio-prm (bits, default 3): 1 LPASS core vote, 2 MI2S bit clock.
 // On start the amplifiers power up after the graphs run: they wait for the bit clock (CLKS) before the amplifier turns on.
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
@@ -397,7 +398,7 @@ void readAmpStatus() {
         native_audio_amps[amp][2] = run.reads[0];
         native_audio_amps[amp][3] = run.reads[1];
         if (run.reads[0] & TFA_STATUS0_CLKS) clocked |= 1 << amp;
-        if (run.reads[0] & TFA_STATUS0_ERRORS) errors |= 1 << amp;
+        if (TFA_STATUS0_FAULT(run.reads[0])) errors |= 1 << amp;
     }
     native_audio_stats[7] = clocked;
     native_audio_stats[8] = errors;
@@ -626,16 +627,21 @@ void stopOutput() {
 //   7  the DSP's capture graphs and two seconds of capture ([mic capture])
 //   8  capture serves the plug-in's input stream
 // asteroids-mic-port = master sample interval | offset1 << 8 | lane << 16 (default 1 | 1 << 8: the vendor's first TX use case for ADC1,
-// sheng's interval) moves the port timing.
+// sheng's interval) moves the port timing; asteroids-mic-mux=1 sets the VA macro's clock source switch (kVaMuxSel).
 extern "C" {volatile int32_t native_mic_stats[16];}
 // [0] stage (positive progress x10, negative the failing step), [1] PRM: macro | dcodec << 8 | VA clock << 16 | TX clock << 24 (0xff no
 // answer), [2] rails (bit 0 ldob7 found, 1 ldob8 found, 2 voted), [3] master version, [4] COMP_STATUS, [5] slave status, [6]/[7] the
 // codec's device id low/high word, [8] its part id, [9] SmartMIC0 ACT_PS after the power-up, [10] TX macro MCLK control, [11] VA macro
 // MCLK control, [12] master interrupt status, [13] COMP_PARAMS, [14] reads that timed out, [15] ms the bring-up took
 extern "C" {volatile uint32_t native_mic_regs[16];}
-// tx 0x0/0x4/0x100/0x400, va 0x0/0x4/0x80, swr 0x4/0x101c/0x1044/0x104c/0x200/0x14/0x1124, LPI gpio0 control, slew
+// tx 0x0/0x4/0x100/0x400, va 0x0/0x4/0x80 (from stage 6; up to stage 5 the first seven are tx 0x0/0x4/0x8, the VA clock source switch,
+// va 0x0/0x4/0x8, read when the master is up or fails), swr 0x4/0x101c/0x1044/0x104c/0x200/0x14/0x1124, LPI gpio0 control, slew
 extern "C" {volatile int32_t native_mic_capture[8];}
 // [0] stage, [1] last DSP status, [2] periods asked, [3] returned, [4] bytes, [5] peak, [6] mean absolute value, [7] non-zero samples
+// The VA macro's clock source switch (DT qcom,va-island-mode-muxsel; va-clk-mux-select = 1, use-clk-id 3 = VA core clock): the vendor's
+// clock manager sets it to 1 once the VA core clock runs. asteroids-mic-mux=1 does the same (T41: the master's link never came up with
+// it left at 0).
+constexpr uint64_t kVaMuxSel = 0x03420000ULL;
 constexpr uint64_t kLpi = 0x03440000ULL, kLpiSlew = 0x034da000ULL, kTxMacro = 0x03220000ULL, kVaMacro = 0x033f0000ULL, kSwr = 0x033b0000ULL;
 constexpr unsigned kWcdResetPin = 162;
 constexpr uint64_t kCmdDb = 0x81c60000ULL, kRsc = 0x17a20000ULL;
@@ -745,8 +751,9 @@ bool wcdUpdate(uint32_t reg, uint8_t mask, uint8_t value) {
 bool micPins() {
     Region lpi, slew;
     if (!mapRegion(kLpi, 0xf000, lpi) || !mapRegion(kLpiSlew, 0x1000, slew)) return false;
-    // DT tx_swr_*_active: function 1, 2 mA; the clock and data 1/2 pulled down, data 0 bus hold. Slew offsets from qcom,lpi-slew-offset-tbl.
-    static const struct {unsigned pin, slew; uint32_t pull;} pins[] = {{0, 0, 1}, {1, 2, 2}, {2, 4, 1}, {14, 6, 1}};
+    // DT tx_swr_*_active: function 1, 2 mA, slew 1; the clock without pull, the three data lines bus hold (the sleep states pull down).
+    // Slew offsets from qcom,lpi-slew-offset-tbl.
+    static const struct {unsigned pin, slew; uint32_t pull;} pins[] = {{0, 0, 0}, {1, 2, 2}, {2, 4, 2}, {14, 6, 2}};
     uint32_t sv = rd32(slew.va, 0);
     for (auto &p : pins) {
         wr32(lpi.va, p.pin * 0x1000, 1u << 2 | p.pull);
@@ -760,10 +767,17 @@ bool micPins() {
 
 // The VA macro's frame sync generator (the DT's qcom,fs-gen-sequence: 0x3000 |= 1, 0x3004 |= 3, 0x3004 = 1, 0x3080 |= 2 at the VA macro)
 // and its SoundWire clock with a reset pulse; the TX macro's clock for decimator 0.
-Region gTx, gVa;
+Region gTx, gVa, gVaMuxMap;
+uintptr_t gVaMux;
 bool micMacros() {
     if (!mapRegion(kVaMacro, 0x1000, gVa) || !mapRegion(kTxMacro, 0x1000, gTx)) return false;
     const uintptr_t va = gVa.va, tx = gTx.va;
+    uint32_t mux = 0;
+    PE_parse_boot_argn("asteroids-mic-mux", &mux, sizeof mux);
+    if (mapRegion(kVaMuxSel, 0x1000, gVaMuxMap)) {
+        if (mux == 1) wr32(gVaMuxMap.va, 0, 1);
+        gVaMux = gVaMuxMap.va;
+    }
     wr32(va, 0x0, rd32(va, 0x0) | 1);
     wr32(va, 0x4, rd32(va, 0x4) | 3);
     wr32(va, 0x4, (rd32(va, 0x4) & ~2u) | 1);
@@ -791,8 +805,11 @@ bool micMaster() {
     const bool cpu1 = version >= 0x01060000;
     gSwr.wr = cpu1 ? 0x31c : 0x300; gSwr.rd = cpu1 ? 0x320 : 0x304; gSwr.status = cpu1 ? 0x328 : 0x30c; gSwr.fifo = cpu1 ? 0x334 : 0x318;
     gSwr.page1 = gSwr.page2 = 0xff;
-    wr32(m, 0x008, 1);                                          // soft reset
+    // As the vendor's runtime resume does before swrm_master_init: two soft resets, then a bus reset (MCP_BUS_CTRL 1).
+    wr32(m, 0x008, 1);
+    wr32(m, 0x008, 1);
     IOSleep(1);
+    wr32(m, 0x1044, 1);
     wr32(m, 0x101c, 1u << 3 | 7u);                              // frame bank 0: 50 rows, 16 columns
     wr32(m, 0x500, 1);                                          // auto enumeration
     wr32(m, 0x1048, (rd32(m, 0x1048) & ~0x3e0000u) | 0x1fu << 17);
@@ -823,6 +840,9 @@ bool micMaster() {
     }
     const uint32_t mr[7] = {0x4, 0x101c, 0x1044, 0x104c, 0x200, 0x14, 0x1124};
     for (unsigned k = 0; k < 7; ++k) native_mic_regs[7 + k] = rd32(m, mr[k]);
+    native_mic_regs[0] = rd32(gTx.va, 0x0); native_mic_regs[1] = rd32(gTx.va, 0x4); native_mic_regs[2] = rd32(gTx.va, 0x8);
+    native_mic_regs[3] = gVaMux ? rd32(gVaMux, 0) : 0xdead;
+    native_mic_regs[4] = rd32(gVa.va, 0x0); native_mic_regs[5] = rd32(gVa.va, 0x4); native_mic_regs[6] = rd32(gVa.va, 0x8);
     return gSwr.dev != 0;
 }
 
@@ -1227,7 +1247,7 @@ extern "C" void sheng_audio_probe(void) {
     gAudio.toneMs = (mode & 2) ? 1500 : 0;
     gAudio.atten = 30;
     gAudio.prm = 3;
-    uint32_t port = AR_I2S_PRIMARY | AR_I2S_SD0 << 8 | 32u << 16;
+    uint32_t port = AR_I2S_PRIMARY | AR_I2S_SD1 << 8 | 32u << 16;
     PE_parse_boot_argn("sheng-audio-tone-ms", &gAudio.toneMs, sizeof gAudio.toneMs);
     PE_parse_boot_argn("sheng-audio-atten", &gAudio.atten, sizeof gAudio.atten);
     PE_parse_boot_argn("asteroids-audio-prm", &gAudio.prm, sizeof gAudio.prm);
