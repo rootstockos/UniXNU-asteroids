@@ -109,7 +109,7 @@ extern volatile uint32_t native_dpu_pipes[54] __attribute__((weak_import));
 extern volatile uint32_t native_dpu_more[40] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_surfaces[14] __attribute__((weak_import));
-extern volatile uint32_t native_legacy_direct[9] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_direct[13] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_dump[20] __attribute__((weak_import));
@@ -886,15 +886,16 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
   }
   // Direct scanout (sheng-dpu-scanout): the display bank's stage 1 (NativeUfs), then the flips (NativeLegacyDisplay.cpp native_legacy_direct).
   if (&native_ufs_dpu_state && native_ufs_dpu_state) {
-    char row[360];
+    char row[420];
     const volatile uint32_t *c = native_ufs_dpu_check;
     int n = snprintf(row, sizeof row, "[direct scanout] bank %x ttbr0=%x tcr=%x fsr %x->%x far=%x%08x fsynr0=%x watched %uus now sctlr=%x fsr=%x",
                      native_ufs_dpu_state, c[0], c[1], c[2], c[3], c[5], c[4], c[6], c[7],
                      native_ufs_dpu_live ? native_ufs_dpu_live(0) : 0xdead, native_ufs_dpu_live ? native_ufs_dpu_live(1) : 0xdead);
     if (&native_legacy_direct) {
       const volatile uint32_t *d = native_legacy_direct;
-      n += snprintf(row + n, sizeof row - (size_t)n, " | flips %u mapped %u mapfail %u latch>50ms %u max %uus mean %uus released %u copied %u to boot %u",
-                    d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8]);
+      n += snprintf(row + n, sizeof row - (size_t)n, " | flips %u mapped %u mapfail %u latch>50ms %u max %uus mean %uus released %u copied %u to boot %u"
+                    " | start %u waited %ums vig0 %x pipes %x",
+                    d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8], d[9], d[10], d[11], d[12]);
     }
     at = put(out, at, cap, row, sizeof row);
   }
