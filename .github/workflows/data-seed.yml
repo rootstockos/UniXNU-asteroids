@@ -1,0 +1,119 @@
+name: Data seed
+
+# The payload's Data seed (--data-ramdisk; packed, board.toml [payload.adt] packed_data_ramdisk) on a hosted macOS runner, since
+# every step needs hdiutil/diskutil:
+#   1. UniXNU's prepare-owner-data-fixture.py: a 32 MiB APFS volume holding the IPSW OS volume's private/var (mounted read-only);
+#   2. DarwinBoot's packed_ramdisk.py: the raw image packed (DBRDISK1);
+#   3. seed-data-grow.py --gib: the container grown to the persistent store's size on the 3a's userdata;
+#   4. seed-data-skip-setup.py (optional): Setup marked as done.
+# The new volume's UUID is printed: CONFIG_XNU_OWNER_DATA_VOLUME_UUID in configs/asteroids_defconfig must match it. Any new seed
+# starts the persistent Data store over (its header carries the seed digest). Uploaded encrypted (ARTIFACT_PASSPHRASE): the seed
+# holds files from the IPSW.
+#   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in data-seed.tar.gz.enc -pass file:KEYFILE | tar xz
+
+on:
+  workflow_dispatch:
+    inputs:
+      unixnu_ref:
+        description: rootstockos/UniXNU ref (seed scripts)
+        required: true
+        default: asteroids-dev
+      grow_gib:
+        description: Data container size in GiB (userdata is 224.8 GiB, the root image about 10 GiB, the log reserve 1 GiB)
+        required: true
+        default: "200"
+      skip_setup:
+        description: Mark Setup as done
+        type: boolean
+        default: true
+      runner:
+        description: Hosted runner (macos-26 is arm64; macos-26-intel when the arm64 pool has no capacity)
+        type: choice
+        options:
+          - macos-26
+          - macos-26-intel
+        default: macos-26
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out UniXNU
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rootstockos/UniXNU
+          ref: ${{ inputs.unixnu_ref }}
+          path: unixnu
+          persist-credentials: false
+
+      - name: DarwinBoot (packed ramdisk format)
+        working-directory: unixnu
+        run: git submodule update --init --depth 1 drivers/DarwinBoot
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: The IPSW's OS volume, mounted read-only
+        working-directory: unixnu
+        run: |
+          url=$(python3 -c "import tomllib; print(tomllib.load(open('profiles/os/ipados-17.7.11-21H461/profile.toml', 'rb'))['ipsw']['url'])")
+          mkdir -p refer
+          curl -fsSL --retry 3 -o refer/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw "$url"
+          python3 scripts/extract-target-volume.py OS
+          rm refer/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw
+          dmg=$(ls .cache/firmware/target-volumes/*.dmg)
+          mkdir -p .cache/firmware/target-volumes/os-mount
+          hdiutil attach -readonly -nobrowse -owners off -mountpoint .cache/firmware/target-volumes/os-mount "$dmg"
+
+      - name: Seed, packed, grown
+        id: seed
+        working-directory: unixnu
+        env:
+          GROW_GIB: ${{ inputs.grow_gib }}
+          SKIP_SETUP: ${{ inputs.skip_setup }}
+        run: |
+          mkdir -p build out-seed
+          python3 scripts/prepare-owner-data-fixture.py
+          hdiutil detach .cache/firmware/target-volumes/os-mount
+          python3 drivers/DarwinBoot/Test/packed_ramdisk.py build/owner-data-fixture/owner-data-32.cdr build/owner-data-32.dbr
+          python3 scripts/seed-data-grow.py --gib "$GROW_GIB" build/owner-data-32.dbr build/owner-data-grown.dbr
+          if [ "$SKIP_SETUP" = true ]; then
+            python3 scripts/seed-data-skip-setup.py build/owner-data-grown.dbr out-seed/data.dbr
+          else
+            cp build/owner-data-grown.dbr out-seed/data.dbr
+          fi
+          cp build/owner-data-fixture/seed.json out-seed/
+          uuid=$(python3 -c "import json; print(json.load(open('out-seed/seed.json'))['volume_uuid'])")
+          {
+            echo "unixnu $(git rev-parse HEAD)"
+            echo "grow_gib $GROW_GIB"
+            echo "skip_setup $SKIP_SETUP"
+            echo "volume_uuid $uuid"
+            shasum -a 256 out-seed/data.dbr
+          } | tee out-seed/inputs.txt
+          ls -la out-seed
+          echo "uuid=$uuid" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Data volume UUID::CONFIG_XNU_OWNER_DATA_VOLUME_UUID=\"$uuid\""
+
+      - name: Encrypt
+        env:
+          ARTIFACT_PASSPHRASE: ${{ secrets.ARTIFACT_PASSPHRASE }}
+        run: |
+          [ -n "$ARTIFACT_PASSPHRASE" ] || { echo "::error::No ARTIFACT_PASSPHRASE secret: nothing is uploaded."; exit 1; }
+          mkdir -p "$RUNNER_TEMP/encrypted"
+          tar -C unixnu/out-seed -czf - . \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ARTIFACT_PASSPHRASE \
+              -out "$RUNNER_TEMP/encrypted/data-seed.tar.gz.enc"
+
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asteroids-data-seed-encrypted
+          path: ${{ runner.temp }}/encrypted/data-seed.tar.gz.enc
+          if-no-files-found: error
+          retention-days: 7
