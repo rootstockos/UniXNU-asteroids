@@ -73,6 +73,8 @@ jobs:
           # llvm-as for the bridge's AIR fixtures (build-adreno-metal-bridge.py looks in Homebrew's keg first); the bridge
           # pins Rust 1.98.0 with the iOS target.
           brew install llvm
+          # keg-only: /opt/homebrew on arm64, /usr/local on the Intel runner, so put it on PATH for both
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           rustup toolchain install 1.98.0 --profile minimal --target aarch64-apple-ios
           sw_vers
           xcodebuild -version
