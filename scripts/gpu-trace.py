@@ -87,6 +87,39 @@ def read(path):
     return t
 
 
+def link_secondaries(t):
+    """The Metal bridge records a pass's draws in a secondary command buffer, so the draws carry the secondary's serial and pass 0 while
+    the pass carries the primary's (T61). A recording takes its serial at its first record: a secondary's draws come just before the
+    primary's pass, so each secondary goes to the first primary serial above it, and to that primary's pass whose autotune draw count
+    equals the secondary's draws (else its first pass). A join counts as verified where the draws add up to the autotune's count."""
+    import bisect
+    pass_keys = sorted({(p['serial'], p['pass_no']) for p in t['pass_'] if p['kind'] < 2})
+    if not t['draw'] or {(d['serial'], d['pass_no']) for d in t['draw']} & set(pass_keys):
+        return 0, 0
+    frag = {(f['serial'], f['pass_no']): f['draws'] for f in t['frag']}
+    by_serial = collections.defaultdict(list)
+    for d in t['draw']:
+        by_serial[d['serial']].append(d)
+    primaries = sorted({k[0] for k in pass_keys})
+    passes_of = collections.defaultdict(list)
+    for s_, n in pass_keys:
+        passes_of[s_].append(n)
+    joined = collections.Counter()
+    for sec in sorted(by_serial):
+        i = bisect.bisect_right(primaries, sec)
+        if i == len(primaries):
+            continue
+        prim = primaries[i]
+        draws = by_serial[sec]
+        target = next((n for n in passes_of[prim] if frag.get((prim, n)) == len(draws)), passes_of[prim][0])
+        for d in draws:
+            d['secondary'] = sec
+            d['serial'], d['pass_no'] = prim, target
+        joined[prim, target] += len(draws)
+    verified = sum(1 for k, n in joined.items() if frag.get(k) == n)
+    return verified, sum(1 for k in joined if k in frag)
+
+
 def us(ticks, freq):
     return ticks * 1e6 / freq
 
@@ -105,6 +138,7 @@ def blend_name(d):
 
 def report(t, out):
     freq = t['freq']
+    verified, checkable = link_secondaries(t)
     passes = [p for p in t['pass_'] if p['kind'] < 2]
     timed = [p for p in passes if ok_time(p)]
     draws_by_pass = collections.defaultdict(list)
@@ -116,7 +150,10 @@ def report(t, out):
     span = (max(p['end'] for p in timed) - min(p['start'] for p in timed)) / freq if timed else 0
     w(f'trace: pid {t["pid"]}, {len(t["pass_"])} pass records ({len(timed)} timed), {len(t["draw"])} draws, {len(t["shader"])} shaders, '
       f'{len(t["frag"])} autotune entries over {span:.1f} s; lost {t["lost"]}, torn tail {t["torn"]} bytes; per-draw samples '
-      f'{"yes" if have_samples else "no"}\n\n')
+      f'{"yes" if have_samples else "no"}\n')
+    if checkable:
+        w(f'draws joined to passes from secondary command buffers: {verified} of {checkable} passes match the autotune\'s draw count\n')
+    w('\n')
 
     w('== passes by size (large: render area of 1 MP or more)\n')
     for name, sel in (('large', lambda p: p['area'] >= LARGE_PX), ('small', lambda p: p['area'] < LARGE_PX)):
@@ -129,7 +166,8 @@ def report(t, out):
         fr = [f for f in fr if f['has_samples']]
         over = sum(f['samples'] for f in fr) / max(1, sum(f['area'] for f in fr)) if fr else 0
         w(f'{name}: {len(ps)} passes, {us(total, freq) / 1e3:.0f} ms ({us(total, freq) / len(ps):.0f} us each), '
-          f'{sum(p["area"] for p in ps) / len(ps) / 1e3:.0f} K px, {sum(p["draws"] for p in ps) / len(ps):.1f} draws; '
+          f'{sum(p["area"] for p in ps) / len(ps) / 1e3:.0f} K px, '
+          f'{sum(p["draws"] or len(draws_by_pass[p["serial"], p["pass_no"]]) for p in ps) / len(ps):.1f} draws; '
           f'GMEM {len(gm)} ({sum(p["tiles"] for p in gm) / max(1, len(gm)):.0f} tiles); overdraw {over:.2f} over {len(fr)}\n')
     w('\n')
 
@@ -208,6 +246,7 @@ def report(t, out):
 
 
 def write_csv(t, table, out):
+    link_secondaries(t)
     rows = {'passes': t['pass_'], 'draws': t['draw'], 'frags': t['frag'], 'shaders': list(t['shader'].values())}[table]
     if not rows:
         return
