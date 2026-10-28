@@ -4,11 +4,14 @@
 The phone runs LineageOS Recovery with ADB (root shell). The log window is the last 32 MiB of userdata (NativeUfs kLogReserveBlocks,
 8192 blocks of 4096 bytes); it is copied with one dd into
 the phone's /tmp (RAM) and fetched with adb pull, nothing on the phone's storage is written, and sheng's decoder (scripts/read-sheng-log.py
---decode, UniXNU-sheng 08cde20) writes header.txt, msgbuf.txt, slots.txt and latest.txt.
+--decode, UniXNU-sheng 08cde20) writes header.txt, msgbuf.txt, slots.txt and latest.txt. When the header names a diagnostic export
+(sheng-diag-export, or sheng-gpu-trace-export's rounds), it is read from the export region below the window the same way and unpacked
+into diag/; a GPU trace in it (Turnip's TU_DW_TRACE) is decoded by scripts/gpu-trace.py into gpu-trace.txt.
 
     python3 scripts/pull-asteroids-log.py --out <dir>
 """
 import argparse
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +49,33 @@ def main():
     if log.stat().st_size != LOG_BLOCKS * BLOCK:
         sys.exit(f'short read: {log.stat().st_size} of {LOG_BLOCKS * BLOCK} bytes')
     subprocess.run([sys.executable, ROOT / 'scripts/read-sheng-log.py', '--decode', str(log), '--out', str(args.out)], check=True)
+    for run in sorted(p for p in args.out.iterdir() if p.is_dir() and (p / 'header.txt').exists()):
+        pull_diag(args, run, partition)
+
+
+def pull_diag(args, run, partition):
+    h = dict(line.split('=', 1) for line in (run / 'header.txt').read_text().splitlines() if '=' in line)
+    size, first, below = (int(h.get(k, 0)) for k in ('diag_bytes', 'diag_first', 'export_below'))
+    if not size or not below:
+        return
+    blocks = (size + BLOCK - 1) // BLOCK
+    remote = '/tmp/asteroids-diag.bin'
+    adb('shell', f'dd if={args.device} of={remote} bs={BLOCK} skip={partition - LOG_BLOCKS - below + first} count={blocks} 2>/dev/null',
+        check=False)
+    blob = run / 'diag-region.bin'
+    adb('pull', remote, str(blob))
+    adb('shell', f'rm -f {remote}', check=False)
+    if blob.stat().st_size != blocks * BLOCK:
+        sys.exit(f'diag export: short read, {blob.stat().st_size} of {blocks * BLOCK} bytes')
+    spec = importlib.util.spec_from_file_location('read_sheng_log', ROOT / 'scripts/read-sheng-log.py')
+    reader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reader)
+    reader.unpack_export(blob.read_bytes()[:size], run, 'diag')
+    blob.unlink()
+    for trace in sorted((run / 'diag/files').glob('private/var/*/Library/Caches/com.apple.backboardd/m2v/gpu/trace.bin')):
+        with open(run / 'gpu-trace.txt', 'w') as out:
+            subprocess.run([sys.executable, ROOT / 'scripts/gpu-trace.py', str(trace)], check=False, stdout=out)
+        print(f'{run / "gpu-trace.txt"}: from {trace}')
 
 
 if __name__ == '__main__':

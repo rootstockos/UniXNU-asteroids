@@ -1418,5 +1418,6 @@ size_t boot_progress_profile_rows(char *out,size_t cap) {
 // BootLog.c reaches the diagnostic file export (BootDiagExport.c) only through weak references, which do not pull an archive member into
 // the link; this table does.
 extern uint64_t boot_diag_scan(uint64_t);
+extern uint64_t boot_diag_scan_gpu(uint64_t);
 extern int boot_diag_stream(int (*)(const void *, uint32_t, void *), void *);
-__attribute__((used)) void *const boot_diag_export_anchor[] = {(void *)boot_diag_scan, (void *)boot_diag_stream};
+__attribute__((used)) void *const boot_diag_export_anchor[] = {(void *)boot_diag_scan, (void *)boot_diag_scan_gpu, (void *)boot_diag_stream};

@@ -46,9 +46,11 @@
 // arguments adds more for one boot ("gmem" or "sysmem" forces every pass's rendering mode; several flags joined with ':'), so GMEM and
 // system memory can be compared without a rebuild. T55: asteroids-tu-time=<passes|all> also turns on Turnip's GPU timing brackets
 // (turnip-asteroids-timing.patch, TU_DW_TIME), in the render server only. T55's brackets hung the GPU on the render server's first
-// frame; T57 writes them with CP_REG_TO_MEM, as the autotune does.
+// frame; T57 writes them with CP_REG_TO_MEM, as the autotune does. T61: asteroids-tu-trace=<letters> turns on Turnip's trace file
+// (TU_DW_TRACE: p passes, d draws, s samples per draw, b shader binaries, t pass stages, a blits too; 1 = pdb), also in the render
+// server only; sheng-gpu-trace-export=<seconds> brings it home with the boot log, and scripts/gpu-trace.py reads it.
 static void setTurnipDebug(bool renderServer = false) {
-    static char flags[128], timing[16];
+    static char flags[128], timing[16], trace[16];
     static bool built;
     if (!built) {
         built = true;
@@ -62,6 +64,12 @@ static void setTurnipDebug(bool renderServer = false) {
                 while (t[n] && t[n] != ' ' && n + 1 < sizeof timing) {timing[n] = t[n]; ++n;}
                 timing[n] = 0;
             }
+            if (const char *t = strstr(args, "asteroids-tu-trace=")) {
+                t += strlen("asteroids-tu-trace=");
+                size_t n = 0;
+                while (t[n] && t[n] != ' ' && n + 1 < sizeof trace) {trace[n] = t[n]; ++n;}
+                trace[n] = 0;
+            }
             const char *at = strstr(args, "asteroids-tu-debug=");
             if (at) {
                 at += strlen("asteroids-tu-debug=");
@@ -74,6 +82,7 @@ static void setTurnipDebug(bool renderServer = false) {
     }
     setenv("TU_DEBUG", flags, 1);
     if (renderServer && timing[0]) setenv("TU_DW_TIME", timing, 1);   // "passes": render passes only; anything else: every kind
+    if (renderServer && trace[0]) setenv("TU_DW_TRACE", trace, 1);
 }
 #ifdef ASTEROIDS_METAL_PUBLISH
 // T35: AdrenoMetal's frontend (ce5e19e) reports shader priming (the PR row) from counters UniXNU's own plugin defines through

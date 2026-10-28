@@ -7,6 +7,8 @@
 // "/" and every path relative to it. The scan lists every file first and spends the budget in the order of worth (the log newest file
 // first, then its format strings, then the crash reports), so an older boot's large log files never push out this boot's. The format
 // strings come last among the log's files because they only change with the binaries: the host keeps those of earlier runs.
+// sheng-gpu-trace-export=<seconds> (BootLog.c) exports only the GPU trace directory, every so many seconds (boot_diag_scan_gpu): Turnip's
+// records of every pass, draw and shader (TU_DW_TRACE, scripts/gpu-trace.py), so a new question about them needs no new build.
 // screen.bgrx is the panel's scanout at half resolution (16-byte header "SHOT", u32 width, height, stride, then BGRX rows), so the
 // run shows what was on the screen. Files that do not fit the budget are named in diag-skipped.txt, the stream's last file.
 #include <sys/param.h>
@@ -31,7 +33,13 @@ volatile uint32_t boot_diag_files, boot_diag_skipped, boot_diag_errors;
 // In the order of their worth: the format strings of earlier runs are on the host already, and the crash reports are rarely needed.
 // A root may be a single file: the render server's shader priming state (PrimeShaders.h) in its persistent cache directory, small and
 // the only record of how far priming got (backboardd runs as mobile; the root home is the fallback).
+static const char *const diag_gpu_roots[] = {
+  "/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/gpu",
+  "/private/var/root/Library/Caches/com.apple.backboardd/m2v/gpu",
+};
 static const char *const diag_roots[] = {
+  "/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/gpu",
+  "/private/var/root/Library/Caches/com.apple.backboardd/m2v/gpu",
   "/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/prime.log",
   "/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/prime-bad",
   "/private/var/root/Library/Caches/com.apple.backboardd/m2v/prime.log",
@@ -134,7 +142,7 @@ static int worth(const void *a, const void *b) {
 }
 
 // The stream's length (without the 16-byte blob header) for at most budget bytes, after scanning the roots; 0 when nothing could be read.
-uint64_t boot_diag_scan(uint64_t budget) {
+static uint64_t scan_roots(uint64_t budget, const char *const *roots, unsigned root_count) {
   if (!diag_files) diag_files = IOMallocData(sizeof(struct diag_file) * DiagMaxFiles);
   if (!diag_note) diag_note = IOMallocData(DiagNote);
   if (!diag_files || !diag_note) return 0;
@@ -149,7 +157,7 @@ uint64_t boot_diag_scan(uint64_t budget) {
     if (used + cost <= budget) {shot_width = (uint32_t)video.v_width / 2; shot_height = (uint32_t)video.v_height / 2; used += cost;}
   }
   vfs_context_t ctx = vfs_context_kernel();
-  for (unsigned i = 0; i < sizeof diag_roots / sizeof diag_roots[0]; ++i) scan(diag_roots[i], 0, i, ctx);
+  for (unsigned i = 0; i < root_count; ++i) scan(roots[i], 0, i, ctx);
   qsort(diag_files, diag_count, sizeof diag_files[0], worth);
   uint32_t kept = 0;
   for (uint32_t i = 0; i < diag_count; ++i) {
@@ -161,6 +169,8 @@ uint64_t boot_diag_scan(uint64_t budget) {
   boot_diag_files = kept; boot_diag_skipped = diag_skipped_count;
   return used;
 }
+uint64_t boot_diag_scan(uint64_t budget) {return scan_roots(budget, diag_roots, sizeof diag_roots / sizeof diag_roots[0]);}
+uint64_t boot_diag_scan_gpu(uint64_t budget) {return scan_roots(budget, diag_gpu_roots, sizeof diag_gpu_roots / sizeof diag_gpu_roots[0]);}
 
 typedef int (*boot_diag_emit_t)(const void *, uint32_t, void *);
 static int put_head(boot_diag_emit_t emit, void *arg, const char *path, uint32_t mode, uint32_t uid, uint32_t gid, uint64_t size) {

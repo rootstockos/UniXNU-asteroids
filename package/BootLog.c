@@ -254,13 +254,16 @@ static uint32_t export_region;   // blocks of the export region, 0 = none
 static uint32_t export_total, export_filled, export_generation, export_target, export_ready, export_ready_bytes, export_ready_first;
 // The diagnostic file export takes the half the ready blob does not hold; from then on the plugin's exports are refused (-7), so neither
 // overwrites the other. diag_status: 0 not asked, 1 running, 2 done, negative failed.
-static uint32_t diag_first, diag_bytes;
+// The GPU trace export (sheng-gpu-trace-export) runs again and again: each round goes into the quarter of that half the header does
+// not name, so the header always names a complete one. The full export, once asked, takes the whole half and ends the rounds.
+static uint32_t diag_first, diag_bytes, diag_rounds;
 static int diag_owned;
 volatile int boot_diag_status;
 extern volatile uint32_t boot_diag_files __attribute__((weak_import));
 extern volatile uint32_t boot_diag_skipped __attribute__((weak_import));
 extern volatile uint32_t boot_diag_errors __attribute__((weak_import));
 extern uint64_t boot_diag_scan(uint64_t) __attribute__((weak_import));
+extern uint64_t boot_diag_scan_gpu(uint64_t) __attribute__((weak_import));
 extern int boot_diag_stream(int (*)(const void *, uint32_t, void *), void *) __attribute__((weak_import));
 int boot_log_export_put(uint32_t generation, uint32_t total, uint32_t offset, const void *data, uint32_t size) {
   if (!export_lock || !generation || !total || !data || !size || offset > total || size > total - offset) return -1;
@@ -318,15 +321,20 @@ static int diag_emit(const void *data, uint32_t size, void *arg) {
   return 0;
 }
 static void diag_thread(void *arg, wait_result_t wait) {
-  (void)arg; (void)wait;
+  (void)wait;
+  const int gpu = arg != NULL;   // a GPU trace round
   IOLockLock(export_lock);
-  const uint32_t half = export_region / 2;
-  struct diag_sink k = {NULL, export_ready && export_ready_first == 0 ? half : 0, 0};
+  const uint32_t half = export_region / 2, base = export_ready && export_ready_first == 0 ? half : 0, quarter = half / 2;
+  uint32_t room = half;
+  struct diag_sink k = {NULL, base, 0};
+  if (gpu) {k.target = diag_bytes && diag_first == base ? base + quarter : base; room = quarter;}
+  else diag_bytes = 0;   // the full export overwrites the quarter the header may name
   diag_owned = half != 0;
   IOLockUnlock(export_lock);
   int status = -4;
   if (half && &native_ufs_export_write && (k.stage = (uint8_t *)IOMallocAligned(LogExportStage * LogBlock, LogBlock))) {
-    const uint64_t stream = boot_diag_scan((uint64_t)half * LogBlock - 16);
+    const uint64_t budget = (uint64_t)room * LogBlock - 16;
+    const uint64_t stream = gpu ? boot_diag_scan_gpu(budget) : boot_diag_scan(budget);
     const uint32_t head[4] = {0, 0, (uint32_t)stream, 0};
     if (!stream) status = -8;
     else {
@@ -339,7 +347,7 @@ static void diag_thread(void *arg, wait_result_t wait) {
     IOFreeAligned(k.stage, LogExportStage * LogBlock);
   }
   IOLockLock(export_lock);
-  if (!status) {diag_first = k.target; diag_bytes = k.filled;}
+  if (!status) {diag_first = k.target; diag_bytes = k.filled; ++diag_rounds;}
   IOLockUnlock(export_lock);
   boot_diag_status = status ? status : 2;
 }
@@ -1440,8 +1448,9 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
   }
   if (boot_diag_status) {
     char row[120];
-    snprintf(row, sizeof row, "[diag] status=%d files=%u skipped=%u errors=%u bytes=%u first=%u", boot_diag_status, &boot_diag_files ? boot_diag_files : 0,
-             &boot_diag_skipped ? boot_diag_skipped : 0, &boot_diag_errors ? boot_diag_errors : 0, diag_bytes, diag_first);
+    snprintf(row, sizeof row, "[diag] status=%d files=%u skipped=%u errors=%u bytes=%u first=%u rounds=%u", boot_diag_status,
+             &boot_diag_files ? boot_diag_files : 0, &boot_diag_skipped ? boot_diag_skipped : 0, &boot_diag_errors ? boot_diag_errors : 0,
+             diag_bytes, diag_first, diag_rounds);
     at = put(out, at, cap, row, sizeof row);
   }
   // The signed-text fixups given as text-fixupN boot arguments: how many parsed and how many page writes they made.
@@ -1541,6 +1550,11 @@ static void writer(void *arg, wait_result_t result) {
   // sheng-diag-export=<seconds of log time>: export the diagnostic files once then (set it shortly before sheng-autoreset).
   uint32_t diag_at = 0;
   if (&boot_diag_scan && &boot_diag_stream) PE_parse_boot_argn("sheng-diag-export", &diag_at, sizeof diag_at);
+  // sheng-gpu-trace-export=<seconds>: the GPU trace directory alone, every so many seconds (the first round after one period).
+  uint32_t gpu_every = 0, gpu_next = 0;
+  int diag_full = 0;
+  if (&boot_diag_scan_gpu && &boot_diag_stream) PE_parse_boot_argn("sheng-gpu-trace-export", &gpu_every, sizeof gpu_every);
+  gpu_next = gpu_every;
   uint32_t errors = 0;
   boot_log_state = 2;
   for (;;) {
@@ -1559,10 +1573,17 @@ static void writer(void *arg, wait_result_t result) {
     h.export_generation = export_ready; h.export_bytes = export_ready_bytes; h.export_first = export_ready_first;
     h.diag_first = diag_first; h.diag_bytes = diag_bytes;
     IOLockUnlock(export_lock);
-    if (diag_at && now >= diag_at && !boot_diag_status) {
+    if (diag_at && now >= diag_at && !diag_full && boot_diag_status != 1) {
       thread_t diag;
+      diag_full = 1;
       boot_diag_status = 1;
       if (kernel_thread_start_priority(diag_thread, NULL, MINPRI_KERNEL, &diag) == KERN_SUCCESS) thread_deallocate(diag);
+      else boot_diag_status = -10;
+    } else if (gpu_every && now >= gpu_next && !diag_full && boot_diag_status != 1) {
+      thread_t diag;
+      gpu_next = now + gpu_every;
+      boot_diag_status = 1;
+      if (kernel_thread_start_priority(diag_thread, (void *)1, MINPRI_KERNEL, &diag) == KERN_SUCCESS) thread_deallocate(diag);
       else boot_diag_status = -10;
     }
     h.uptime_s = now; h.rounds = ++boot_log_rounds; h.state = boot_log_state;
