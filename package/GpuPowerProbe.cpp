@@ -682,6 +682,14 @@ extern "C" bool native_gpu_fences(uint32_t *submitted, uint32_t *completed) {
 // earlier ones (ms), [14] fences completed together in one interrupt (more than one), [15] fences without a recorded submission time.
 extern "C" {volatile uint32_t native_gpu_time[16];}
 extern "C" void (*volatile native_adreno_ring_hook)(uint32_t fence);   // NativeAdrenoRing.cpp
+// T53: what each submission asked of the GPU (its client's count in the submit's reserved word, NativeAdreno
+// native_adreno_submit_stats, from the asteroids Turnip patch), tied to its GPU time. By passes in the submission: [0..4] submissions
+// with 0 (not from Turnip), 1, 2-3, 4-7, 8 or more passes and [5..9] their GPU time (ms); [10] passes, [11] passes in system memory,
+// [12] blits, copies and clears, [13] draws, [14] render-area megapixels, all summed; [15] submissions with a system-memory pass and
+// [16] their GPU time (ms); [17] the most passes in one submission.
+extern "C" {volatile uint32_t native_gpu_work[18];}
+extern "C" volatile uint32_t native_adreno_submit_stats[256];   // NativeAdrenoUserClient.cpp
+uint64_t gWorkUs[6];
 uint64_t gSubmitAt[256];
 uint32_t gTimedDone;
 uint64_t gLastDoneAt;
@@ -712,6 +720,20 @@ void gpuTimeFences() {
         native_gpu_time[b] = native_gpu_time[b] + 1;
         native_gpu_time[9] = native_gpu_time[9] + 1;
         native_gpu_time[10] = native_gpu_time[10] + us;
+        {
+            const uint32_t w = native_adreno_submit_stats[f & 255];
+            const uint32_t passes = w & 63, sysmem = (w >> 6) & 63;
+            const unsigned k = passes == 0 ? 0 : passes == 1 ? 1 : passes < 4 ? 2 : passes < 8 ? 3 : 4;
+            native_gpu_work[k] = native_gpu_work[k] + 1;
+            gWorkUs[k] += us; native_gpu_work[5 + k] = uint32_t(gWorkUs[k] / 1000);
+            native_gpu_work[10] = native_gpu_work[10] + passes;
+            native_gpu_work[11] = native_gpu_work[11] + sysmem;
+            native_gpu_work[12] = native_gpu_work[12] + ((w >> 12) & 63);
+            native_gpu_work[13] = native_gpu_work[13] + ((w >> 18) & 255) * 4;
+            native_gpu_work[14] = native_gpu_work[14] + (w >> 26);
+            if (sysmem) {native_gpu_work[15] = native_gpu_work[15] + 1; gWorkUs[5] += us; native_gpu_work[16] = uint32_t(gWorkUs[5] / 1000);}
+            if (passes > native_gpu_work[17]) native_gpu_work[17] = passes;
+        }
         if (us > native_gpu_time[11]) native_gpu_time[11] = us;
         gLastDoneAt = now;
     }

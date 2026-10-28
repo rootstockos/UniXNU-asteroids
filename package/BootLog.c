@@ -79,6 +79,7 @@ extern volatile uint32_t native_adreno_unstick[15] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_fence_pending[8] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_timeline[3][10] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_time[16] __attribute__((weak_import));
+extern volatile uint32_t native_gpu_work[18] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_maint[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wait_asked[5] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wptr_fence[4] __attribute__((weak_import));
@@ -951,6 +952,15 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     const volatile uint32_t *g = native_gpu_time;
     snprintf(row, sizeof row, "[gpu time] n=%u total %ums mean %uus max %uus | <1 %u <2 %u <4 %u <8 %u <12 %u <17 %u <25 %u <50 %u more %u | idle %ums queued %ums batched %u untimed %u",
              g[9], g[10] / 1000, g[10] / g[9], g[11], g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], g[12], g[13], g[14], g[15]);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // T53: what the submissions asked of the GPU (the asteroids Turnip patch's counts) and where their GPU time went (GpuPowerProbe.cpp
+  // native_gpu_work).
+  if (&native_gpu_work && (native_gpu_work[0] || native_gpu_work[1] || native_gpu_work[2] || native_gpu_work[3] || native_gpu_work[4])) {
+    char row[300];
+    const volatile uint32_t *w = native_gpu_work;
+    snprintf(row, sizeof row, "[gpu work] by passes: none %u/%ums 1 %u/%ums 2-3 %u/%ums 4-7 %u/%ums 8+ %u/%ums | passes %u sysmem %u blits %u draws %u area %uMP | with sysmem %u/%ums | most passes %u",
+             w[0], w[5], w[1], w[6], w[2], w[7], w[3], w[8], w[4], w[9], w[10], w[11], w[12], w[13], w[14], w[15], w[16], w[17]);
     at = put(out, at, cap, row, sizeof row);
   }
   if (&native_adreno_maint && native_adreno_maint[5]) {
