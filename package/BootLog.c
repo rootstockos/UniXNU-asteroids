@@ -83,6 +83,7 @@ extern volatile uint32_t native_gpu_work[18] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_why[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_optime[15] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_tiletime[16] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_fragstats[16] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_maint[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wait_asked[5] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wptr_fence[4] __attribute__((weak_import));
@@ -979,6 +980,19 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     const volatile uint32_t *o = native_adreno_optime;
     snprintf(row, sizeof row, "[gpu ops] n/ms: gmem passes %u/%u sysmem passes %u/%u blits %u/%u copies %u/%u resolves %u/%u clears %u/%u | cmd buffers %u, not run %u, dropped %u",
              o[6], o[0] / 1000, o[7], o[1] / 1000, o[8], o[2] / 1000, o[9], o[3] / 1000, o[10], o[4] / 1000, o[11], o[5] / 1000, o[12], o[13], o[14]);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // T60: passes by size (large: 1 MP of render area or more): timed passes and GPU ms with mean area; the autotune's measured passes
+  // with draws and samples passed per pass, and samples per pixel of render area (overdraw, in tenths).
+  if (&native_adreno_fragstats && (native_adreno_fragstats[0] || native_adreno_fragstats[3])) {
+    char row[400];
+    const volatile uint32_t *f = native_adreno_fragstats;
+    const unsigned ln = f[0] ? f[0] : 1, sn = f[3] ? f[3] : 1, la = f[6] ? f[6] : 1, sa = f[10] ? f[10] : 1;
+    const unsigned lk = f[9] ? f[9] : 1, sk = f[13] ? f[13] : 1;
+    snprintf(row, sizeof row, "[gpu frags] large passes %u %ums (%uus, %uK px each) small %u %ums (%uus, %uK px) | measured large %u: draws %u.%u samples %uK overdraw %u.%u (sysmem %u) small %u: draws %u.%u samples %uK overdraw %u.%u | most draws %u",
+             f[0], f[1] / 1000, f[1] / ln, f[2] / ln, f[3], f[4] / 1000, f[4] / sn, f[5] / sn,
+             f[6], f[7] / la, (f[7] * 10 / la) % 10, f[8] / la, f[8] / lk, (f[8] * 10 / lk) % 10, f[14],
+             f[10], f[11] / sa, (f[11] * 10 / sa) % 10, f[12] / sa, f[12] / sk, (f[12] * 10 / sk) % 10, f[15]);
     at = put(out, at, cap, row, sizeof row);
   }
   // T59: GMEM passes by stage (asteroids-tu-time=tiles): begin with binning, the first subpass's loads and clears, draws and stores
