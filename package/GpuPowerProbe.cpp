@@ -680,7 +680,7 @@ extern "C" bool native_gpu_fences(uint32_t *submitted, uint32_t *completed) {
 // timed, [10] total GPU time (us), [11] longest (us), [12] time the GPU had nothing queued (ms), [13] time submissions queued behind
 // earlier ones (ms), [14] fences completed together in one interrupt (more than one), [15] fences without a recorded submission time.
 extern "C" {volatile uint32_t native_gpu_time[16];}
-extern "C" {void (*volatile native_adreno_ring_hook)(uint32_t fence) __attribute__((weak_import));}
+extern "C" void (*volatile native_adreno_ring_hook)(uint32_t fence);   // NativeAdrenoRing.cpp
 uint64_t gSubmitAt[256];
 uint32_t gTimedDone;
 uint64_t gLastDoneAt;
@@ -754,7 +754,7 @@ void cpStart() {
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
     if (attached) {IOLog("ASTEROIDS GPU: cp ring attach %x\n", static_cast<unsigned>(attached)); return;}
-    if (&native_adreno_ring_hook) native_adreno_ring_hook = gpuSubmitted;
+    native_adreno_ring_hook = gpuSubmitted;
     if (ringWrite(nullptr, A810_CP_RB_RPTR_ADDR_BV, uint32_t(bv_rptr)) ||
         ringWrite(nullptr, A810_CP_RB_RPTR_ADDR_BV + 1, uint32_t(bv_rptr >> 32))) {IOLog("ASTEROIDS GPU: cp BV rptr write failed\n"); return;}
     cpState("before");
