@@ -685,9 +685,14 @@ extern "C" void (*volatile native_adreno_ring_hook)(uint32_t fence);   // Native
 // T53: what each submission asked of the GPU (its client's count in the submit's reserved word, NativeAdreno
 // native_adreno_submit_stats, from the asteroids Turnip patch), tied to its GPU time. By passes in the submission: [0..4] submissions
 // with 0 (not from Turnip), 1, 2-3, 4-7, 8 or more passes and [5..9] their GPU time (ms); [10] passes, [11] passes in system memory,
-// [12] blits, copies and clears, [13] draws, [14] render-area megapixels, all summed; [15] submissions with a system-memory pass and
-// [16] their GPU time (ms); [17] the most passes in one submission.
+// [12] blits, copies and clears, [13] unused (T53's draw count, which read 0), [14] render-area megapixels, all summed; [15] submissions
+// with a system-memory pass and [16] their GPU time (ms); [17] the most passes in one submission.
 extern "C" {volatile uint32_t native_gpu_work[18];}
+// T54: why passes ran in system memory (bits 18-25 of the Turnip word): per reason [0..7] submissions with it and [8..15] their GPU time
+// (ms). Reasons: 0 TU_DEBUG(SYSMEM), 1 attachments don't fit, 2 empty render area, 3 tessellation, 4 attachment feedback loop, 5 too
+// many tiles without HW binning, 6 autotune, 7 other.
+extern "C" {volatile uint32_t native_gpu_why[16];}
+uint64_t gWhyUs[8];
 extern "C" volatile uint32_t native_adreno_submit_stats[256];   // NativeAdrenoUserClient.cpp
 uint64_t gWorkUs[6];
 uint64_t gSubmitAt[256];
@@ -729,7 +734,8 @@ void gpuTimeFences() {
             native_gpu_work[10] = native_gpu_work[10] + passes;
             native_gpu_work[11] = native_gpu_work[11] + sysmem;
             native_gpu_work[12] = native_gpu_work[12] + ((w >> 12) & 63);
-            native_gpu_work[13] = native_gpu_work[13] + ((w >> 18) & 255) * 4;
+            for (unsigned r = 0; r < 8; ++r)
+                if (w >> (18 + r) & 1) {native_gpu_why[r] = native_gpu_why[r] + 1; gWhyUs[r] += us; native_gpu_why[8 + r] = uint32_t(gWhyUs[r] / 1000);}
             native_gpu_work[14] = native_gpu_work[14] + (w >> 26);
             if (sysmem) {native_gpu_work[15] = native_gpu_work[15] + 1; gWorkUs[5] += us; native_gpu_work[16] = uint32_t(gWorkUs[5] / 1000);}
             if (passes > native_gpu_work[17]) native_gpu_work[17] = passes;

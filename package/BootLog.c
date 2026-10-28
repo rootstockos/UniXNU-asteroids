@@ -80,6 +80,7 @@ extern volatile uint32_t native_adreno_fence_pending[8] __attribute__((weak_impo
 extern volatile uint32_t native_legacy_timeline[3][10] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_time[16] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_work[18] __attribute__((weak_import));
+extern volatile uint32_t native_gpu_why[16] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_maint[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wait_asked[5] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wptr_fence[4] __attribute__((weak_import));
@@ -959,9 +960,15 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
   if (&native_gpu_work && (native_gpu_work[0] || native_gpu_work[1] || native_gpu_work[2] || native_gpu_work[3] || native_gpu_work[4])) {
     char row[300];
     const volatile uint32_t *w = native_gpu_work;
-    snprintf(row, sizeof row, "[gpu work] by passes: none %u/%ums 1 %u/%ums 2-3 %u/%ums 4-7 %u/%ums 8+ %u/%ums | passes %u sysmem %u blits %u draws %u area %uMP | with sysmem %u/%ums | most passes %u",
-             w[0], w[5], w[1], w[6], w[2], w[7], w[3], w[8], w[4], w[9], w[10], w[11], w[12], w[13], w[14], w[15], w[16], w[17]);
+    snprintf(row, sizeof row, "[gpu work] by passes: none %u/%ums 1 %u/%ums 2-3 %u/%ums 4-7 %u/%ums 8+ %u/%ums | passes %u sysmem %u blits %u area %uMP | with sysmem %u/%ums | most passes %u",
+             w[0], w[5], w[1], w[6], w[2], w[7], w[3], w[8], w[4], w[9], w[10], w[11], w[12], w[14], w[15], w[16], w[17]);
     at = put(out, at, cap, row, sizeof row);
+    if (&native_gpu_why) {
+      const volatile uint32_t *y = native_gpu_why;
+      snprintf(row, sizeof row, "[gpu sysmem why] submissions/GPU ms: debug %u/%u no-fit %u/%u empty %u/%u tess %u/%u feedback %u/%u tiles-no-binning %u/%u autotune %u/%u other %u/%u",
+               y[0], y[8], y[1], y[9], y[2], y[10], y[3], y[11], y[4], y[12], y[5], y[13], y[6], y[14], y[7], y[15]);
+      at = put(out, at, cap, row, sizeof row);
+    }
   }
   if (&native_adreno_maint && native_adreno_maint[5]) {
     char row[240];

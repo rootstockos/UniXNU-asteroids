@@ -31,6 +31,7 @@
 #pragma clang diagnostic ignored "-Wunused-function"
 #include "NativeMetalBridgePhase.h"
 #include <mach/mach.h>
+#include <sys/sysctl.h>
 #include <objc/runtime.h>
 #pragma clang diagnostic pop
 #endif
@@ -206,6 +207,30 @@ static void clientFailure(unsigned port, const char *step, const char *detail) {
 }
 // A listed process other than the render server: the same runtime on its own connection, none of backboardd's threads (status, scanout),
 // its shader cache in its own cache or temp directory. Every other process keeps returning nil (the software renderer).
+// T54: Turnip's debug flags. Always nocb (A8xx renders without concurrent binning, T40e); asteroids-tu-debug=<flags> in the kernel's boot
+// arguments adds more for one boot ("gmem" or "sysmem" forces every pass's rendering mode; several flags joined with ':'), so GMEM and
+// system memory can be compared without a rebuild.
+static void setTurnipDebug() {
+    static char flags[128];
+    static bool built;
+    if (!built) {
+        built = true;
+        strlcpy(flags, "nocb", sizeof flags);
+        char args[1024] = {};
+        size_t length = sizeof args - 1;
+        if (sysctlbyname("kern.bootargs", args, &length, nullptr, 0) == 0) {
+            const char *at = strstr(args, "asteroids-tu-debug=");
+            if (at) {
+                at += strlen("asteroids-tu-debug=");
+                size_t n = strlen(flags);
+                if (n + 1 < sizeof flags) flags[n++] = ',';
+                for (; *at && *at != ' ' && n + 1 < sizeof flags; ++at) flags[n++] = *at == ':' ? ',' : *at;
+                flags[n] = 0;
+            }
+        }
+    }
+    setenv("TU_DEBUG", flags, 1);
+}
 static id clientDevice(unsigned port) {
     static id device;
     static bool tried;
@@ -213,7 +238,7 @@ static id clientDevice(unsigned port) {
         if (tried) return device;
         tried = true;
         if (!listedClient()) return nil;
-        setenv("TU_DEBUG", "nocb", 1);   // T40e: GMEM or system memory per pass, as deviceForPort
+        setTurnipDebug();   // T40e: GMEM or system memory per pass, as deviceForPort
         char turnip[1024];
         if (!turnip::libraryPath(turnip, sizeof turnip) || access(turnip, R_OK) != 0) {clientFailure(port, "no-turnip", ""); return nil;}
         uint64_t registryID = 0;
@@ -260,7 +285,7 @@ static id deviceForPort(unsigned port) {
         // A8xx: Turnip renders without concurrent binning (pandora's A840 needed it; T17 passed with it). T40e: no longer sysmem for
         // every pass; Turnip's autotune picks GMEM or system memory per pass, as UniXNU AdrenoMetal 461a842 does on sheng (forced
         // sysmem left that GPU 19 % busy; autotune ran 600 s without a stall at 70 fps p50). T34b ran every pass in sysmem.
-        setenv("TU_DEBUG", "nocb", 1);
+        setTurnipDebug();
         // The discovery releases the accelerator port when it is done; the status and scanout threads keep using it.
         void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL);
         if (!iokit) return nil;
@@ -456,7 +481,7 @@ static void sampleOnly(unsigned port) {
             }
             // A8xx: Turnip renders without command-buffer reuse (pandora's A840 needed it); T40e: GMEM or system memory per pass, as
             // deviceForPort. NativeTurnipSmoke.h sets TU_DARWIN_SERVICE to IOAcceleratorES when unset, which is this accelerator.
-            setenv("TU_DEBUG", "nocb", 1);
+            setTurnipDebug();
             adrenoUserTest(port, "backboardd");
             delete j;
             return nullptr;
