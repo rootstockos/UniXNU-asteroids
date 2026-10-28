@@ -42,6 +42,30 @@
 - (id)initWithAcceleratorPort:(unsigned)port;
 @end
 
+// T54: Turnip's debug flags. Always nocb (A8xx renders without concurrent binning, T40e); asteroids-tu-debug=<flags> in the kernel's boot
+// arguments adds more for one boot ("gmem" or "sysmem" forces every pass's rendering mode; several flags joined with ':'), so GMEM and
+// system memory can be compared without a rebuild.
+static void setTurnipDebug() {
+    static char flags[128];
+    static bool built;
+    if (!built) {
+        built = true;
+        strlcpy(flags, "nocb", sizeof flags);
+        char args[1024] = {};
+        size_t length = sizeof args - 1;
+        if (sysctlbyname("kern.bootargs", args, &length, nullptr, 0) == 0) {
+            const char *at = strstr(args, "asteroids-tu-debug=");
+            if (at) {
+                at += strlen("asteroids-tu-debug=");
+                size_t n = strlen(flags);
+                if (n + 1 < sizeof flags) flags[n++] = ',';
+                for (; *at && *at != ' ' && n + 1 < sizeof flags; ++at) flags[n++] = *at == ':' ? ',' : *at;
+                flags[n] = 0;
+            }
+        }
+    }
+    setenv("TU_DEBUG", flags, 1);
+}
 #ifdef ASTEROIDS_METAL_PUBLISH
 // T35: AdrenoMetal's frontend (ce5e19e) reports shader priming (the PR row) from counters UniXNU's own plugin defines through
 // PrimeShaders.h. This plugin does not prime yet, so they stay zero.
@@ -207,30 +231,6 @@ static void clientFailure(unsigned port, const char *step, const char *detail) {
 }
 // A listed process other than the render server: the same runtime on its own connection, none of backboardd's threads (status, scanout),
 // its shader cache in its own cache or temp directory. Every other process keeps returning nil (the software renderer).
-// T54: Turnip's debug flags. Always nocb (A8xx renders without concurrent binning, T40e); asteroids-tu-debug=<flags> in the kernel's boot
-// arguments adds more for one boot ("gmem" or "sysmem" forces every pass's rendering mode; several flags joined with ':'), so GMEM and
-// system memory can be compared without a rebuild.
-static void setTurnipDebug() {
-    static char flags[128];
-    static bool built;
-    if (!built) {
-        built = true;
-        strlcpy(flags, "nocb", sizeof flags);
-        char args[1024] = {};
-        size_t length = sizeof args - 1;
-        if (sysctlbyname("kern.bootargs", args, &length, nullptr, 0) == 0) {
-            const char *at = strstr(args, "asteroids-tu-debug=");
-            if (at) {
-                at += strlen("asteroids-tu-debug=");
-                size_t n = strlen(flags);
-                if (n + 1 < sizeof flags) flags[n++] = ',';
-                for (; *at && *at != ' ' && n + 1 < sizeof flags; ++at) flags[n++] = *at == ':' ? ',' : *at;
-                flags[n] = 0;
-            }
-        }
-    }
-    setenv("TU_DEBUG", flags, 1);
-}
 static id clientDevice(unsigned port) {
     static id device;
     static bool tried;
