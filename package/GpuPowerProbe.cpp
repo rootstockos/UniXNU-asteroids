@@ -671,6 +671,7 @@ extern "C" bool native_gpu_fences(uint32_t *submitted, uint32_t *completed) {
     if (!gGpuCpu[2] || !submitted || !completed) return false;
     *submitted = gRing.submissions();
     *completed = reinterpret_cast<const volatile uint32_t *>(gGpuCpu[2])[1];
+    gpuTimeFences();
     return true;
 }
 // T51: the GPU's time per submission. The ring calls gpuSubmitted with each fence as it commits it (NativeAdreno native_adreno_ring_hook);
@@ -686,10 +687,14 @@ uint32_t gTimedDone;
 uint64_t gLastDoneAt;
 uint64_t gIdleNs, gQueuedNs;
 void gpuSubmitted(uint32_t fence) {gSubmitAt[fence & 255] = mach_absolute_time() | 1;}
+volatile uint32_t gTimingBusy;
 void gpuTimeFences() {
     if (!gGpuCpu[2]) return;
+    // Called from the GPU interrupt when attached (sheng-gpu-irq=1), from the display's flip wait and from the clock governor's tick:
+    // whichever runs first takes the fences; the others skip.
+    if (__atomic_exchange_n(&gTimingBusy, 1u, __ATOMIC_ACQUIRE)) return;
     const uint32_t done = reinterpret_cast<const volatile uint32_t *>(gGpuCpu[2])[1];
-    if (int32_t(done - gTimedDone) <= 0) return;
+    if (int32_t(done - gTimedDone) <= 0) {__atomic_store_n(&gTimingBusy, 0u, __ATOMIC_RELEASE); return;}
     const uint64_t now = mach_absolute_time();
     if (done - gTimedDone > 1) native_gpu_time[14] = native_gpu_time[14] + 1;
     if (done - gTimedDone > 64) gTimedDone = done - 64;   // a gap too long to attribute
@@ -713,6 +718,7 @@ void gpuTimeFences() {
     gTimedDone = done;
     native_gpu_time[12] = uint32_t(gIdleNs / 1000000);
     native_gpu_time[13] = uint32_t(gQueuedNs / 1000000);
+    __atomic_store_n(&gTimingBusy, 0u, __ATOMIC_RELEASE);
 }
 NativeAdrenoCpInit gCpInit;
 void cpState(const char *when) {
@@ -1213,6 +1219,8 @@ int ucBurst(IOService *svc, UcSteps &step) {
 extern "C" volatile uint32_t native_adreno_io_coherent __attribute__((weak));
 // T40f test: sheng-gpu-import-skip=1 has the driver skip the per-submission clean of imports without coherence (NativeAdrenoVm.cpp).
 extern "C" volatile uint32_t native_adreno_import_skip __attribute__((weak));
+// T52: per-client maintenance (NativeAdreno NativeAdrenoVm::setOwner), sheng-gpu-own-maint=1.
+extern "C" volatile uint32_t native_adreno_owner_maint __attribute__((weak));
 // T40g: the driver's import policy (NativeAdrenoVm.cpp, default 1): GPU-written imports skip per-submission maintenance, read-only ones
 // keep their clean. sheng-gpu-import-policy=0 maintains every import around every submission, as before.
 extern "C" volatile uint32_t native_adreno_import_policy __attribute__((weak));
@@ -1361,6 +1369,7 @@ void ucStart() {
     if (u[3] || u[4]) {native_gpu_power_stage = 0x10f; return;}
     coherenceProbe(vm, bits);
     if (&native_adreno_import_skip) native_adreno_import_skip = bootArg("sheng-gpu-import-skip", 0) == 1 ? 1 : 0;
+    if (&native_adreno_owner_maint) native_adreno_owner_maint = bootArg("sheng-gpu-own-maint", 0) == 1 ? 1 : 0;
     if (&native_adreno_import_policy) native_adreno_import_policy = bootArg("sheng-gpu-import-policy", 1) ? 1 : 0;
     u[0] = 3;
     native_gpu_power_stage = 0x103;
@@ -1629,6 +1638,7 @@ void gpuDcvsThread(void *, wait_result_t) {
     bool idle = false;
     for (;;) {
         IOSleep(16);
+        gpuTimeFences();
         const uint64_t busy = gpuBusyTicks(), t = mach_absolute_time();
         uint64_t ns = 0;
         absolutetime_to_nanoseconds(t - lastT, &ns);
