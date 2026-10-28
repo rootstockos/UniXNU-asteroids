@@ -130,6 +130,8 @@ extern volatile uint64_t native_audio_requests[17] __attribute__((weak_import));
 extern volatile int32_t native_audio_passed __attribute__((weak_import));
 extern volatile uint32_t native_mic_regs[16] __attribute__((weak_import));
 extern volatile int32_t native_mic_capture[8] __attribute__((weak_import));
+extern volatile int32_t native_mic_peaks[30] __attribute__((weak_import));
+extern volatile uint32_t native_mic_capture_at __attribute__((weak_import)), native_mic_capture_s __attribute__((weak_import));
 extern volatile uint32_t native_mic_extra[8] __attribute__((weak_import));
 #include "ShengAudioAbi.h"
 extern const ShengAudioDiag *sheng_audio_diag(void) __attribute__((weak_import));
@@ -1174,6 +1176,11 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
                native_mic_capture[1], native_mic_capture[2], native_mic_capture[3], native_mic_capture[4], native_mic_capture[5],
                native_mic_capture[6], native_mic_capture[7]);
       at = put(out, at, cap, row, sizeof row);
+      if (&native_mic_peaks && &native_mic_capture_s && native_mic_capture_s) {
+        int n = snprintf(row, sizeof row, "[mic peaks] from %ums, per second:", &native_mic_capture_at ? native_mic_capture_at : 0);
+        for (uint32_t k = 0; k < native_mic_capture_s && k < 30 && n > 0 && n < (int)sizeof row - 8; ++k) n += snprintf(row + n, sizeof row - (size_t)n, " %d", native_mic_peaks[k]);
+        at = put(out, at, cap, row, sizeof row);
+      }
     }
     if (&native_mic_regs) {
       snprintf(row, sizeof row, "[mic regs] tx %x %x %x %x va %x %x %x swr %x %x %x %x %x %x %x pin %x slew %x", native_mic_regs[0], native_mic_regs[1],

@@ -947,6 +947,7 @@ extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_gov[9] __attribute__((weak_import)),native_cpufreq_boosts __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_frame[2] __attribute__((weak_import)),native_cpufreq_throttle[9] __attribute__((weak_import));
 extern volatile int32_t native_buttons_stats[10] __attribute__((weak_import));
+extern volatile int32_t native_buttons_taps __attribute__((weak_import));
 extern volatile int32_t native_panel_stats[16] __attribute__((weak_import));
 extern volatile int32_t native_adsp_stats[16] __attribute__((weak_import)),native_battery_stats[16] __attribute__((weak_import));
 extern uint32_t native_gpu_irq[6] __attribute__((weak_import)),native_gpu_perf_vote[2] __attribute__((weak_import));
@@ -1127,9 +1128,10 @@ static void crash_banner(unsigned now) {
   // asteroids T35: sheng's B log row (ButtonProbe.cpp): stage, interrupts, reports, pressed mask, APIDs, other APIDs cleared, PDC version,
   // last error, spurious interrupts.
   if(&native_buttons_stats && native_buttons_stats[0])
-    snprintf(rows[n++],120,"BTN   st=%d irq=%d rep=%d mask=%x apid=%d/%d off=%d pdc=%x err=%d spur=%d",native_buttons_stats[0],
+    snprintf(rows[n++],120,"BTN   st=%d irq=%d rep=%d mask=%x apid=%d/%d off=%d pdc=%x err=%d spur=%d taps=%d",native_buttons_stats[0],
       native_buttons_stats[1],native_buttons_stats[2],(unsigned)native_buttons_stats[3],native_buttons_stats[4],native_buttons_stats[5],
-      native_buttons_stats[6],(unsigned)native_buttons_stats[7],native_buttons_stats[8],native_buttons_stats[9]);
+      native_buttons_stats[6],(unsigned)native_buttons_stats[7],native_buttons_stats[8],native_buttons_stats[9],
+      &native_buttons_taps?native_buttons_taps:0);
   // asteroids T38: the audio DSP (AdspProbe.cpp: stage, last error, IPCC interrupts, its SMP2P bits, SMEM items found, firmware KiB, ms to
   // ready, GLINK in/out, channels) and the battery (ShengBattery.cpp: stage, percent, mV, mA, flags, answers, timeouts|errors<<16,
   // notifications from the DSP).

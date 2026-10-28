@@ -638,6 +638,9 @@ extern "C" {volatile uint32_t native_mic_regs[16];}
 // tx 0x0/0x4/0x100/0x400, va 0x0/0x4/0x80 (from stage 6; up to stage 5 the first seven are tx 0x0/0x4/0x8, the VA clock source switch,
 // va 0x0/0x4/0x8, read when the master is up or fails), swr 0x4/0x101c/0x1044/0x104c/0x200/0x14/0x1124, LPI gpio0 control, slew
 extern "C" {volatile int32_t native_mic_capture[8];}
+// The capture's length (asteroids-mic-capture-s, default 2, at most 30) and its peak in each second, with the uptime (ms) it started at:
+// a voice at a known moment shows in its second (T47-mic7: two seconds at boot peaked at 34 of 32767).
+extern "C" {volatile int32_t native_mic_peaks[30];volatile uint32_t native_mic_capture_at, native_mic_capture_s;}
 // T42 diagnostics for a master whose link never comes up: [0] the codec reset pin's IN_OUT register after release (bit 0 the level read
 // back), [1]/[3] LDO B7/B8 (the codec's rails, PM7550 at SPMI SID 1, peripherals 0x46/0x47): APID | STATUS1 << 12 | EN_CTL << 20, read
 // only with asteroids-mic-pmic=1 (T42: no APID for 0x146, and 0x147 is TYPE 9 SUBTYPE 2, not an LDO; recovery's regmap cannot read SID 1
@@ -1005,8 +1008,15 @@ bool micCaptureTest() {
         const uint32_t slot = n % kCapSlots;
         if (send(b, ar_read(b, sizeof b, kPort, n, gAudio.dspAddr + kCapOffset + slot * kCapBytes, gAudio.handle, kCapBytes))) {++asked; native_mic_capture[2] = (int32_t)asked;}
     };
+    uint32_t seconds = 2;
+    PE_parse_boot_argn("asteroids-mic-capture-s", &seconds, sizeof seconds);
+    if (seconds < 1) seconds = 1;
+    if (seconds > 30) seconds = 30;
+    const uint32_t periods = seconds * 100;
+    native_mic_capture_s = seconds;
+    native_mic_capture_at = (uint32_t)nowMs();
     for (uint32_t n = 0; n < 4; ++n) ask(n);
-    while (back < 200) {
+    while (back < periods) {
         ArAnswer a;
         if (!nextAnswer(a, 1000)) {capStage(-12); break;}
         if (a.opcode == AR_OP_READ_DONE) {
@@ -1018,6 +1028,7 @@ bool micCaptureTest() {
                 const int32_t v = p[i] < 0 ? -p[i] : p[i];
                 sum += (uint32_t)v; ++samples;
                 if (v > peak) peak = v;
+                if (v > native_mic_peaks[back / 100]) native_mic_peaks[back / 100] = v;
                 if (v) ++nonzero;
             }
             native_mic_capture[3] = (int32_t)++back;
@@ -1025,7 +1036,7 @@ bool micCaptureTest() {
             native_mic_capture[5] = peak;
             native_mic_capture[6] = samples ? (int32_t)(sum / samples) : 0;
             native_mic_capture[7] = nonzero;
-            if (asked < 200) ask(asked);
+            if (asked < periods) ask(asked);
         } else if (a.opcode == GPR_OP_BASIC_RESULT && a.status) {
             native_mic_capture[1] = (int32_t)a.status;
         }

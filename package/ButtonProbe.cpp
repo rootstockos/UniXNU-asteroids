@@ -30,6 +30,8 @@ extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint3
 // failed), [1] interrupts, [2] reports, [3] pressed mask,
 // [4] power APID, [5] GPIO APID, [6] interrupts of other APIDs cleared, [7] PDC version, [8] last error, [9] spurious interrupts
 extern "C" {volatile int32_t native_buttons_stats[10];}
+// Taps (sheng-buttons-taps=1): presses whose release came before the thread read the levels, reported as a press and a release.
+extern "C" {volatile int32_t native_buttons_taps;}
 
 namespace {
 constexpr uint64_t kCore = 0xc400000, kObsrvr = 0xc440000, kChnls = 0xc500000, kIntr = 0xc4c0000, kCnfg = 0xc42d000, kPdc = 0xb220000;
@@ -45,8 +47,12 @@ struct Window {IOMemoryMap *map; volatile uint32_t *va;};
 Window gCore, gCnfg, gObs, gChn, gIntr, gPdc;
 br_arbiter gArb;
 int gPon = -1, gGpio = -1;
-uint32_t gApids, gPollMs = 50;
+uint32_t gApids, gPollMs = 50, gTaps;
 volatile uint32_t gEvents;
+// The buttons whose interrupt fired since the thread last looked (report bits). A short press raises both edges, yet the thread only
+// reads the levels when it runs: by then the button is up again, nothing changed, and the press was lost (T47: quick clicks did not
+// register, a slightly longer hold did).
+volatile uint32_t gEdges;
 void (*volatile gSink)(void *, uint32_t);
 void *volatile gSinkContext;
 
@@ -103,6 +109,10 @@ void buttonsIrq(void *) {
             }
             const uint32_t status = *apidReg(apid, kIrqStatus);
             *apidReg(apid, kIrqClear) = status;
+            uint32_t edges = 0;
+            if (apid == gPon) edges = (status & kPowerBit ? kReportPower : 0) | (status & kResinBit ? kReportVolumeDown : 0);
+            else edges = status & kGpioBit ? kReportVolumeUp : 0;
+            if (edges) __atomic_fetch_or(&gEdges, edges, __ATOMIC_RELEASE);
             if (status) br_write8(gChn.va, apid, kLatchedClr, (uint8_t)status);
             ours = true;
         }
@@ -190,6 +200,19 @@ void buttonsThread(void *, wait_result_t) {
     uint32_t seen = gEvents, last = 0;
     for (;;) {
         const uint32_t mask = pressed();
+        const uint32_t edges = __atomic_exchange_n(&gEdges, 0, __ATOMIC_ACQUIRE);
+        // A button that fired but is up again and was never reported down: a tap. Report it down, hold it briefly, then the levels.
+        const uint32_t taps = gTaps ? edges & ~mask & ~last : 0;
+        if (taps) {
+            void (*sink)(void *, uint32_t) = __atomic_load_n(&gSink, __ATOMIC_ACQUIRE);
+            if (sink) {
+                sink(gSinkContext, last | taps);
+                IOSleep(30);
+                sink(gSinkContext, last);
+                native_buttons_stats[2] = native_buttons_stats[2] + 2;
+                native_buttons_taps = native_buttons_taps + 1;
+            }
+        }
         if (mask != last) {
             last = mask;
             native_buttons_stats[3] = (int32_t)mask;
@@ -225,6 +248,7 @@ extern "C" void sheng_buttons_probe(void) {
     unsigned enabled = 0;
     if (!PE_parse_boot_argn("sheng-buttons", &enabled, sizeof enabled) || enabled != 1 || native_buttons_stats[0]) return;
     PE_parse_boot_argn("sheng-buttons-poll-ms", &gPollMs, sizeof gPollMs);
+    PE_parse_boot_argn("sheng-buttons-taps", &gTaps, sizeof gTaps);
     native_buttons_stats[0] = 1;
     thread_t thread = nullptr;
     if (kernel_thread_start(buttonsThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
