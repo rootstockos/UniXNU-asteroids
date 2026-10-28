@@ -263,6 +263,13 @@ kernel_args = [
   # T40g: the 3a's panel is scanned out by VIG 0 alone (recovery's DPU registers: VIG 0 source = the frame, CTL 0 stages only VIG 0; DMA 0-2
   # empty), so direct scanout (sheng-dpu-scanout=2, drivers/GopFramebuffer fork) flushes bit 0 only. Inert while direct scanout is off.
   "sheng-dpu-flush=1",                   # kept: UniXNU core's NativeGOPPresenter reads it (default off); without it T34 mixed GPU and CPU copy paths
+  # T49-gpuwait (2026-10-28): zero copy without the flicker. The display bank set up as Linux does (sheng-dpu-linux=1, T40k) and the
+  # flip only once the GPU has finished what it was given (GopFramebuffer's default with direct scanout; T49-probe caught 94 % of flips
+  # with GPU work outstanding and 39 % of surfaces changing after the flip, T49-gpuwait 0).
+  "sheng-dpu-scanout=2",
+  "sheng-dpu-linux=1",
+  # T40k-spk-sd1: the speakers through the audio DSP and the TFA9873 amplifiers; 1 serves iOS without the boot test tone (2).
+  "sheng-audio=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
   # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
   # without a first frame.

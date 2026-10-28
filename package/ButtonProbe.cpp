@@ -19,6 +19,7 @@
 #include <IOKit/IODeviceMemory.h>
 #include <kern/thread.h>
 #include <mach/clock_types.h>
+#include <kern/clock.h>
 #include <pexpert/pexpert.h>
 // BootResetCore.h (sheng's, unchanged) supplies only the version-7 arbiter helpers here; its SDAM reboot facts are not used.
 extern "C" {
@@ -47,7 +48,7 @@ struct Window {IOMemoryMap *map; volatile uint32_t *va;};
 Window gCore, gCnfg, gObs, gChn, gIntr, gPdc;
 br_arbiter gArb;
 int gPon = -1, gGpio = -1;
-uint32_t gApids, gPollMs = 50, gTaps;
+uint32_t gApids, gPollMs = 50, gTaps, gHoldMs;
 volatile uint32_t gEvents;
 // The buttons whose interrupt fired since the thread last looked (report bits). A short press raises both edges, yet the thread only
 // reads the levels when it runs: by then the button is up again, nothing changed, and the press was lost (T47: quick clicks did not
@@ -198,6 +199,7 @@ void buttonsThread(void *, wait_result_t) {
     thread_set_thread_name(current_thread(), "sheng-buttons");
     if (!setup()) return;
     uint32_t seen = gEvents, last = 0;
+    uint64_t pressedAt = 0;
     for (;;) {
         const uint32_t mask = pressed();
         const uint32_t edges = __atomic_exchange_n(&gEdges, 0, __ATOMIC_ACQUIRE);
@@ -207,13 +209,21 @@ void buttonsThread(void *, wait_result_t) {
             void (*sink)(void *, uint32_t) = __atomic_load_n(&gSink, __ATOMIC_ACQUIRE);
             if (sink) {
                 sink(gSinkContext, last | taps);
-                IOSleep(30);
+                IOSleep(gHoldMs > 30 ? gHoldMs : 30);
                 sink(gSinkContext, last);
                 native_buttons_stats[2] = native_buttons_stats[2] + 2;
                 native_buttons_taps = native_buttons_taps + 1;
             }
         }
         if (mask != last) {
+            // sheng-buttons-hold-ms: a release that comes sooner than that after its press waits until the press has lasted that long.
+            // T49-gpuwait: quick taps raised both interrupts and both reports (45 of 45, none missed) and iOS still ignored them.
+            if (gHoldMs && (last & ~mask)) {
+                uint64_t heldNs = 0;
+                absolutetime_to_nanoseconds(mach_absolute_time() - pressedAt, &heldNs);
+                if (heldNs < (uint64_t)gHoldMs * 1000000) IOSleep((uint32_t)(gHoldMs - heldNs / 1000000));
+            }
+            if (mask & ~last) pressedAt = mach_absolute_time();
             last = mask;
             native_buttons_stats[3] = (int32_t)mask;
             void (*sink)(void *, uint32_t) = __atomic_load_n(&gSink, __ATOMIC_ACQUIRE);
@@ -249,6 +259,8 @@ extern "C" void sheng_buttons_probe(void) {
     if (!PE_parse_boot_argn("sheng-buttons", &enabled, sizeof enabled) || enabled != 1 || native_buttons_stats[0]) return;
     PE_parse_boot_argn("sheng-buttons-poll-ms", &gPollMs, sizeof gPollMs);
     PE_parse_boot_argn("sheng-buttons-taps", &gTaps, sizeof gTaps);
+    PE_parse_boot_argn("sheng-buttons-hold-ms", &gHoldMs, sizeof gHoldMs);
+    if (gHoldMs > 500) gHoldMs = 500;
     native_buttons_stats[0] = 1;
     thread_t thread = nullptr;
     if (kernel_thread_start(buttonsThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
