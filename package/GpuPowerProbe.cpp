@@ -646,12 +646,14 @@ int ringIdle(void *) {
 }
 // a8xx_irq: read RBBM_INT_0_STATUS and clear it through RBBM_INT_CLEAR_CMD before the EOI, so the level line drops. A storm (the
 // line high with nothing to clear) masks the GPU interrupts instead of holding the boot CPU; the waiters then time out each pause.
+void gpuTimeFences();
 void gpuIrq(void *) {
     uint32_t status = 0;
     ringRead(nullptr, A810_RBBM_INT_0_STATUS, &status);
     if (status) {ringWrite(nullptr, A810_RBBM_INT_CLEAR_CMD, status); ringBarrier(nullptr);}
     gIrqSeen = gIrqSeen | status;
     native_gpu_irq_count = native_gpu_irq_count + 1;
+    gpuTimeFences();
     gIrqEmpty = status ? 0 : gIrqEmpty + 1;
     if (gIrqEmpty > 100000) {ringWrite(nullptr, A810_RBBM_INT_0_MASK, 0); ringBarrier(nullptr);}
     thread_wakeup(event_t(&native_gpu_irq_count));
@@ -670,6 +672,47 @@ extern "C" bool native_gpu_fences(uint32_t *submitted, uint32_t *completed) {
     *submitted = gRing.submissions();
     *completed = reinterpret_cast<const volatile uint32_t *>(gGpuCpu[2])[1];
     return true;
+}
+// T51: the GPU's time per submission. The ring calls gpuSubmitted with each fence as it commits it (NativeAdreno native_adreno_ring_hook);
+// the fence interrupt finds the fences completed since the last one. The ring runs one submission after another, so a submission's GPU
+// time is its completion less the later of its submission and the previous completion, and the GPU waited for work whenever a
+// submission came after the previous one finished. [0..8] GPU time under 1, 2, 4, 8, 12, 17, 25, 50 ms, then longer; [9] submissions
+// timed, [10] total GPU time (us), [11] longest (us), [12] time the GPU had nothing queued (ms), [13] time submissions queued behind
+// earlier ones (ms), [14] fences completed together in one interrupt (more than one), [15] fences without a recorded submission time.
+extern "C" {volatile uint32_t native_gpu_time[16];}
+extern "C" {void (*volatile native_adreno_ring_hook)(uint32_t fence) __attribute__((weak_import));}
+uint64_t gSubmitAt[256];
+uint32_t gTimedDone;
+uint64_t gLastDoneAt;
+uint64_t gIdleNs, gQueuedNs;
+void gpuSubmitted(uint32_t fence) {gSubmitAt[fence & 255] = mach_absolute_time() | 1;}
+void gpuTimeFences() {
+    if (!gGpuCpu[2]) return;
+    const uint32_t done = reinterpret_cast<const volatile uint32_t *>(gGpuCpu[2])[1];
+    if (int32_t(done - gTimedDone) <= 0) return;
+    const uint64_t now = mach_absolute_time();
+    if (done - gTimedDone > 1) native_gpu_time[14] = native_gpu_time[14] + 1;
+    if (done - gTimedDone > 64) gTimedDone = done - 64;   // a gap too long to attribute
+    for (uint32_t f = gTimedDone + 1; int32_t(done - f) >= 0; ++f) {
+        const uint64_t at = gSubmitAt[f & 255];
+        gSubmitAt[f & 255] = 0;
+        if (!at) {native_gpu_time[15] = native_gpu_time[15] + 1; continue;}
+        uint64_t start = at;
+        if (gLastDoneAt > at) {uint64_t q = 0; absolutetime_to_nanoseconds(gLastDoneAt - at, &q); gQueuedNs += q; start = gLastDoneAt;}
+        else if (gLastDoneAt) {uint64_t idle = 0; absolutetime_to_nanoseconds(at - gLastDoneAt, &idle); gIdleNs += idle;}
+        uint64_t ns = 0;
+        if (now > start) absolutetime_to_nanoseconds(now - start, &ns);
+        const uint32_t us = uint32_t(ns / 1000);
+        const unsigned b = us < 1000 ? 0 : us < 2000 ? 1 : us < 4000 ? 2 : us < 8000 ? 3 : us < 12000 ? 4 : us < 17000 ? 5 : us < 25000 ? 6 : us < 50000 ? 7 : 8;
+        native_gpu_time[b] = native_gpu_time[b] + 1;
+        native_gpu_time[9] = native_gpu_time[9] + 1;
+        native_gpu_time[10] = native_gpu_time[10] + us;
+        if (us > native_gpu_time[11]) native_gpu_time[11] = us;
+        gLastDoneAt = now;
+    }
+    gTimedDone = done;
+    native_gpu_time[12] = uint32_t(gIdleNs / 1000000);
+    native_gpu_time[13] = uint32_t(gQueuedNs / 1000000);
 }
 NativeAdrenoCpInit gCpInit;
 void cpState(const char *when) {
@@ -711,6 +754,7 @@ void cpStart() {
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
     if (attached) {IOLog("ASTEROIDS GPU: cp ring attach %x\n", static_cast<unsigned>(attached)); return;}
+    if (&native_adreno_ring_hook) native_adreno_ring_hook = gpuSubmitted;
     if (ringWrite(nullptr, A810_CP_RB_RPTR_ADDR_BV, uint32_t(bv_rptr)) ||
         ringWrite(nullptr, A810_CP_RB_RPTR_ADDR_BV + 1, uint32_t(bv_rptr >> 32))) {IOLog("ASTEROIDS GPU: cp BV rptr write failed\n"); return;}
     cpState("before");

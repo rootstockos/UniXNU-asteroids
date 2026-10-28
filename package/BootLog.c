@@ -77,6 +77,10 @@ extern volatile uint32_t native_adreno_stall[24] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_stall_mem[59] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_unstick[15] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_fence_pending[8] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_timeline[3][10] __attribute__((weak_import));
+extern volatile uint32_t native_gpu_time[16] __attribute__((weak_import));
+extern volatile uint64_t native_adreno_maint[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_wait_asked[5] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wptr_fence[4] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_wait_outer[4] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_export_stats[4] __attribute__((weak_import));
@@ -922,9 +926,48 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
   if (&native_legacy_frames && (native_legacy_frames[0] || native_legacy_frames[1])) {
     char row[200];
     const volatile uint32_t *f = native_legacy_frames;
-    snprintf(row, sizeof row, "[frames] copied %u flipped %u | gaps <=17ms %u <=25 %u <=34 %u <=50 %u <=100 %u longer %u | longest under 1 s %ums",
+    snprintf(row, sizeof row, "[frames] copied %u flipped %u | gaps <=9ms %u <=17 %u <=25 %u <=34 %u <=50 %u longer %u | longest under 1 s %ums",
              f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8]);
     at = put(out, at, cap, row, sizeof row);
+  }
+  // T51: where each frame's time goes (NativeLegacyDisplay.cpp native_legacy_timeline), the GPU's own time per submission (GpuPowerProbe.cpp
+  // native_gpu_time), what the GPU driver's per-submission cache maintenance cleans (NativeAdrenoVm.cpp native_adreno_maint) and the
+  // timeouts clients ask fence waits for (NativeAdrenoUserClient.cpp native_adreno_wait_asked). Buckets: under 1, 2, 4, 8, 12, 17, 25, 50 ms, more.
+  if (&native_legacy_timeline) {
+    static const char *const kStage[3] = {"compositor", "to screen", "latch"};
+    for (unsigned k = 0; k < 3; ++k) {
+      const volatile uint32_t *t = native_legacy_timeline[k];
+      uint32_t n = 0;
+      for (unsigned b = 0; b < 9; ++b) n += t[b];
+      if (!n) continue;
+      char row[200];
+      snprintf(row, sizeof row, "[frame time] %-10s n=%u total %ums mean %uus | <1 %u <2 %u <4 %u <8 %u <12 %u <17 %u <25 %u <50 %u more %u", kStage[k], n,
+               t[9], (uint32_t)((uint64_t)t[9] * 1000 / n), t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8]);
+      at = put(out, at, cap, row, sizeof row);
+    }
+  }
+  if (&native_gpu_time && native_gpu_time[9]) {
+    char row[240];
+    const volatile uint32_t *g = native_gpu_time;
+    snprintf(row, sizeof row, "[gpu time] n=%u total %ums mean %uus max %uus | <1 %u <2 %u <4 %u <8 %u <12 %u <17 %u <25 %u <50 %u more %u | idle %ums queued %ums batched %u untimed %u",
+             g[9], g[10] / 1000, g[10] / g[9], g[11], g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], g[12], g[13], g[14], g[15]);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  if (&native_adreno_maint && native_adreno_maint[5]) {
+    char row[240];
+    const volatile uint64_t *m = native_adreno_maint;
+    snprintf(row, sizeof row, "[gpu maint] per-submission MiB: imports read %llu, imports written (skipped) %llu, write-combined %llu, cacheable owned %llu (%llu buffers, largest %lluK), imports invalidated %llu | calls %llu",
+             (unsigned long long)(m[0] >> 20), (unsigned long long)(m[1] >> 20), (unsigned long long)(m[2] >> 20), (unsigned long long)(m[3] >> 20),
+             (unsigned long long)m[7], (unsigned long long)(m[6] >> 10), (unsigned long long)(m[4] >> 20), (unsigned long long)m[5]);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  if (&native_adreno_wait_asked) {
+    const volatile uint32_t *w = native_adreno_wait_asked;
+    if (w[0] || w[1] || w[2] || w[3] || w[4]) {
+      char row[160];
+      snprintf(row, sizeof row, "[fence asked] timeouts clients ask for: none (poll) %u, <1ms %u, <10ms %u, <100ms %u, longer %u", w[0], w[1], w[2], w[3], w[4]);
+      at = put(out, at, cap, row, sizeof row);
+    }
   }
   // Direct scanout (sheng-dpu-scanout): the display bank's stage 1 (NativeUfs), then the flips (NativeLegacyDisplay.cpp native_legacy_direct).
   if (&native_ufs_dpu_state && native_ufs_dpu_state) {
