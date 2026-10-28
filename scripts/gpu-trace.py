@@ -165,10 +165,12 @@ def report(t, out):
         fr = [frag_by_pass[p['serial'], p['pass_no']] for p in ps if (p['serial'], p['pass_no']) in frag_by_pass]
         fr = [f for f in fr if f['has_samples']]
         over = sum(f['samples'] for f in fr) / max(1, sum(f['area'] for f in fr)) if fr else 0
+        light = sum(1 for p in ps if p['flags'] & 4)
         w(f'{name}: {len(ps)} passes, {us(total, freq) / 1e3:.0f} ms ({us(total, freq) / len(ps):.0f} us each), '
           f'{sum(p["area"] for p in ps) / len(ps) / 1e3:.0f} K px, '
           f'{sum(p["draws"] or len(draws_by_pass[p["serial"], p["pass_no"]]) for p in ps) / len(ps):.1f} draws; '
-          f'GMEM {len(gm)} ({sum(p["tiles"] for p in gm) / max(1, len(gm)):.0f} tiles); overdraw {over:.2f} over {len(fr)}\n')
+          f'GMEM {len(gm)} ({sum(p["tiles"] for p in gm) / max(1, len(gm)):.0f} tiles); overdraw {over:.2f} over {len(fr)}'
+          + (f'; {light} in system memory by coverage (TU_DW_LIGHT)' if light else '') + '\n')
     w('\n')
 
     large = [p for p in timed if p['area'] >= LARGE_PX]
