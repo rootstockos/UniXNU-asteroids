@@ -44,19 +44,24 @@
 
 // T54: Turnip's debug flags. Always nocb (A8xx renders without concurrent binning, T40e); asteroids-tu-debug=<flags> in the kernel's boot
 // arguments adds more for one boot ("gmem" or "sysmem" forces every pass's rendering mode; several flags joined with ':'), so GMEM and
-// system memory can be compared without a rebuild. T55: asteroids-tu-time=1 also turns on Turnip's GPU timing brackets
-// (turnip-asteroids-timing.patch, TU_DW_TIME), in the render server only: timing every process made the wallpaper poster extensions
-// abort on launch.
+// system memory can be compared without a rebuild. T55: asteroids-tu-time=<passes|all> also turns on Turnip's GPU timing brackets
+// (turnip-asteroids-timing.patch, TU_DW_TIME), in the render server only. T55's brackets hung the GPU on the render server's first
+// frame; T57 writes them with CP_REG_TO_MEM, as the autotune does.
 static void setTurnipDebug(bool renderServer = false) {
-    static char flags[128];
-    static bool built, timing;
+    static char flags[128], timing[16];
+    static bool built;
     if (!built) {
         built = true;
         strlcpy(flags, "nocb", sizeof flags);
         char args[1024] = {};
         size_t length = sizeof args - 1;
         if (sysctlbyname("kern.bootargs", args, &length, nullptr, 0) == 0) {
-            timing = strstr(args, "asteroids-tu-time=1") != nullptr;
+            if (const char *t = strstr(args, "asteroids-tu-time=")) {
+                t += strlen("asteroids-tu-time=");
+                size_t n = 0;
+                while (t[n] && t[n] != ' ' && n + 1 < sizeof timing) {timing[n] = t[n]; ++n;}
+                timing[n] = 0;
+            }
             const char *at = strstr(args, "asteroids-tu-debug=");
             if (at) {
                 at += strlen("asteroids-tu-debug=");
@@ -68,7 +73,7 @@ static void setTurnipDebug(bool renderServer = false) {
         }
     }
     setenv("TU_DEBUG", flags, 1);
-    if (renderServer && timing) setenv("TU_DW_TIME", "1", 1);
+    if (renderServer && timing[0]) setenv("TU_DW_TIME", timing, 1);   // "passes": render passes only; anything else: every kind
 }
 #ifdef ASTEROIDS_METAL_PUBLISH
 // T35: AdrenoMetal's frontend (ce5e19e) reports shader priming (the PR row) from counters UniXNU's own plugin defines through
