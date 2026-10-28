@@ -81,6 +81,7 @@ extern volatile uint32_t native_legacy_timeline[3][10] __attribute__((weak_impor
 extern volatile uint32_t native_gpu_time[16] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_work[18] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_why[16] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_optime[15] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_maint[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wait_asked[5] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wptr_fence[4] __attribute__((weak_import));
@@ -969,6 +970,15 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
                y[0], y[8], y[1], y[9], y[2], y[10], y[3], y[11], y[4], y[12], y[5], y[13], y[6], y[14], y[7], y[15]);
       at = put(out, at, cap, row, sizeof row);
     }
+  }
+  // T55: GPU time per kind of work, from GPU timestamps around each render pass, blit, copy, resolve and image clear (the asteroids
+  // Turnip patch turnip-asteroids-timing.patch, totals sent about once a second; NativeAdreno native_adreno_optime).
+  if (&native_adreno_optime && native_adreno_optime[12]) {
+    char row[300];
+    const volatile uint32_t *o = native_adreno_optime;
+    snprintf(row, sizeof row, "[gpu ops] n/ms: gmem passes %u/%u sysmem passes %u/%u blits %u/%u copies %u/%u resolves %u/%u clears %u/%u | cmd buffers %u, not run %u, dropped %u",
+             o[6], o[0] / 1000, o[7], o[1] / 1000, o[8], o[2] / 1000, o[9], o[3] / 1000, o[10], o[4] / 1000, o[11], o[5] / 1000, o[12], o[13], o[14]);
+    at = put(out, at, cap, row, sizeof row);
   }
   if (&native_adreno_maint && native_adreno_maint[5]) {
     char row[240];
