@@ -109,7 +109,7 @@ extern volatile uint32_t native_dpu_pipes[54] __attribute__((weak_import));
 extern volatile uint32_t native_dpu_more[40] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_surfaces[14] __attribute__((weak_import));
-extern volatile uint32_t native_legacy_direct[19] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_direct[13] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_frames[9] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
@@ -911,9 +911,8 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     if (&native_legacy_direct) {
       const volatile uint32_t *d = native_legacy_direct;
       n += snprintf(row + n, sizeof row - (size_t)n, " | flips %u mapped %u mapfail %u latch>50ms %u max %uus mean %uus released %u copied %u to boot %u"
-                    " | start %u waited %ums vig0 %x pipes %x | gpu waits %u max %uus mean %uus gave up %u | held %u timed out %u",
-                    d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8], d[9], d[10], d[11], d[12],
-                    d[13], d[14], d[13] ? d[15] / d[13] : 0, d[16], d[17], d[18]);
+                    " | start %u waited %ums vig0 %x pipes %x",
+                    d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8], d[9], d[10], d[11], d[12]);
     }
     at = put(out, at, cap, row, sizeof row);
   }
