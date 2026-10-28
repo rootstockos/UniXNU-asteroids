@@ -1081,6 +1081,10 @@ uint32_t native_gpu_uc[16];
 // weak-import reference cannot stay undefined in the kernel link, so the probe refuses every piece (-1, as Publish does
 // when the export is absent). Weak, so a real export wins once one is linked.
 extern "C" __attribute__((weak)) int boot_log_export_put(uint32_t, uint32_t, uint32_t, const void *, uint32_t) {return -1;}
+// T62: the merged driver (sheng's 8638683 era NativeAdrenoMemory::release) asks sheng's XNU patch which user task still maps a page it
+// frees, a diagnostic count only (native_adreno_free_user_mapped); this kernel has no such patch, and the weak import cannot stay
+// undefined in the kernel link (T62's first kernel build). The stand-in finds no mapping. Weak, so a real one wins once linked.
+extern "C" __attribute__((weak)) unsigned int native_pmap_user_mappings(ppnum_t, void **, uint64_t *, char *) {return 0;}
 NativeAdrenoSubmit gSubmit;
 NativeAdrenoTimer gTimer;
 // T62 (sheng's iPadOS 27 driver, 2df9f1c): every process has its own GPU address space, from GpuClientVaStart (msm ADRENO_VM_START,
