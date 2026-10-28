@@ -640,7 +640,8 @@ extern "C" {volatile uint32_t native_mic_regs[16];}
 extern "C" {volatile int32_t native_mic_capture[8];}
 // T42 diagnostics for a master whose link never comes up: [0] the codec reset pin's IN_OUT register after release (bit 0 the level read
 // back), [1]/[3] LDO B7/B8 (the codec's rails, PM7550 at SPMI SID 1, peripherals 0x46/0x47): APID | STATUS1 << 12 | EN_CTL << 20, read
-// only with asteroids-mic-pmic=1, [2]/[4] VSET low | VSET high << 8 | MODE << 16 | read status << 24 (0xff not read), [5]/[6]/[7] the
+// only with asteroids-mic-pmic=1 (T42: no APID for 0x146, and 0x147 is TYPE 9 SUBTYPE 2, not an LDO; recovery's regmap cannot read SID 1
+// 0x42xx-0x46xx either: the rails are the RPMh's alone, ldob7 already on for the eUSB2 repeater), [2]/[4] VSET low | VSET high << 8 | MODE << 16 | read status << 24 (0xff not read), [5]/[6]/[7] the
 // master's COMP_STATUS 1 ms, 100 ms and 1 s after it was enabled.
 extern "C" {volatile uint32_t native_mic_extra[8];}
 // [0] stage, [1] last DSP status, [2] periods asked, [3] returned, [4] bytes, [5] peak, [6] mean absolute value, [7] non-zero samples
@@ -1038,7 +1039,10 @@ void micBringUp(unsigned want) {
     Region reset;
     if (!mapRegion(kTlmm + kWcdResetPin * 0x1000ull, 0x1000, reset)) {micFail(1); return;}
     wr32(reset.va, 4, 0);
-    wr32(reset.va, 0, 1u << 9 | 7u << 6);   // GPIO, output, 16 mA (DT wcd_reset_active)
+    // GPIO, output, 16 mA (DT wcd_reset_active). gpio162 is one of the TLMM's eGPIOs (132-166): without EGPIO_ENABLE (bit 12) the pad
+    // belongs to the other owner and stays low (T42: GPIO_IN_OUT 2, output high read back low, the codec held in reset and the bus empty).
+    // pinctrl-msm sets the bit for every function other than egpio.
+    wr32(reset.va, 0, 1u << 12 | 1u << 9 | 7u << 6);
     IOSleep(1);
     wr32(reset.va, 4, 1u << 1);             // out of reset (active state: output high)
     IOSleep(5);
