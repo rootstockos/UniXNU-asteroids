@@ -689,6 +689,9 @@ void cpStart() {
     uint32_t *c = native_gpu_cp;
     const NativeAdrenoRegisters *gen8 = NativeAdrenoRegisterTable::gen8();
     if (gRing.setRegisters(gen8) || gCpInit.setRegisters(gen8)) {IOLog("ASTEROIDS GPU: cp gen8 table refused\n"); return;}
+    // T45: framed submissions flush the GPU caches before their fence (NativeAdreno setEndFlush), so a display fetching the surface
+    // itself sees the whole frame (zero copy showed the wallpaper without the app's layer).
+    gRing.setEndFlush(bootArg("sheng-gpu-endflush", 0) == 1);
     IOLog("ASTEROIDS GPU: cp: SQE base %llx, ring %llx, then SQE_CNTL and CP_ME_INIT\n", gGpuBuffers[0].iova,
           gGpuBuffers[1].iova);
     native_gpu_power_stage = 0xd1;
