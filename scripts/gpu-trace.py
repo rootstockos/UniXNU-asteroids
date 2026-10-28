@@ -221,18 +221,42 @@ def report(t, out):
             w(f'{fmt:12} x{samples} {flags:28} {n} passes\n')
         w('\n')
 
-    staged = [p for p in timed if p['flags'] & 2 and p['st_begin']]
+    staged = [p for p in timed if p['flags'] & 2 and p['st_begin'] and p['area'] >= LARGE_PX]
     if staged:
-        w('== GMEM pass stages (TU_DW_TRACE t)\n')
-        tot = collections.Counter()
-        for p in staged:
-            tot['begin'] += p['st_begin'] - p['start']
-            tot['loads'] += p['sum_loads']
-            tot['draws'] += p['sum_draws']
-            tot['stores'] += p['sum_stores']
-            tot['end'] += p['end'] - p['st_last']
-        for k in ('begin', 'loads', 'draws', 'stores', 'end'):
-            w(f'{k:7} {us(tot[k], freq) / 1e3:8.1f} ms\n')
+        # By how much of the render area the pass draws (the autotune's samples over its area), where that is known.
+        w('== large GMEM passes by stage (TU_DW_TRACE t), per pass in us, by coverage (samples / render area)\n')
+        w(f'{"coverage":12} {"passes":>6} {"total":>7} {"begin":>6} {"loads":>6} {"draws":>6} {"stores":>6} {"tiles":>6} {"end":>5} '
+          f'{"n tiles":>7} {"draws":>6}\n')
+        buckets = (('< 0.25', 0, 0.25), ('0.25-1', 0.25, 1), ('1-3', 1, 3), ('3-8', 3, 8), ('>= 8', 8, 1e9), ('unknown', -1, -1))
+        for name, lo, hi in buckets:
+            ps = []
+            for p in staged:
+                f = frag_by_pass.get((p['serial'], p['pass_no']))
+                cov = f['samples'] / f['area'] if f and f['has_samples'] and f['area'] else -1
+                if (lo <= cov < hi) or (lo == -1 and cov == -1):
+                    ps.append(p)
+            if not ps:
+                continue
+            n = len(ps)
+            m = lambda v: us(sum(v(p) for p in ps), freq) / n
+            between = lambda p: (p['st_last'] - p['st_begin']) - (p['sum_loads'] + p['sum_draws'] + p['sum_stores'])
+            w(f'{name:12} {n:6} {m(lambda p: p["end"] - p["start"]):7.0f} {m(lambda p: p["st_begin"] - p["start"]):6.0f} '
+              f'{m(lambda p: p["sum_loads"]):6.0f} {m(lambda p: p["sum_draws"]):6.0f} {m(lambda p: p["sum_stores"]):6.0f} '
+              f'{m(between):6.0f} {m(lambda p: p["end"] - p["st_last"]):5.0f} {sum(p["tiles"] for p in ps) / n:7.1f} '
+              f'{sum(len(draws_by_pass[p["serial"], p["pass_no"]]) for p in ps) / n:6.1f}\n')
+        w('\n')
+    sys_large = [p for p in timed if p['kind'] == 1 and p['area'] >= LARGE_PX]
+    if sys_large:
+        w('== large system-memory passes by coverage, per pass in us\n')
+        for name, lo, hi in (('< 0.25', 0, 0.25), ('0.25-1', 0.25, 1), ('1-3', 1, 3), ('>= 3', 3, 1e9)):
+            ps = []
+            for p in sys_large:
+                f = frag_by_pass.get((p['serial'], p['pass_no']))
+                if f and f['has_samples'] and f['area'] and lo <= f['samples'] / f['area'] < hi:
+                    ps.append(p)
+            if ps:
+                w(f'{name:12} {len(ps):6} {us(sum(p["end"] - p["start"] for p in ps), freq) / len(ps):7.0f} us, '
+                  f'{sum(len(draws_by_pass[p["serial"], p["pass_no"]]) for p in ps) / len(ps):5.1f} draws\n')
         w('\n')
 
     other = collections.Counter()
