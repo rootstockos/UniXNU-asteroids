@@ -44,16 +44,19 @@
 
 // T54: Turnip's debug flags. Always nocb (A8xx renders without concurrent binning, T40e); asteroids-tu-debug=<flags> in the kernel's boot
 // arguments adds more for one boot ("gmem" or "sysmem" forces every pass's rendering mode; several flags joined with ':'), so GMEM and
-// system memory can be compared without a rebuild.
-static void setTurnipDebug() {
+// system memory can be compared without a rebuild. T55: asteroids-tu-time=1 also turns on Turnip's GPU timing brackets
+// (turnip-asteroids-timing.patch, TU_DW_TIME), in the render server only: timing every process made the wallpaper poster extensions
+// abort on launch.
+static void setTurnipDebug(bool renderServer = false) {
     static char flags[128];
-    static bool built;
+    static bool built, timing;
     if (!built) {
         built = true;
         strlcpy(flags, "nocb", sizeof flags);
         char args[1024] = {};
         size_t length = sizeof args - 1;
         if (sysctlbyname("kern.bootargs", args, &length, nullptr, 0) == 0) {
+            timing = strstr(args, "asteroids-tu-time=1") != nullptr;
             const char *at = strstr(args, "asteroids-tu-debug=");
             if (at) {
                 at += strlen("asteroids-tu-debug=");
@@ -65,6 +68,7 @@ static void setTurnipDebug() {
         }
     }
     setenv("TU_DEBUG", flags, 1);
+    if (renderServer && timing) setenv("TU_DW_TIME", "1", 1);
 }
 #ifdef ASTEROIDS_METAL_PUBLISH
 // T35: AdrenoMetal's frontend (ce5e19e) reports shader priming (the PR row) from counters UniXNU's own plugin defines through
@@ -285,7 +289,7 @@ static id deviceForPort(unsigned port) {
         // A8xx: Turnip renders without concurrent binning (pandora's A840 needed it; T17 passed with it). T40e: no longer sysmem for
         // every pass; Turnip's autotune picks GMEM or system memory per pass, as UniXNU AdrenoMetal 461a842 does on sheng (forced
         // sysmem left that GPU 19 % busy; autotune ran 600 s without a stall at 70 fps p50). T34b ran every pass in sysmem.
-        setTurnipDebug();
+        setTurnipDebug(true);
         // The discovery releases the accelerator port when it is done; the status and scanout threads keep using it.
         void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW | RTLD_LOCAL);
         if (!iokit) return nil;
