@@ -82,6 +82,7 @@ extern volatile uint32_t native_gpu_time[16] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_work[18] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_why[16] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_optime[15] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_tiletime[16] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_maint[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wait_asked[5] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wptr_fence[4] __attribute__((weak_import));
@@ -978,6 +979,17 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     const volatile uint32_t *o = native_adreno_optime;
     snprintf(row, sizeof row, "[gpu ops] n/ms: gmem passes %u/%u sysmem passes %u/%u blits %u/%u copies %u/%u resolves %u/%u clears %u/%u | cmd buffers %u, not run %u, dropped %u",
              o[6], o[0] / 1000, o[7], o[1] / 1000, o[8], o[2] / 1000, o[9], o[3] / 1000, o[10], o[4] / 1000, o[11], o[5] / 1000, o[12], o[13], o[14]);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // T59: GMEM passes by stage (asteroids-tu-time=tiles): begin with binning, the first subpass's loads and clears, draws and stores
+  // summed over the tiles, the pass's end, and tile switches; tiles, tile size, render area, attachments loaded and stored per pass.
+  if (&native_adreno_tiletime && native_adreno_tiletime[0]) {
+    char row[360];
+    const volatile uint32_t *t = native_adreno_tiletime;
+    const unsigned n = t[0], tiles = t[7] ? t[7] : 1;
+    snprintf(row, sizeof row, "[gpu tiles] gmem passes %u ms: begin+binning %u loads+clears %u draws %u stores %u end %u between tiles %u | tiles %u (%u.%u per pass, max %u) tile %uK px area %uK px per pass | hw binning %u | attachments per pass loaded %u.%u stored %u.%u | multi-subpass %u rejected %u",
+             n, t[1] / 1000, t[2] / 1000, t[3] / 1000, t[4] / 1000, t[5] / 1000, t[6] / 1000, t[7], t[7] / n, (t[7] * 10 / n) % 10, t[14],
+             t[9] / tiles, t[10] / n, t[8], t[11] / n, (t[11] * 10 / n) % 10, t[12] / n, (t[12] * 10 / n) % 10, t[15], t[13]);
     at = put(out, at, cap, row, sizeof row);
   }
   if (&native_adreno_maint && native_adreno_maint[5]) {
