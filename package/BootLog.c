@@ -109,7 +109,8 @@ extern volatile uint32_t native_dpu_pipes[54] __attribute__((weak_import));
 extern volatile uint32_t native_dpu_more[40] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_surfaces[14] __attribute__((weak_import));
-extern volatile uint32_t native_legacy_direct[26] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_direct[19] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_frames[9] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_dump[20] __attribute__((weak_import));
@@ -892,6 +893,14 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
              v[0], v[1], v[2] >> 10, v[3], v[4], v[5] >> 10, v[6], v[7], v[8] >> 10, v[9], v[10], v[11] >> 10, v[12], v[13]);
     at = put(out, at, cap, row, sizeof row);
   }
+  // Frames as they reach the screen, by copy or by flip, and the time between them (NativeLegacyDisplay.cpp native_legacy_frames).
+  if (&native_legacy_frames && (native_legacy_frames[0] || native_legacy_frames[1])) {
+    char row[200];
+    const volatile uint32_t *f = native_legacy_frames;
+    snprintf(row, sizeof row, "[frames] copied %u flipped %u | gaps <=17ms %u <=25 %u <=34 %u <=50 %u <=100 %u longer %u | longest under 1 s %ums",
+             f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8]);
+    at = put(out, at, cap, row, sizeof row);
+  }
   // Direct scanout (sheng-dpu-scanout): the display bank's stage 1 (NativeUfs), then the flips (NativeLegacyDisplay.cpp native_legacy_direct).
   if (&native_ufs_dpu_state && native_ufs_dpu_state) {
     char row[600];
@@ -902,10 +911,9 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     if (&native_legacy_direct) {
       const volatile uint32_t *d = native_legacy_direct;
       n += snprintf(row + n, sizeof row - (size_t)n, " | flips %u mapped %u mapfail %u latch>50ms %u max %uus mean %uus released %u copied %u to boot %u"
-                    " | start %u waited %ums vig0 %x pipes %x | gpu waits %u max %uus mean %uus gave up %u | held %u timed out %u"
-                    " | frame gaps <=17ms %u <=25 %u <=34 %u <=50 %u <=100 %u longer %u max %ums",
+                    " | start %u waited %ums vig0 %x pipes %x | gpu waits %u max %uus mean %uus gave up %u | held %u timed out %u",
                     d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8], d[9], d[10], d[11], d[12],
-                    d[13], d[14], d[13] ? d[15] / d[13] : 0, d[16], d[17], d[18], d[19], d[20], d[21], d[22], d[23], d[24], d[25]);
+                    d[13], d[14], d[13] ? d[15] / d[13] : 0, d[16], d[17], d[18]);
     }
     at = put(out, at, cap, row, sizeof row);
   }
