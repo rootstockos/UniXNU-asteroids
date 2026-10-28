@@ -41,8 +41,8 @@ parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.R
 parser.add_argument('--unixnu', type=Path, required=True)
 parser.add_argument('--trust-cache', type=Path, required=True, help='the unchanged original static/System trust bundle')
 parser.add_argument('--published', action='store_true', help='T18: the published stage with the metal2vulkan bridge')
-parser.add_argument('--clients', default='CollectionsPoster PosterBoard iconservicesagent',
-                    help='T31: the Metal clients beside backboardd (NativeAdrenoMetal.clients); empty for none')
+parser.add_argument('--clients', default='*',
+                    help='T31: the Metal clients beside backboardd (NativeAdrenoMetal.clients; T62: "*" every process); empty for none')
 parser.add_argument('--sample-only', action='store_true', help='T22, with --published: no Metal device, only the stack samples')
 parser.add_argument('--no-audio', action='store_true', help='T41: leave out the audio server plug-in (audio/ShengAudio.driver)')
 args = parser.parse_args()
@@ -154,8 +154,9 @@ if args.published:
     files.append(('addons/NativeAdrenoMetal.sample', 0o644, b'sample\n') if args.sample_only else
                  ('addons/NativeAdrenoMetal.publish', 0o644, b'published\n'))
     if not args.sample_only:
-        # T31: the Metal clients beside backboardd (the kernel's NativeSandboxGrantProcess grants the same three; NativeAdreno has four slots):
-        # by default the active wallpaper (WallpaperKit's CollectionsPoster), PosterBoard and iconservicesagent, after UniXNU-sheng's list.
+        # T31: the Metal clients beside backboardd. T62: every process ("*"), as sheng's iPadOS 27 plugin gives every process its own device:
+        # the kernel grants the open to every process (NativeSandboxGrantProcess "*") and NativeAdreno has no connection cap, each
+        # connection its own GPU address space. Before T62: CollectionsPoster, PosterBoard and iconservicesagent (four slots).
         # No clients is a file with no names (one new line: the kernel's addon check refuses empty entries), not a missing file: the
         # addon's files stay on Data, so an earlier list would otherwise stay in force.
         files.append(('addons/NativeAdrenoMetal.clients', 0o644, (''.join(name + '\n' for name in args.clients.split()) or '\n').encode()))

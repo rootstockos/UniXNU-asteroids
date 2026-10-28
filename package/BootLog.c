@@ -169,7 +169,15 @@ extern volatile uint64_t native_adreno_cache_stats[5] __attribute__((weak_import
 struct native_adreno_client_record {char name[20]; uint32_t opens, refused, closes, slot, peak_mib, last_refusal;};
 extern struct native_adreno_client_record native_adreno_client_log[8] __attribute__((weak_import));
 struct native_adreno_client_text {char name[20]; char text[64];};
-extern struct native_adreno_client_text native_adreno_client_text[4] __attribute__((weak_import));
+extern struct native_adreno_client_text native_adreno_client_text[8] __attribute__((weak_import));
+// T62 (sheng's iPadOS 27 driver): per-process GPU address spaces and hang recovery (NativeAdrenoPublish.cpp, NativeAdrenoSmmuMemory.cpp).
+extern volatile uint32_t native_adreno_table_switches[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_cp_aperture[4] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_table_pages[4] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_recovery[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_recovery_fault[5] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_pool_chunks[4] __attribute__((weak_import));
+extern unsigned NativeAdrenoGpuContextInputBits(void) __attribute__((weak_import));
 extern volatile uint32_t native_adreno_mount_fail[4] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_window_overflow[4][3] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_client_stats[5][6] __attribute__((weak_import));
@@ -637,10 +645,41 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
              native_adreno_mount_fail[0], native_adreno_mount_fail[1], native_adreno_mount_fail[2], native_adreno_mount_fail[3]);
     at = put(out, at, cap, row, sizeof row);
     if (&native_adreno_client_text)
-      for (unsigned i = 0; i < 4 && native_adreno_client_text[i].name[0]; ++i) {
+      for (unsigned i = 0; i < 8 && native_adreno_client_text[i].name[0]; ++i) {
         snprintf(row, sizeof row, "[gpu client text] %.19s: %.63s", native_adreno_client_text[i].name, native_adreno_client_text[i].text);
         at = put(out, at, cap, row, sizeof row);
       }
+  }
+  // [gpu tables] (sheng's row): the table mode (1 the CPU switches TTBR0 with the GPU idle, 2 the CP in the ring), the CP aperture call's
+  // availability and result and the CP switch check (IOReturn), then switches by the CP and by the CPU, address spaces made, freed,
+  // live and peak, the last failure (IOReturn; bit 31: a free) and the step a failed make stopped at, then the table pages taken on
+  // demand (live, taken, freed, refused by the system), the GPU address size (ias) and the pool's chunks (live, made, freed, out of room).
+  if (&native_adreno_table_switches) {
+    char row[240];
+    snprintf(row, sizeof row, "[gpu tables] mode %u aperture %x/%x check %x | cp %u cpu %u made %u freed %u live %u peak %u fail %x step %u | pages %u taken %u freed %u refused %u ias %u | chunks %u/%u/%u/%u",
+             &native_adreno_cp_aperture ? native_adreno_cp_aperture[3] : 0, &native_adreno_cp_aperture ? native_adreno_cp_aperture[0] : 0,
+             &native_adreno_cp_aperture ? native_adreno_cp_aperture[1] : 0, &native_adreno_cp_aperture ? native_adreno_cp_aperture[2] : 0,
+             native_adreno_table_switches[0], native_adreno_table_switches[1], native_adreno_table_switches[2],
+             native_adreno_table_switches[3], native_adreno_table_switches[4], native_adreno_table_switches[5],
+             native_adreno_table_switches[6], native_adreno_table_switches[7], &native_adreno_table_pages ? native_adreno_table_pages[0] : 0,
+             &native_adreno_table_pages ? native_adreno_table_pages[1] : 0, &native_adreno_table_pages ? native_adreno_table_pages[2] : 0,
+             &native_adreno_table_pages ? native_adreno_table_pages[3] : 0, &NativeAdrenoGpuContextInputBits ? NativeAdrenoGpuContextInputBits() : 0,
+             &native_adreno_pool_chunks ? native_adreno_pool_chunks[0] : 0, &native_adreno_pool_chunks ? native_adreno_pool_chunks[1] : 0,
+             &native_adreno_pool_chunks ? native_adreno_pool_chunks[2] : 0, &native_adreno_pool_chunks ? native_adreno_pool_chunks[3] : 0);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // [gpu recovery] (sheng's row, without the board restart: this board registers none): msm hangcheck (NativeAdrenoSubmit::recover):
+  // hangs found, restarts, failed restarts, the last hung fence, the last restart's IOReturn, submissions replayed, hangs with a guilty
+  // job, hangs of the kernel's VM; then the SMMU faults ended before a restart and the last one's FSR, FAR (hi:lo) and FSYNR0.
+  if (&native_adreno_recovery && (native_adreno_recovery[0] || (&native_adreno_recovery_fault && native_adreno_recovery_fault[0]))) {
+    char row[240];
+    snprintf(row, sizeof row, "[gpu recovery] hangs %u restarts %u failed %u fence %u status %x replayed %u guilty %u kernel %u | faults ended %u last fsr %x far %x:%x fsynr %x",
+             native_adreno_recovery[0], native_adreno_recovery[1], native_adreno_recovery[2], native_adreno_recovery[3],
+             native_adreno_recovery[4], native_adreno_recovery[5], native_adreno_recovery[6], native_adreno_recovery[7],
+             &native_adreno_recovery_fault ? native_adreno_recovery_fault[0] : 0, &native_adreno_recovery_fault ? native_adreno_recovery_fault[1] : 0,
+             &native_adreno_recovery_fault ? native_adreno_recovery_fault[3] : 0, &native_adreno_recovery_fault ? native_adreno_recovery_fault[2] : 0,
+             &native_adreno_recovery_fault ? native_adreno_recovery_fault[4] : 0);
+    at = put(out, at, cap, row, sizeof row);
   }
   if (&native_adreno_metal_askers) {
     char row[400];

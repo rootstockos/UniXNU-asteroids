@@ -233,7 +233,8 @@ static Gpu *makeGpu(unsigned port) {
 static id gDevice;
 // T31: the Metal clients, after upstream UniXNU drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm (MIT, listedClient/clientDevice). Whether
 // NativeAdrenoMetal.clients beside the bundle names this process (names separated by blanks, commas or new lines; "*" names every process).
-// The kernel grants the open only to the processes its NativeSandboxGrantProcess lists, and NativeAdreno has four connection slots.
+// T62: the kernel grants the open to every process (NativeSandboxGrantProcess "*") and NativeAdreno takes every connection, each with
+// its own GPU address space; the add-on's list is "*" (scripts/build-asteroids-metal-plugin.py).
 static bool listedClient() {
     char path[1024];
     if (!besidePath("NativeAdrenoMetal.clients", path, sizeof path)) return false;

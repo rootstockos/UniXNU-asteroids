@@ -1083,9 +1083,30 @@ uint32_t native_gpu_uc[16];
 extern "C" __attribute__((weak)) int boot_log_export_put(uint32_t, uint32_t, uint32_t, const void *, uint32_t) {return -1;}
 NativeAdrenoSubmit gSubmit;
 NativeAdrenoTimer gTimer;
-const NativeAdrenoAbiDeviceInfo gDeviceInfo = {GPB_A810_CHIP_ID, GPB_A810_GMEM_BYTES, GPB_GMEM_RANGE_MIN, GPB_UCHE_TRAP_BASE,
-                                               GPB_CLIENT_VA_START, GPB_CLIENT_VA_BYTES, GPB_UBWC_HBB, GPB_UBWC_SWIZZLE, 0,
-                                               GPB_UBWC_VERSION, NativeAdrenoDeviceClientIova, 0};
+// T62 (sheng's iPadOS 27 driver, 2df9f1c): every process has its own GPU address space, from GpuClientVaStart (msm ADRENO_VM_START,
+// 4 GiB, above the kernel buffers and the GMEM window every address space also maps) to the end of the bank's aperture
+// (adreno_private_vm_size: BIT(ias) - ADRENO_VM_START); va_size is set at publication from the GPU context's ias.
+NativeAdrenoAbiDeviceInfo gDeviceInfo = {GPB_A810_CHIP_ID, GPB_A810_GMEM_BYTES, GPB_GMEM_RANGE_MIN, GPB_UCHE_TRAP_BASE,
+                                         GpuClientVaStart, 0, GPB_UBWC_HBB, GPB_UBWC_SWIZZLE, 0,
+                                         GPB_UBWC_VERSION, NativeAdrenoDeviceClientIova, 0};
+// qcom_scm_set_gpu_smmu_aperture(0) (sheng's openCpAperture): the secure world opens the CP's aperture to the GPU's context bank 0, so
+// CP_SMMU_TABLE_UPDATE in the ring can switch the bank's page table (the driver's table mode 2, which it proves on one submission and
+// leaves for mode 1, the CPU's switch with the GPU idle, if the switch does not land). Asked first whether the call exists
+// (QCOM_SCM_INFO_IS_CALL_AVAIL). Off on this board unless asteroids-gpu-cp-aperture=1: mode 1 needs nothing of the secure world, and
+// the CP switch has not run on an A810. native_adreno_cp_aperture: [0] availability (x1, or 0x80000000|x0), [1] the call's x0.
+extern "C" volatile uint32_t native_adreno_cp_aperture[4];
+void openCpAperture() {
+    // ARM_SMCCC_CALL_VAL(STD, SMC_64, OWNER_SIP, svc << 8 | cmd): SVC_INFO 0x06 / IS_CALL_AVAIL 0x01, SVC_MP 0x0c / CP_SMMU_APERTURE_ID 0x1b.
+    uint64_t avail[8] = {0x42000601u, 1, 0x02000000u | (0x0cu << 8) | 0x1bu, 0, 0, 0, 0, 0};
+    sheng_smc_call(avail);
+    native_adreno_cp_aperture[0] = avail[0] ? 0x80000000u | uint32_t(avail[0]) : uint32_t(avail[1]);
+    if (avail[0] || !avail[1]) {native_adreno_cp_aperture[1] = 0xffffffffu; return;}
+    // args[0] = 0xffff0000 | QCOM_SCM_CP_APERTURE_REG (0) << 8 | context bank 0; the other three 0xffffffff. ARGS(4), all values.
+    uint64_t r[8] = {0x42000c1bu, 4, 0xffff0000u, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0, 0};
+    sheng_smc_call(r);
+    native_adreno_cp_aperture[1] = uint32_t(r[0]);
+    IOLog("ASTEROIDS GPU: cp aperture: avail %x, call %x\n", native_adreno_cp_aperture[0], native_adreno_cp_aperture[1]);
+}
 int timerRead(void *, uint32_t reg, uint32_t *value) {return ringRead(nullptr, reg, value);}
 const NativeAdrenoTimeIo gTimerIo{nullptr, timerRead};
 IOReturn ucCall(IOUserClient *uc, uint32_t method, const void *in, void *out) {
@@ -1401,7 +1422,10 @@ void ucStart() {
     if (&native_adreno_import_policy) native_adreno_import_policy = bootArg("sheng-gpu-import-policy", 1) ? 1 : 0;
     u[0] = 3;
     native_gpu_power_stage = 0x103;
-    u[5] = uint32_t(native_adreno_publish(vm, &gSubmit, &gRing, &clock, &gTimer, &gDeviceInfo, 31, bits));
+    if (bootArg("asteroids-gpu-cp-aperture", 0) == 1) openCpAperture();
+    const unsigned ias = NativeAdrenoGpuContextInputBits();
+    gDeviceInfo.va_size = ias > 32 ? (1ull << ias) - GpuClientVaStart : 0;
+    u[5] = uint32_t(native_adreno_publish(vm, &gSubmit, &gRing, &clock, &gTimer, &gDeviceInfo, ias, bits));
     IOService *svc = u[5] ? nullptr : native_adreno_published_service();
     IOLog("ASTEROIDS GPU: publish %x service %s chip %08x gmem %x va %llx+%llx\n", u[5], svc ? "NativeAdrenoGpu" : "-",
           gDeviceInfo.chip_id, gDeviceInfo.gmem_bytes, gDeviceInfo.va_start, gDeviceInfo.va_size);
@@ -1496,7 +1520,10 @@ void publishMetal() {
     // (UniXNU patches/xnu/zzw-native-adreno-sandbox-grant.patch); T17's plugin tests only in backboardd.
     // T31: the render server plus the three Metal clients the plugin's NativeAdrenoMetal.clients lists (NativeAdreno has four connection
     // slots): the active wallpaper (WallpaperKit's CollectionsPoster), PosterBoard and iconservicesagent, after UniXNU-sheng's list.
-    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,CollectionsPoster,PosterBoard,iconservicesagent");
+    // T62 (sheng 9800f8cd): every process that opens this accelerator gets it in place of the sandbox verdict; the original profiles name
+    // no class of this driver, and any Metal client (the wallpaper's poster extensions, widgets, icons, apps) runs the plugin. The driver
+    // has no connection cap since sheng's iPadOS 27 merge: each connection gets its own address space.
+    accelerator->setProperty("NativeSandboxGrantProcess", "*");
     gMetalStage = 4;
     if (!accelerator->attach(IOService::getPlatform())) {accelerator->release(); gMetalStatus = kIOReturnNotAttached; return;}
     accelerator->registerService();
