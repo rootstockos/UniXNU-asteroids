@@ -102,7 +102,7 @@ result = "T29 booted iPadOS 17.7.11 from the UFS root with persistent Data to th
 id = "display"
 status = "implemented"
 components = ["GopFramebuffer"]
-paths = ["package/LegacyDisplay*", "package/PanelProbe.cpp", "package/AsteroidsBacklight.cpp", "drivers/NativeMobileDisplay", "package/Boot*", "package/Font.h", "scripts/build-native-legacy-display.py", "scripts/build-boot-progress.py", "scripts/audit-mobile-graphics-default-surface.py"]
+paths = ["drivers/GopFramebuffer", "package/LegacyDisplay*", "package/PanelProbe.cpp", "package/AsteroidsBacklight.cpp", "drivers/NativeMobileDisplay", "package/Boot*", "package/Font.h", "scripts/build-native-legacy-display.py", "scripts/build-boot-progress.py", "scripts/audit-mobile-graphics-default-surface.py"]
 inputs = ["The firmware's GOP framebuffer, 1080x2392 x8r8g8b8 at stride 4320, on a 120 Hz video-mode panel."]
 configuration = ["offline-legacy-* arguments, sheng-vsync=120, sheng-fb-gpu=1 (the GPU copies each frame to the panel)."]
 procedure = ["Boot and watch the banner rows (sheng-banner=1) for swaps per second and copy times."]
