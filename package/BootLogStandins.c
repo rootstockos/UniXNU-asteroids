@@ -110,6 +110,7 @@ WEAK volatile uint64_t native_gpu_idle_timeouts;
 WEAK volatile uint64_t native_gpu_idle_spins;
 WEAK uint32_t native_gpu_perf_vote[2];
 WEAK volatile uint32_t native_gpu_dcvs[15];
+WEAK volatile uint32_t native_gpu_windows[8];
 
 // Missed by the first generation: defined only in sources this board does not compile (NativeAdrenoService.cpp, sheng's Wi-Fi).
 WEAK volatile uint64_t native_adreno_fence_phys;

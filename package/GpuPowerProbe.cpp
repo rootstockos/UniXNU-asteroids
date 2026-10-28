@@ -1520,6 +1520,10 @@ extern "C" {
 // [0] 1 running, [1] level now, [2] changes, [3] failed votes, [4] busy % over the last 10 s, [5..12] % of those 10 s at the eight
 // highest levels (2..9, 362..1050 MHz on the 3a's bin), [13] touch boosts, [14] wake boosts (sheng's layout, which BootLog.c reads)
 volatile uint32_t native_gpu_dcvs[15];
+// T43: how loaded the GPU is while it has work, to tell a GPU-bound frame from one held up elsewhere (opening apps stutters under
+// blur): 16 ms windows with work, of them [1] under 25 % busy, [2] under 50 %, [3] under 85 %, [4] 85 % or more, [5] those at the
+// ceiling (the GPU was the limit at the highest level allowed), [6] the longest run of fully busy windows (ms), [7] the ceiling level.
+volatile uint32_t native_gpu_windows[8];
 extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import));
 }
 uint64_t gpuBusyTicks() {
@@ -1560,7 +1564,7 @@ void gpuDcvsThread(void *, wait_result_t) {
     if (idleLevel > floor) idleLevel = floor;
     const unsigned base = top > 8 ? top - 7 : 1;   // the eight highest levels go to [5..12]
     unsigned cur = native_gpu_perf_vote[0] ? native_gpu_perf_vote[0] : ceiling;
-    native_gpu_dcvs[0] = 1; native_gpu_dcvs[1] = cur;
+    native_gpu_dcvs[0] = 1; native_gpu_dcvs[1] = cur; native_gpu_windows[7] = ceiling;
     uint64_t lastBusy = gpuBusyTicks(), lastT = mach_absolute_time(), idleSince = lastT;
     uint64_t runNs = 0, winBusy = 0, winNs = 0, atLevel[16] = {};
     unsigned down = 0, hold = 0;
@@ -1585,8 +1589,16 @@ void gpuDcvsThread(void *, wait_result_t) {
         const uint32_t submits = &native_adreno_submit_ibs ? native_adreno_submit_ibs[0] : 0;
         const bool active = submits != lastSubmits || busyNs * 50 > ns;
         lastSubmits = submits;
+        if (active) {
+            native_gpu_windows[0] = native_gpu_windows[0] + 1;
+            const uint64_t pct = busyNs * 100 / ns;
+            const unsigned b = pct < 25 ? 1 : pct < 50 ? 2 : pct < 85 ? 3 : 4;
+            native_gpu_windows[b] = native_gpu_windows[b] + 1;
+            if (b == 4 && cur == ceiling) native_gpu_windows[5] = native_gpu_windows[5] + 1;
+        }
         const uint64_t need = busyNs * gpuMHz(cur) * 2 / ns;
         runNs = busyNs * 100 >= ns * 95 ? runNs + ns : 0;
+        if (runNs / 1000000 > native_gpu_windows[6]) native_gpu_windows[6] = (uint32_t)(runNs / 1000000);
         unsigned want = cur;
         if (busyNs * 100 > ns * 85 || runNs >= 50000000ull) {
             want = ceiling;

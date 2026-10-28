@@ -109,7 +109,7 @@ extern volatile uint32_t native_dpu_pipes[54] __attribute__((weak_import));
 extern volatile uint32_t native_dpu_more[40] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_surfaces[14] __attribute__((weak_import));
-extern volatile uint32_t native_legacy_direct[19] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_direct[26] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_dump[20] __attribute__((weak_import));
@@ -171,6 +171,7 @@ extern volatile uint32_t native_adreno_io_coherent __attribute__((weak_import));
 extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern uint32_t native_gpu_perf_vote[2] __attribute__((weak_import));
 extern volatile uint32_t native_gpu_dcvs[15] __attribute__((weak_import));
+extern volatile uint32_t native_gpu_windows[8] __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_gov[9] __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_boosts __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_frame[2] __attribute__((weak_import));
@@ -697,6 +698,12 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
                native_gpu_dcvs[7], native_gpu_dcvs[8], native_gpu_dcvs[9], native_gpu_dcvs[10], native_gpu_dcvs[11], native_gpu_dcvs[12],
                native_gpu_dcvs[13], native_gpu_dcvs[14]);
       at = put(out, at, cap, row, sizeof row);
+      if (&native_gpu_windows && native_gpu_windows[0]) {
+        const volatile uint32_t *w = native_gpu_windows;
+        snprintf(row, sizeof row, "[gpu load] windows with work %u: busy <25%% %u <50%% %u <85%% %u >=85%% %u (at ceiling %u, level %u) longest busy run %ums",
+                 w[0], w[1], w[2], w[3], w[4], w[5], w[7], w[6]);
+        at = put(out, at, cap, row, sizeof row);
+      }
     }
   }
   if (&native_adreno_export_stats && (native_adreno_export_stats[0] || native_adreno_export_stats[1])) {
@@ -887,7 +894,7 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
   }
   // Direct scanout (sheng-dpu-scanout): the display bank's stage 1 (NativeUfs), then the flips (NativeLegacyDisplay.cpp native_legacy_direct).
   if (&native_ufs_dpu_state && native_ufs_dpu_state) {
-    char row[480];
+    char row[600];
     const volatile uint32_t *c = native_ufs_dpu_check;
     int n = snprintf(row, sizeof row, "[direct scanout] bank %x ttbr0=%x tcr=%x fsr %x->%x far=%x%08x fsynr0=%x watched %uus now sctlr=%x fsr=%x",
                      native_ufs_dpu_state, c[0], c[1], c[2], c[3], c[5], c[4], c[6], c[7],
@@ -895,9 +902,10 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     if (&native_legacy_direct) {
       const volatile uint32_t *d = native_legacy_direct;
       n += snprintf(row + n, sizeof row - (size_t)n, " | flips %u mapped %u mapfail %u latch>50ms %u max %uus mean %uus released %u copied %u to boot %u"
-                    " | start %u waited %ums vig0 %x pipes %x | gpu waits %u max %uus mean %uus gave up %u | held %u timed out %u",
+                    " | start %u waited %ums vig0 %x pipes %x | gpu waits %u max %uus mean %uus gave up %u | held %u timed out %u"
+                    " | frame gaps <=17ms %u <=25 %u <=34 %u <=50 %u <=100 %u longer %u max %ums",
                     d[0], d[1], d[2], d[3], d[4], d[0] ? d[5] / d[0] : 0, d[6], d[7], d[8], d[9], d[10], d[11], d[12],
-                    d[13], d[14], d[13] ? d[15] / d[13] : 0, d[16], d[17], d[18]);
+                    d[13], d[14], d[13] ? d[15] / d[13] : 0, d[16], d[17], d[18], d[19], d[20], d[21], d[22], d[23], d[24], d[25]);
     }
     at = put(out, at, cap, row, sizeof row);
   }
