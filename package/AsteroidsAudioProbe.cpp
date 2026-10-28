@@ -835,8 +835,8 @@ bool micMacros() {
     return true;
 }
 
-// The master as the vendor's swrm_master_init starts it: 50 rows x 16 columns, auto enumeration, 31 pings, 3 command retries, pulse
-// interrupts, link up, then the codec found among the attached devices (manufacturer 0x0217, part 0x0110, as the driver's id table).
+// The master as mainline's qcom_swrm_init starts a v1.7 one: 50 rows x 16 columns, auto enumeration, 31 pings, the link manager and
+// bus clock for the CPU, 7 command retries, pulse interrupts, link up (COMP_STATUS bit 0, the frame generator), then the codec found among the attached devices (manufacturer 0x0217, part 0x0110, as the driver's id table).
 bool micMaster() {
     if (!mapRegion(kSwr, 0x10000, gSwr.r)) return false;
     const uintptr_t m = gSwr.r.va;
@@ -847,27 +847,30 @@ bool micMaster() {
     const bool cpu1 = version >= 0x01060000;
     gSwr.wr = cpu1 ? 0x31c : 0x300; gSwr.rd = cpu1 ? 0x320 : 0x304; gSwr.status = cpu1 ? 0x328 : 0x30c; gSwr.fifo = cpu1 ? 0x334 : 0x318;
     gSwr.page1 = gSwr.page2 = 0xff;
-    // As the vendor's runtime resume does before swrm_master_init: two soft resets, then a bus reset (MCP_BUS_CTRL 1).
+    // Two soft resets, then mainline's qcom_swrm_init (drivers/soundwire/qcom.c) step for step. A v1.7 master has a link manager per
+    // execution environment: the CPU (EE 1) must take it (LINK_MANAGER_EE 0x018 = 1) and start its own bus clock (MCP_BUS_CTRL
+    // CLK_START << EE = 4). T41-T46 wrote 2 there (EE 0's clock start) and never claimed the link manager: COMP_STATUS stayed 0x40002
+    // (frame generator off), no interrupt, no slave.
     wr32(m, 0x008, 1);
     wr32(m, 0x008, 1);
     IOSleep(1);
-    wr32(m, 0x1044, 1);
     wr32(m, 0x101c, 1u << 3 | 7u);                              // frame bank 0: 50 rows, 16 columns
     wr32(m, 0x500, 1);                                          // auto enumeration
-    wr32(m, 0x1048, (rd32(m, 0x1048) & ~0x3e0000u) | 0x1fu << 17);
-    wr32(m, 0x314, 3);                                          // command retries
-    wr32(m, 0x1044, 2);
-    wr32(m, 0x004, 2);
+    wr32(m, 0x204, 0x1ffff);                                    // interrupts masked (SWRM_INTERRUPT_STATUS_RMSK)
+    wr32(m, 0x1048, (rd32(m, 0x1048) & ~0x3e0000u) | 0x1fu << 17);   // 31 pings without a command
+    wr32(m, 0x018, 1);                                          // link manager: the CPU's
+    wr32(m, 0x1044, 1u << 1 << 1);                              // bus clock start for EE 1
+    wr32(m, 0x314, 0x80000007u);                                // 7 retries, go on after an ignored command
+    wr32(m, 0x004, 1);                                          // component on
+    wr32(m, 0x004, 2);                                          // pulse interrupts
     wr32(m, 0x208, 0xffffffffu);
-    wr32(m, 0x204, 0x1fdfd);
-    wr32(m, 0x210, 0x1fdfd);
+    wr32(m, 0x210, 0x1ffff);                                    // CPU interrupts on
     wr32(m, 0x004, 3);
     const uint64_t enabled = nowMs();
     IODelay(1000);
     native_mic_extra[5] = rd32(m, 0x14);
     for (unsigned i = 0; i < 200 && !(rd32(m, 0x14) & 1); ++i) IODelay(500);
     native_mic_stats[4] = (int32_t)rd32(m, 0x14);
-    wr32(m, 0x314, rd32(m, 0x314) | 0x80000000u);
     uint32_t slaves = 0;
     for (unsigned i = 0; i < 200 && !((slaves = rd32(m, 0x1090)) & 0x3fffcu); ++i) {
         IOSleep(5);
