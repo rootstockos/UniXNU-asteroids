@@ -662,6 +662,15 @@ unsigned bootArg(const char *name, unsigned fallback) {
     return value;
 }
 NativeAdrenoRing gRing;
+// T48: the ring's newest submitted fence and the completed one from its fence page (+4, mapped uncached), for the display's zero-copy
+// probe (GopFramebuffer NativeLegacyDisplay.cpp). T42's flip wait asked NativeAdreno's service for the fence page, which this board
+// never starts, so it always found the GPU done.
+extern "C" bool native_gpu_fences(uint32_t *submitted, uint32_t *completed) {
+    if (!gGpuCpu[2] || !submitted || !completed) return false;
+    *submitted = gRing.submissions();
+    *completed = reinterpret_cast<const volatile uint32_t *>(gGpuCpu[2])[1];
+    return true;
+}
 NativeAdrenoCpInit gCpInit;
 void cpState(const char *when) {
     uint32_t v[7] = {};

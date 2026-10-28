@@ -111,6 +111,9 @@ extern volatile uint32_t native_ufs_dpu_smmu[24] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_surfaces[14] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_direct[13] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_frames[9] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_probe[12] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_probe_ring[24][10] __attribute__((weak_import));
+extern volatile uint32_t native_legacy_probe_next __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_state __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_check[8] __attribute__((weak_import));
 extern volatile uint32_t native_ufs_dpu_dump[20] __attribute__((weak_import));
@@ -892,6 +895,26 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     snprintf(row, sizeof row, "[swap surfaces] %u seen, %u swaps | %uK %u segs max %uK | %uK %u segs max %uK | %uK %u segs max %uK | %uK %u segs max %uK",
              v[0], v[1], v[2] >> 10, v[3], v[4], v[5] >> 10, v[6], v[7], v[8] >> 10, v[9], v[10], v[11] >> 10, v[12], v[13]);
     at = put(out, at, cap, row, sizeof row);
+  }
+  // T48: the zero-copy probe (sheng-dpu-probe=1, NativeLegacyDisplay.cpp native_legacy_probe): what the display fetched at the flip,
+  // the latch and when the surface left the screen, as 16 4-bit luminance points (hex digit i = grid point i, row-major from the top
+  // left), with the GPU's submitted/completed fences. Then the kept flips, oldest first.
+  if (&native_legacy_probe && (native_legacy_probe[0] || native_legacy_probe[8])) {
+    char row[240];
+    const volatile uint32_t *p = native_legacy_probe;
+    snprintf(row, sizeof row, "[dpu probe] flips %u | changed flip->latch %u latch->leave %u on refresh %u | gpu busy at flip %u submitted before latch %u"
+             " | reflipped unchanged %u | map fail %u | delayed %u gpu waits %u gave up %u max %uus",
+             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
+    at = put(out, at, cap, row, sizeof row);
+    if (&native_legacy_probe_ring && &native_legacy_probe_next && native_legacy_probe_next) {
+      const uint32_t total = native_legacy_probe_next, rows = total < 24 ? total : 24;
+      for (uint32_t i = 0; i < rows; ++i) {
+        const volatile uint32_t *w = native_legacy_probe_ring[(total - rows + i) % 24];
+        snprintf(row, sizeof row, "[dpu probe %2u] slot %u flags %x ticks %u | fence sub %u done %u sub@latch %u | flip %08x%08x latch %08x%08x leave %08x%08x",
+                 total - rows + i, w[0] & 0xff, (w[0] >> 8) & 0xff, w[0] >> 16, w[1], w[2], w[3], w[5], w[4], w[7], w[6], w[9], w[8]);
+        at = put(out, at, cap, row, sizeof row);
+      }
+    }
   }
   // Frames as they reach the screen, by copy or by flip, and the time between them (NativeLegacyDisplay.cpp native_legacy_frames).
   if (&native_legacy_frames && (native_legacy_frames[0] || native_legacy_frames[1])) {
