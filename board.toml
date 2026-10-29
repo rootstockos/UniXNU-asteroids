@@ -290,11 +290,13 @@ packed_data_ramdisk = true             # the Data seed as a packed ramdisk for N
 persistent_data = true                 # with sheng-data-persist=2, Data is not ephemeral
 # The XNU VM is DarwinBoot's owned_memory_size window (boot_args memSize), not dram_size. T19: 4.75 GiB, uke's and sheng's value on
 # the same 12 GB class; 384 MiB left iPadOS short (corpse crashes) and Turnip's heap at 96 MiB, which refused every texture in T18b.
-# T64: 7.75 GiB. The uefi-asteroids memory map declares the high bank 0x8C0000000-0xAFFE00000 (9 GiB less 2 MiB) as one conventional
+# T64: 6 GiB. The uefi-asteroids memory map declares the high bank 0x8C0000000-0xAFFE00000 (9 GiB less 2 MiB) as one conventional
 # run with no GPU pool in it, and the GPU's BOs come from this window (sheng's Adreno740 882f4bf): T62b-light ran out of the 1 GiB
-# pool with every app on the GPU while XNU had 849 pages free. The 1.25 GiB left over in the run is for UEFI's own allocations
-# (DarwinBoot takes the window from the start of the run); DarwinBoot accepts at most 8 GiB.
-owned_memory_size = "0x1F0000000"
+# pool with every app on the GPU while XNU had 849 pages free. 7.75 GiB stopped at the kernel's entry (blue bar, no magenta): XNU
+# maps the whole window twice before the MMU is on, and UniXNU's native-4k-bootstrap-capacity patch holds 16 table pages, enough
+# for 6 GiB (two roots and seven 1 GiB pages per mapping). DarwinBoot takes the window from the start of the run and accepts at
+# most 8 GiB.
+owned_memory_size = "0x180000000"
 
 # The device firmware: our Mu-Silicium port (VolcanoPkg + asteroidsPkg) with UniXNU and DarwinBoot added.
 # The 3a's ABL takes the ramdisk from init_boot and ignores the boot image's own: the initrd it passed was the
