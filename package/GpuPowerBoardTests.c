@@ -600,9 +600,6 @@ int main(void) {
         CHECK(gpb_bar_plan(0xe1000000ULL, 1080, 100, 4320, 32, &b) == 3 && gpb_bar_plan(0xe1000000ULL, 1080, 2392, 4316, 32, &b) == 4);
         CHECK(gpb_bar_plan(0xe1000000ULL, 1080, 2392, 200000, 32, &b) == 5 && gpb_bar_plan(0xe1000000ULL, 8000, 2392, 32000, 32, &b) == 6);
     }
-    // Mode 17's pool: page aligned, inside the GPU's 36 output bits, above XNU's window and below 4 GiB of DDR above it.
-    CHECK(!(GPB_GPU_POOL_BASE & 0xfff) && !(GPB_GPU_POOL_BYTES & 0xfff) && GPB_GPU_POOL_BASE >= 0x8bf800000ULL &&
-          GPB_GPU_POOL_BASE + GPB_GPU_POOL_BYTES <= 0xafffff000ULL && GPB_GPU_POOL_BASE + GPB_GPU_POOL_BYTES <= (1ULL << 36));
     CHECK(GPB_CLIENT_VA_START >= GPB_GMEM_RANGE_MIN + GPB_A810_GMEM_BYTES && GPB_CLIENT_VA_START >= GPB_FB_IOVA + GPB_FB_MAX &&
           GPB_CLIENT_VA_START + GPB_CLIENT_VA_BYTES <= 0x80000000ULL);
     // Modes 0 and 20+ run nothing; an unmapped GCC window reads nothing; a failed first read stops the sequence.
@@ -621,6 +618,6 @@ int main(void) {
            "mode 3 the downstream CX GDSC sequence (phone 0x0022f801 -> 0x00228801 -> 0x00228800; 0x0022f001 adds RETAIN_FF) and the two SMMU "
            "clocks, refusal under HW control, poll timeout, gating, window bounds, the pool round trip, the mode 5 gate (7 refusals), "
            "the mode 6 clock snapshot (reads only), the mode 7 clock bring-up (29 writes in Linux order, lock and update timeouts, "
-           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), the mode 12 survey (reads only), mode 13's hw_init writes (Linux order, cached aperture, no CP start), mode 15's SCM encodings and mbn split (headers + hash as metadata, the relocatable load placed and zero-filled, 9 refusals), mode 16's bar plan and IB (6 refusals), mode 17's pool and VA window bounds, modes 0 and 20+ refused (9-10 and 14-19 are the probe's)\n");
+           "a running PLL left alone, an FSM PLL and 4 preconditions refused), the mode 8 GMU state read (reads only, 5 gate refusals), the mode 11 GX request (4 GMU writes, vote, OOB, RBBM only with GX on; 5 failure cases), the mode 12 survey (reads only), mode 13's hw_init writes (Linux order, cached aperture, no CP start), mode 15's SCM encodings and mbn split (headers + hash as metadata, the relocatable load placed and zero-filled, 9 refusals), mode 16's bar plan and IB (6 refusals), mode 17's VA window bounds, modes 0 and 20+ refused (9-10 and 14-19 are the probe's)\n");
     return 0;
 }

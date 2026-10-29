@@ -139,9 +139,9 @@ size_mib = 80                         # sheng's 192 held the verified bundles an
 loader = "firmware"                   # kept: DarwinBoot is already in the asteroids firmware volume
 title = "asteroids: iPadOS from UFS"
 timeout = 3                           # kept at the default; the menu already works on the phone
-dram_size = "0x1FFE00000"             # T19: /chosen/dram-size from make-asteroids-adt.py's DRAM_BASE 0x8C0000000, the high bank
-                                      # up to the GPU pool (0x8C0000000-0xABFE00000), where the XNU window now lives (uke's layout;
-                                      # sheng keeps 0x80000000 + 2 GiB here with a high window, which also boots)
+dram_size = "0x23FE00000"             # T19: /chosen/dram-size from make-asteroids-adt.py's DRAM_BASE 0x8C0000000, the high bank,
+                                      # where the XNU window lives (uke's layout; sheng keeps 0x80000000 + 2 GiB here with a high
+                                      # window, which also boots). T64: the whole bank (0x8C0000000-0xAFFE00000), no GPU pool at its top
 panic_screen = true                   # kept: patches a copy of the kernel with the entry bars (blue at entry, magenta before
                                       # the MMU) and panic() drawn on the framebuffer; the only way to read a panic without UART.
                                       # Board-independent (symbols from the kernel, 19.2 MHz timebase), needs the two scripts above
@@ -289,9 +289,12 @@ root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # the OS volum
 packed_data_ramdisk = true             # the Data seed as a packed ramdisk for NativeRamBlock, as on uke
 persistent_data = true                 # with sheng-data-persist=2, Data is not ephemeral
 # The XNU VM is DarwinBoot's owned_memory_size window (boot_args memSize), not dram_size. T19: 4.75 GiB, uke's and sheng's value on
-# the same 12 GB class. The uefi-asteroids memory map declares the high bank 0x8C0000000-0xABFE00000 as conventional memory, so the
-# window fits there; 384 MiB left iPadOS short (corpse crashes) and Turnip's heap at 96 MiB, which refused every texture in T18b.
-owned_memory_size = "0x130000000"
+# the same 12 GB class; 384 MiB left iPadOS short (corpse crashes) and Turnip's heap at 96 MiB, which refused every texture in T18b.
+# T64: 7.75 GiB. The uefi-asteroids memory map declares the high bank 0x8C0000000-0xAFFE00000 (9 GiB less 2 MiB) as one conventional
+# run with no GPU pool in it, and the GPU's BOs come from this window (sheng's Adreno740 882f4bf): T62b-light ran out of the 1 GiB
+# pool with every app on the GPU while XNU had 849 pages free. The 1.25 GiB left over in the run is for UEFI's own allocations
+# (DarwinBoot takes the window from the start of the run); DarwinBoot accepts at most 8 GiB.
+owned_memory_size = "0x1F0000000"
 
 # The device firmware: our Mu-Silicium port (VolcanoPkg + asteroidsPkg) with UniXNU and DarwinBoot added.
 # The 3a's ABL takes the ramdisk from init_boot and ignores the boot image's own: the initrd it passed was the
@@ -327,11 +330,8 @@ gmem_bytes = "0x90000"                 # 512 KiB + 64 KiB
 gmu_chip_id = "0x8030000"
 gmu_pool_base = "0xE6440000"            # GMU_Pool in the UEFI memory map (uefi-asteroids 8a92c2c): the first 32 MiB of DXE_Heap1
 gmu_pool_bytes = "0x02000000"
-# The BO pool (GPU mode 17): RAM above 4 GiB that DarwinBoot never gives XNU (its window is owned_memory_size below 4 GiB),
-# so the loader keeps it, as pandora's loader carves its pool. Android's /proc/iomem has 0x8bf800000-0xaffffefff as System
-# RAM and the live DT reserves nothing static above 4 GiB. Must match GpuPowerBoard.h GPB_GPU_POOL_*.
-gpu_pool_base = "0xABFE00000"             # T19: the top of the high bank, reserved in the UEFI map (GPU_Pool) so the XNU window never covers it
-gpu_pool_bytes = "0x40000000"            # 1 GiB since T18b (pandora's size); 128 MiB ran out in T18
+# No BO pool since T64: user BOs are XNU's pageable memory, wired by the driver (sheng's Adreno740 882f4bf), and the RAM the
+# loader kept for the pool (0xABFE00000, 1 GiB since T18b) is part of XNU's window.
 preempt_record_bytes = "0x473800"      # 4558 KiB
 ubwc_version = 4                       # mainline milos_data, and qcom,ubwc-mode = <4> in the DT
 highest_bank_bit = 14                  # LPDDR4X (the DT display node: DDR type 7 -> 14, type 8 -> 15)

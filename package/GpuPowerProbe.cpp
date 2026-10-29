@@ -1056,8 +1056,7 @@ void barStart() {
 }
 // Mode 17 (T15): what the user interface stands on, as uke's probe hands its live GPU to NativeAdreno (publishAndWrapperTest)
 // and pandora's levels 13-14 built it. One boot; each step runs only when the one before it passed:
-//   1 the BO pool: the loader-kept RAM at GPB_GPU_POOL_BASE written and checked with gpb_pool_test through a temporary
-//     write-combined map, then adopted (NativeAdrenoMemory::adoptPool); user BOs come from it from now on
+//   1 (T15-T63: the BO pool, adopted from loader-kept RAM; since T64 user BOs are XNU's pageable memory and there is none)
 //   2 fences and time: NativeAdrenoSubmit on the live VM and ring (CP timestamp fences, at most eight jobs in flight) and
 //     NativeAdrenoTimer on CP_ALWAYS_ON_COUNTER (gen8 table)
 //   3 native_adreno_publish: the NativeAdrenoGpu service with the A810's device info
@@ -1072,7 +1071,7 @@ IOReturn native_adreno_publish(NativeAdrenoVm *, NativeAdrenoSubmit *, NativeAdr
                                const NativeAdrenoTimer *, const NativeAdrenoAbiDeviceInfo *, uint32_t, uint32_t);
 uint32_t native_adreno_publish_stats(uint32_t *);
 IOService *native_adreno_published_service();
-extern volatile uint32_t native_adreno_pool_stats[8];
+extern volatile uint32_t native_adreno_bo_memory[8];
 // step reached, pool test bad words, adopt, submit attach, timer attach, publish, round 1 and 2 matched words (of 4),
 // steps ok, steps, first error, its step, burst matched (of 32), BOs from the pool, opened, closed
 uint32_t native_gpu_uc[16];
@@ -1383,32 +1382,6 @@ void ucStart() {
     if (!vm || !bits) {IOLog("ASTEROIDS GPU: uc skipped: no GPU VM\n"); return;}
     u[0] = 1;
     native_gpu_power_stage = 0x101;
-    // The pool is mapped whole (adoptPool keeps one write-combined kernel view). pandora's 1 GiB failed in ml_io_map's small IO submap
-    // (pgpu2: kmem_alloc of 1 GiB failed, a panic); this map is IOKit's into the kernel map, which returns no map instead. So the full
-    // size first, then halves down to the 128 MiB T15-T18 used, and the log says which size was had.
-    uint64_t poolBytes = 0;
-    for (uint64_t bytes = GPB_GPU_POOL_BYTES; bytes >= 0x8000000ULL && !poolBytes; bytes >>= 1) {
-        IOLog("ASTEROIDS GPU: pool: %llx+%llx (loader-kept RAM outside XNU's window), pattern test, then adopt\n", GPB_GPU_POOL_BASE, bytes);
-        IODeviceMemory *memory = IODeviceMemory::withRange(GPB_GPU_POOL_BASE, bytes);
-        OSSharedPtr<IOMemoryMap> pool;
-        if (memory) {
-            pool = OSSharedPtr<IOMemoryMap>(memory->map(kIOMapAnywhere | kIOMapWriteCombineCache), OSNoRetain);
-            memory->release();
-        }
-        if (!pool) {IOLog("ASTEROIDS GPU: pool map of %llu MiB failed\n", bytes >> 20); continue;}
-        gpb_pool_result p{};
-        gpb_pool_test(reinterpret_cast<volatile uint64_t *>(pool->getVirtualAddress()), bytes, &p);
-        ringBarrier(nullptr);
-        u[1] = uint32_t(p.pattern_bad + p.zero_bad);
-        IOLog("ASTEROIDS GPU: pool words=%llu pattern_bad=%llu zero_bad=%llu first_bad=%llx\n", p.words, p.pattern_bad, p.zero_bad,
-              p.first_bad);
-        if (u[1] || p.words != bytes / 8) {native_gpu_power_stage = 0x10f; return;}
-        poolBytes = bytes;
-    }
-    if (!poolBytes) {IOLog("ASTEROIDS GPU: pool map failed\n"); native_gpu_power_stage = 0x10f; return;}
-    u[2] = uint32_t(NativeAdrenoMemory::adoptPool(GPB_GPU_POOL_BASE, size_t(poolBytes), bits));
-    IOLog("ASTEROIDS GPU: pool adopt %x, %u MiB\n", u[2], unsigned(NativeAdrenoMemory::poolBytes() >> 20));
-    if (u[2]) {native_gpu_power_stage = 0x10f; return;}
     u[0] = 2;
     native_gpu_power_stage = 0x102;
     const NativeAdrenoRingClock clock{nullptr, ringNow, ringIdle};
@@ -1445,10 +1418,10 @@ void ucStart() {
     const int burst = ucBurst(svc, step);
     u[12] = uint32_t(burst);
     u[8] = uint32_t(step.ok); u[9] = uint32_t(step.n); u[10] = uint32_t(step.err); u[11] = uint32_t(step.at);
-    u[13] = native_adreno_pool_stats[1];
+    u[13] = native_adreno_bo_memory[0];
     u[14] = native_adreno_publish_stats(&u[15]);
     const bool ok = v1 == 4 && v2 == 4 && burst == 32 && step.ok == step.n;
-    IOLog("ASTEROIDS GPU: uc steps %d/%d err %x@%d rounds %d/%d of 4 burst %d of 32, pool BOs %u, opened %u closed %u, jobs done %u %s\n",
+    IOLog("ASTEROIDS GPU: uc steps %d/%d err %x@%d rounds %d/%d of 4 burst %d of 32, system BOs %u, opened %u closed %u, jobs done %u %s\n",
           step.ok, step.n, unsigned(step.err), step.at, v1, v2, burst, u[13], u[14], u[15], unsigned(gSubmit.stats().completed),
           ok ? "ok" : "miss");
     cpState("uc");

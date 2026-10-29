@@ -7,11 +7,11 @@
     model = "Nothing Phone (3a)";
     compatible = "nothing,asteroids", "qcom,volcano";
 
-    // The DRAM the XNU window lives in: the high bank from 0x8C0000000 up to the GPU pool at 0xABFE00000 (uke's layout, T19).
+    // The DRAM the XNU window lives in: the high bank from 0x8C0000000 (uke's layout, T19), whole since T64 (no GPU pool at its top).
     // DarwinBoot places owned_memory_size (board.toml [payload.adt]) there; board.toml [payload] dram_size must equal the size.
     memory@8c0000000 {
         device_type = "memory";
-        reg = <0x8 0xc0000000 0x1 0xffe00000>;
+        reg = <0x8 0xc0000000 0x2 0x3fe00000>;
     };
 };
 

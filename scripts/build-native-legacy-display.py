@@ -284,9 +284,6 @@ board_h=(ROOT/'kits/asteroids/GpuPowerBoard.h').read_text()
 require(int(re.search(r'#define GPB_GMU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_base and
         int(re.search(r'#define GPB_GMU_POOL_BYTES (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==pool_bytes,
         'board.toml [gpu] gmu_pool_* and GpuPowerBoard.h GPB_GMU_POOL_* differ')
-require(int(re.search(r'#define GPB_GPU_POOL_BASE (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==int(gpu['gpu_pool_base'],0) and
-        int(re.search(r'#define GPB_GPU_POOL_BYTES (0x[0-9A-Fa-f]+)ULL',board_h).group(1),16)==int(gpu['gpu_pool_bytes'],0),
-        'board.toml [gpu] gpu_pool_* and GpuPowerBoard.h GPB_GPU_POOL_* differ')
 # The probe opens NativeAdrenoGpu with the plugin's open type; any other type is refused (T15: e00002c7).
 require(int(re.search(r'#define GPB_UC_OPEN_TYPE (0x[0-9A-Fa-f]+)u',board_h).group(1),16)==
         int(re.search(r'NativeAdrenoPluginOpenType=(0x[0-9A-Fa-f]+)',(ROOT/'drivers/Adreno740/NativeAdrenoPublish.cpp').read_text()).group(1),16),

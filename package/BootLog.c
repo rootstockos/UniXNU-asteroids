@@ -157,7 +157,9 @@ extern volatile uint32_t native_adreno_method_stats[20][4] __attribute__((weak_i
 extern volatile uint64_t native_adreno_vm_phase_us[2][8] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_vm_kind_us[5][3] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_map_fail[7][2] __attribute__((weak_import));
-extern volatile uint32_t native_adreno_pool_stats[8] __attribute__((weak_import));
+// T64: user BOs from system memory (sheng's Adreno740 882f4bf): [0] made, [1] their spans, [2] refused, [3] last refusal, [4] MiB now,
+// [5] peak MiB, [6] kernel-owned allocations, [7] import spans.
+extern volatile uint32_t native_adreno_bo_memory[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wc_audit[6] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_ibs[4] __attribute__((weak_import));
 extern volatile uint32_t native_touch_edge_stats[4] __attribute__((weak_import));
@@ -176,7 +178,6 @@ extern volatile uint32_t native_adreno_cp_aperture[4] __attribute__((weak_import
 extern volatile uint32_t native_adreno_table_pages[4] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_recovery[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_recovery_fault[5] __attribute__((weak_import));
-extern volatile uint32_t native_adreno_pool_chunks[4] __attribute__((weak_import));
 extern unsigned NativeAdrenoGpuContextInputBits(void) __attribute__((weak_import));
 extern volatile uint32_t native_adreno_mount_fail[4] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_window_overflow[4][3] __attribute__((weak_import));
@@ -199,8 +200,6 @@ extern volatile uint32_t native_cpufreq_gov[9] __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_boosts __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_frame[2] __attribute__((weak_import));
 extern volatile uint32_t native_cpufreq_throttle[9] __attribute__((weak_import));
-extern volatile uint32_t native_adreno_pool_status __attribute__((weak_import));
-extern volatile uint32_t native_adreno_pool_wc __attribute__((weak_import));
 extern volatile uint64_t native_adreno_fence_phys __attribute__((weak_import));
 extern int (*native_adreno_dram_read32)(uint64_t, uint32_t *) __attribute__((weak_import));
 extern int (*native_adreno_cached_read32)(uint64_t, uint32_t *) __attribute__((weak_import));
@@ -613,11 +612,11 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     }
     if (native_adreno_vm_kind_us[0][0] || native_adreno_vm_kind_us[1][0] || native_adreno_vm_kind_us[2][0]) at = put(out, at, cap, row, sizeof row);
   }
-  if (&native_adreno_pool_stats) {
+  if (&native_adreno_bo_memory) {
     char row[200];
-    snprintf(row, sizeof row, "[bo pool] %u MiB (last reserve status %x, wc %x): %u BOs from it, %u fell back, in use %u MiB (peak %u) | scattered: %u BOs %u spans | import spans %u",
-             native_adreno_pool_stats[0], native_adreno_pool_status, &native_adreno_pool_wc ? native_adreno_pool_wc : 0, native_adreno_pool_stats[1], native_adreno_pool_stats[2], native_adreno_pool_stats[3],
-             native_adreno_pool_stats[4], native_adreno_pool_stats[5], native_adreno_pool_stats[6], native_adreno_pool_stats[7]);
+    snprintf(row, sizeof row, "[bo memory] system BOs %u (%u spans), in use %u MiB (peak %u), refused %u (last %x) | kernel-owned %u | import spans %u",
+             native_adreno_bo_memory[0], native_adreno_bo_memory[1], native_adreno_bo_memory[4], native_adreno_bo_memory[5],
+             native_adreno_bo_memory[2], native_adreno_bo_memory[3], native_adreno_bo_memory[6], native_adreno_bo_memory[7]);
     at = put(out, at, cap, row, sizeof row);
   }
   // GPU clients: name opens/refused/closes, live slot (- none), highest GPU address its mappings reached (MiB), last refusal.
@@ -656,16 +655,14 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
   // demand (live, taken, freed, refused by the system), the GPU address size (ias) and the pool's chunks (live, made, freed, out of room).
   if (&native_adreno_table_switches) {
     char row[240];
-    snprintf(row, sizeof row, "[gpu tables] mode %u aperture %x/%x check %x | cp %u cpu %u made %u freed %u live %u peak %u fail %x step %u | pages %u taken %u freed %u refused %u ias %u | chunks %u/%u/%u/%u",
+    snprintf(row, sizeof row, "[gpu tables] mode %u aperture %x/%x check %x | cp %u cpu %u made %u freed %u live %u peak %u fail %x step %u | pages %u taken %u freed %u refused %u ias %u",
              &native_adreno_cp_aperture ? native_adreno_cp_aperture[3] : 0, &native_adreno_cp_aperture ? native_adreno_cp_aperture[0] : 0,
              &native_adreno_cp_aperture ? native_adreno_cp_aperture[1] : 0, &native_adreno_cp_aperture ? native_adreno_cp_aperture[2] : 0,
              native_adreno_table_switches[0], native_adreno_table_switches[1], native_adreno_table_switches[2],
              native_adreno_table_switches[3], native_adreno_table_switches[4], native_adreno_table_switches[5],
              native_adreno_table_switches[6], native_adreno_table_switches[7], &native_adreno_table_pages ? native_adreno_table_pages[0] : 0,
              &native_adreno_table_pages ? native_adreno_table_pages[1] : 0, &native_adreno_table_pages ? native_adreno_table_pages[2] : 0,
-             &native_adreno_table_pages ? native_adreno_table_pages[3] : 0, &NativeAdrenoGpuContextInputBits ? NativeAdrenoGpuContextInputBits() : 0,
-             &native_adreno_pool_chunks ? native_adreno_pool_chunks[0] : 0, &native_adreno_pool_chunks ? native_adreno_pool_chunks[1] : 0,
-             &native_adreno_pool_chunks ? native_adreno_pool_chunks[2] : 0, &native_adreno_pool_chunks ? native_adreno_pool_chunks[3] : 0);
+             &native_adreno_table_pages ? native_adreno_table_pages[3] : 0, &NativeAdrenoGpuContextInputBits ? NativeAdrenoGpuContextInputBits() : 0);
     at = put(out, at, cap, row, sizeof row);
   }
   // [gpu recovery] (sheng's row, without the board restart: this board registers none): msm hangcheck (NativeAdrenoSubmit::recover):

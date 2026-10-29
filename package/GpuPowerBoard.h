@@ -1024,17 +1024,8 @@ static inline void gpb_bar_fill(const struct gpb_bar *b, uint32_t header, uint64
     }
 }
 
-// Mode 17 (T15): the BO pool. XNU sees only its owned-memory window (board.toml; 4.75 GiB in the high bank since T19), and
-// this RAM is reserved in the UEFI memory map (uefi-asteroids GPU_Pool, the top of the bank), so the window never covers it:
-// the loader keeps it, and the probe adopts it for NativeAdreno's BOs (pandora's patch 0178 gets the same from
-// its loader through the ADT). The range is in the phone's DDR above 4 GiB: Android's /proc/iomem lists
-// 0x8bf800000-0xaffffefff as System RAM, and the live DT's reserved-memory has no static region above 4 GiB (only
-// mem_dump_region, placed by Linux at boot). The GPU's 36 output bits reach it. 1 GiB since T18b, as pandora's pool: T18's
-// 128 MiB ran out at the Metal runtime's 64 MiB blocks, and XNU's window has no such contiguous run. The probe maps it whole
-// and halves the size down to 128 MiB if the map fails (pandora's 1 GiB in one ml_io_map panicked; ours is an IOKit map);
-// board.toml [gpu] gpu_pool_* must match.
-#define GPB_GPU_POOL_BASE 0xABFE00000ULL
-#define GPB_GPU_POOL_BYTES 0x40000000ULL
+// Mode 17 (T15-T63) adopted a BO pool, 1 GiB of loader-kept RAM at 0xABFE00000 outside XNU's window. T64: none; user BOs are XNU's
+// pageable memory, wired by the driver (sheng's Adreno740 882f4bf), and that RAM is part of XNU's window (board.toml owned_memory_size).
 // The client-visible facts for the A810, each from a pinned source: chip id, GMEM 576 KiB from NativeAdrenoProfile's
 // a810 entry (mainline a6xx_catalog.c); GMEM window and trap base from mode 13's writes; UBWC from milos_data (UBWC 4.0,
 // highest bank bit 15, level 2 swizzling only). The VA window is uke's: clear of the kernel buffers, the bar's maps and
