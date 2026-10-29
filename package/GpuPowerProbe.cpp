@@ -1084,6 +1084,12 @@ extern "C" __attribute__((weak)) int boot_log_export_put(uint32_t, uint32_t, uin
 // frees, a diagnostic count only (native_adreno_free_user_mapped); this kernel has no such patch, and the weak import cannot stay
 // undefined in the kernel link (T62's first kernel build). The stand-in finds no mapping. Weak, so a real one wins once linked.
 extern "C" __attribute__((weak)) unsigned int native_pmap_user_mappings(ppnum_t, void **, uint64_t *, char *) {return 0;}
+// T64: the merged driver's method 0x7101 (sheng's aa015f7) reads the userdata import region through sheng's ShengUfs
+// (native_ufs_import_blocks/_read), which this board's UFS fork does not export; the weak imports cannot stay undefined in the
+// kernel link (T64's first kernel build). The stand-ins report no region, so the method refuses and the plugin's cache import
+// stays off. Weak, so real ones win once linked.
+extern "C" __attribute__((weak)) uint64_t native_ufs_import_blocks(void) {return 0;}
+extern "C" __attribute__((weak)) int native_ufs_import_read(uint64_t, uint32_t, void *) {return 0;}
 NativeAdrenoSubmit gSubmit;
 NativeAdrenoTimer gTimer;
 // T62 (sheng's iPadOS 27 driver, 2df9f1c): every process has its own GPU address space, from GpuClientVaStart (msm ADRENO_VM_START,
