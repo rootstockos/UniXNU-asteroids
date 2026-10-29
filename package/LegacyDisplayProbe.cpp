@@ -731,12 +731,12 @@ extern "C" void asteroids_panel_probe(void);
 extern "C" void sheng_adsp_probe(void);
 extern "C" void sheng_battery_probe(void);
 extern "C" void sheng_audio_probe(void);
-extern "C" void asteroids_touch_probe(void);
+extern "C" void asteroids_focal_touch_start(void);
 void native_legacy_display_late_probe(void) {
     native_keystore_probe();
     sheng_cpufreq_probe();     // asteroids T35: CPU clocks (package/CpuFreqProbe.cpp); nothing without sheng-cpufreq
     sheng_gpu_power_probe();   // asteroids T30: GPU power (package/GpuPowerProbe.cpp); nothing without sheng-gpu-power
-    asteroids_touch_probe();   // asteroids T30: touch stage 1 (package/AsteroidsTouchProbe.cpp); nothing without asteroids-touch
+    asteroids_focal_touch_start();   // asteroids T30: the touch (package/AsteroidsFocalTouch.cpp), stage 6 unless asteroids-touch says otherwise
     sheng_buttons_probe();     // asteroids T35: power and volume buttons (package/ButtonProbe.cpp); nothing without sheng-buttons=1
     asteroids_panel_probe();   // asteroids T37: panel brightness and sleep (package/PanelProbe.cpp); nothing without asteroids-panel
     sheng_adsp_probe();        // asteroids T38: the audio DSP (package/AdspProbe.cpp); nothing without sheng-adsp

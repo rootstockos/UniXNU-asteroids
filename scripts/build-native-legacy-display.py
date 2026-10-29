@@ -342,14 +342,17 @@ gmu_objs.append(accel_late)
 touch_state_source=ROOT/'kits/asteroids/TouchState.cpp'
 touch_state_obj=OUT/'TouchState.o'
 run([str(touch_state_source) if str(arg)==str(source) else str(touch_state_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
-# asteroids T30: the touch probe (stages 1-6, asteroids-touch=<n>; docs/asteroids-touch.md in iosonandng), with the core's QcomGeniSpi
-# engine library and UniXNU-sheng's QcomRpmh/SmmuBypass (copied into the package) built below with the kernel C template.
-touch_probe_source=ROOT/'kits/asteroids/AsteroidsTouchProbe.cpp'
-touch_probe_obj=OUT/'AsteroidsTouchProbe.o'
+# asteroids T30: the touch (stages 1-6, asteroids-touch=<n>; docs/asteroids-touch.md in iosonandng), with the core's QcomGeniSpi
+# engine library and UniXNU-sheng's QcomRpmh/SmmuBypass (copied into the package) built below with the kernel C template. T64: the
+# FocalTech frames, CRC and report decoding are the core's FocalTechSpiTouch (FtsSpi.c); AsteroidsFocalTouch.cpp is the board's part.
+touch_probe_source=ROOT/'kits/asteroids/AsteroidsFocalTouch.cpp'
+touch_probe_obj=OUT/'AsteroidsFocalTouch.o'
 geni=ROOT/'drivers/QcomGeniSpi'
 require((geni/'GeniSpi.c').is_file(),'drivers/QcomGeniSpi (core submodule) is missing')
+fts=ROOT/'drivers/FocalTechSpiTouch'
+require((fts/'FtsSpi.c').is_file(),'drivers/FocalTechSpiTouch (core) is missing: board.toml [components] must include FocalTechSpiTouch')
 run([str(touch_probe_source) if str(arg)==str(source) else str(touch_probe_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]+
-    ['-I',str(geni),'-I',str(ROOT/'kits/asteroids')],cwd=r['directory'])
+    ['-I',str(geni),'-I',str(fts),'-I',str(ROOT/'kits/asteroids')],cwd=r['directory'])
 keystore_source=ROOT/'kits/asteroids/KeyStoreProbe.cpp'
 keystore_obj=OUT/'KeyStoreProbe.o'
 keystore_cmd=[str(keystore_source) if str(arg)==str(source) else str(keystore_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]
@@ -382,7 +385,7 @@ for src in vote_sources:
     gmu_objs.append(OUT/(src.stem+'.kit.o'))
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
         vote_flags,cwd=pr['directory'])
-touch_kit_sources=[geni/'GeniSpi.c',ROOT/'kits/asteroids/QcomRpmh.c']
+touch_kit_sources=[geni/'GeniSpi.c',fts/'FtsSpi.c',ROOT/'kits/asteroids/QcomRpmh.c']
 # asteroids T38: sheng's audio DSP bring-up (sheng-adsp) and its protocol cores, without sheng's audio and Wi-Fi modules; QcomRpmh.c is
 # shared with touch. The battery power source (sheng-battery, ShengBattery.cpp) stages its class as the brightness service does.
 adsp_kit_sources=[ROOT/'kits/asteroids'/(n+'.c') for n in ('QcomMdt','FatVolume','QcomQrtr','ShengQrtr','QcomSmem','QcomSmp2p','QcomGlink','QcomQmp','ShengBattmgr')]
@@ -391,7 +394,7 @@ touch_kit_objs=[]
 for src in touch_kit_sources+adsp_kit_sources+audio_kit_sources:
     touch_kit_objs.append(OUT/(src.stem+'.touch.o'))
     run([str(src) if arg==str(process_source) else str(touch_kit_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
-        ['-I',str(geni),'-I',str(ROOT/'kits/asteroids'),'-I',str(tfa_gen)],cwd=pr['directory'])
+        ['-I',str(geni),'-I',str(fts),'-I',str(ROOT/'kits/asteroids'),'-I',str(tfa_gen)],cwd=pr['directory'])
 stub_source=ROOT/'kits/asteroids/LegacyDisplayStubs.c'
 stub_obj=OUT/'LegacyDisplayStubs.o'
 run([str(stub_source) if arg==str(process_source) else str(stub_obj) if arg==str(process_obj) else arg for arg in process_cmd],cwd=pr['directory'])
@@ -415,7 +418,7 @@ sources=[ROOT/'drivers/GopFramebuffer/NativeLegacyDisplay.cpp',
          *[ROOT/'kits/asteroids'/h for h in ('ShengGpr.h','ShengAudioReach.h','GeniI2c.h','AsteroidsTfa9873.h','ShengAudioAbi.h')],tfa_gen/'AsteroidsTfaConfig.h',ROOT/'kits/asteroids/BootResetCore.h',keystore_source,
          ROOT/'drivers/ShengHidInput/NativeHidInput.cpp',ROOT/'scripts/build-sheng-hid-input.py',
          ROOT/'drivers/AppleKeyStoreState/NativeKeyStoreEvents.cpp',stub_source,touch_state_source,touch_probe_source,*touch_kit_sources,ROOT/'kits/asteroids/QcomRpmh.h',
-         ROOT/'kits/asteroids/SmmuBypass.h',geni/'GeniSpi.h',gpupower_source,
+         ROOT/'kits/asteroids/SmmuBypass.h',geni/'GeniSpi.h',fts/'FtsSpi.h',gpupower_source,
          ROOT/'kits/asteroids/GpuPowerBoard.h',*gmu_sources,*smmu_sources,
          *[adreno/(src.stem+'.h') for src in gmu_sources if (adreno/(src.stem+'.h')).exists()],*vote_sources,
          gmu_gen/'ShengGmuVotesSource.h',gmu_gen/'ShengGmuCommandDbSource.h',gmu_gen/'ShengGmuSource.h',

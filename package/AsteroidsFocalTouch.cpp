@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// The 3a's touch bring-up (FocalTech FT3683G on QUPv3 wrapper 0 SE0, SPI), staged as docs/asteroids-touch.md in iosonandng.
+// The 3a's touch (FocalTech FT3683G on QUPv3 wrapper 0 SE0, SPI): this board's power, pins, bus and report thread around the
+// FocalTech core (UniXNU drivers/FocalTechSpiTouch, FtsSpi.c: the frame, CRC-16 and report decoding). Bring-up staged as
+// docs/asteroids-touch.md in iosonandng; until T64 this file was AsteroidsTouchProbe.cpp with the protocol inline.
 // `asteroids-touch=<v>`: the stage is v & 15, the orientation of stage 6 is (v >> 4) & 7 (1 swap axes, 2 mirror x, 4 mirror y,
 // applied in that order), so "asteroids-touch=0x16" is stage 6 with the axes swapped. Bit 7 (0x80) skips stage 2's RPMh rail
 // votes. Without the argument the probe runs stage 6; asteroids-touch=0 turns it off. Each boot runs every stage up to the one
@@ -17,9 +19,11 @@
 //      first, then 3, 1, 2.
 //   5  reports: 84 bytes from register 0x01 every 10 ms, decoded (protocol v2 and the legacy layout), nothing published.
 //   6  publishes the contacts to TouchState (scaled to 30480 x 20320); with sheng-touch-hid=1 NativeHidInput reports them.
+//      T64: each report read also samples the interrupt line (GPIO 19), counting reads with it low and how that lines up with
+//      contacts, to decide whether the reads can wait on it.
 // Written from the hardware facts in that note (live DT, the vendor kernel's clock and pinctrl tables and the FocalTech frame
 // layout as facts, ios-asteroids' measurements); no code from the GPL sources. Structure after UniXNU-sheng's TouchProbe.cpp,
-// SmmuBypass.h and QcomRpmh (BSD-2-Clause-Patent); the SPI engine is the core's QcomGeniSpi.
+// SmmuBypass.h and QcomRpmh (BSD-2-Clause-Patent); the SPI engine is the core's QcomGeniSpi, the frames FocalTechSpiTouch's.
 // Results: the diagnostics page (row 42, native_touch_rows[0]) and "ASTEROIDS TOUCH:" lines in the kernel log, which reach the
 // persistent unified log on Data; the summary is logged again at 60 s and 180 s, after the UI has taken the screen.
 #include <IOKit/IOService.h>
@@ -31,6 +35,7 @@
 #include <pexpert/pexpert.h>
 #include <string.h>
 extern "C" {
+#include "FtsSpi.h"
 #include "GeniSpi.h"
 #include "QcomRpmh.h"
 #include "SmmuBypass.h"
@@ -70,9 +75,6 @@ constexpr uint16_t kStreamSe = 0x563, kStreamGpi = 0x576, kStreamUfs = 0x60;
 // SPI: 0.96 MHz from DFS level 0 (TCXO 19.2 MHz), the rate ios-asteroids ran; the DT allows 12 MHz.
 constexpr unsigned kSpiHz = 960000;
 constexpr size_t kDmaBytes = 64 * 1024;
-// FocalTech SPI v2 frames: read = reg, 0xA0 (read | CRC), length (big-endian), 3 dummy bytes, then the data and its CRC-16.
-constexpr unsigned kHeader = 7, kReport = 84;
-constexpr uint8_t kRegReport = 0x01, kRegChipHi = 0xA3, kRegChipLo = 0x9F, kRegFirmware = 0xA6, kRegVendor = 0xA8;
 // The panel (display-coords 0 0 1080 2392) and TouchState's range.
 constexpr int kPanelW = 1080, kPanelH = 2392, kStateW = 30480, kStateH = 20320;
 constexpr unsigned kSlots = 12;
@@ -141,15 +143,6 @@ uint64_t levelHz(uint32_t cfg, uint32_t mreg, uint32_t nreg) {
     }
     return rate;
 }
-// CRC-16 over the data bytes: reflected polynomial 0x8408, initial 0xFFFF, no final xor; stored little-endian after the data.
-uint16_t crc16(const uint8_t *p, size_t n) {
-    uint16_t crc = 0xffff;
-    for (size_t i = 0; i < n; ++i) {
-        crc ^= p[i];
-        for (unsigned b = 0; b < 8; ++b) crc = (crc & 1) ? static_cast<uint16_t>((crc >> 1) ^ 0x8408) : static_cast<uint16_t>(crc >> 1);
-    }
-    return crc;
-}
 
 struct Snapshot {
     uint32_t vote, s0, mahb, sahb, core, core2x;
@@ -195,7 +188,11 @@ struct Session {
     uint8_t firstRx[12];
     // Stage 5-6.
     uint8_t *tx, *rx;
-    uint32_t reads, xferErrors, statusErrors, crcErrors, idle, initFrames, active, published;
+    FtsSpiIO io;
+    FtsSpiCounts counts;
+    uint32_t reads, idle, initFrames, active, published;
+    // T64: the interrupt line at each report read: low, low with contacts, high with contacts.
+    uint32_t irqLowReads, irqLowActive, irqHighActive;
     uint8_t last[24];
     unsigned lastType, lastCount, orient;
     int lastX, lastY;
@@ -243,10 +240,10 @@ void rows(const Session &x) {
             done, native_touch_stage_req, s.step, s.error, x.mode, x.idRc, x.chipHi, x.chipLo, x.firmware, x.vendor, x.idStatus,
             x.idCrcOk, x.firstRx[0], x.firstRx[1], x.firstRx[2], x.firstRx[3], x.firstRx[4], x.firstRx[5], x.firstRx[6], x.firstRx[7]);
     else
-        snprintf(r, n, "TCH T%u e%d rd%u x%u st%u crc%u idle%u init%u act%u pub%u t%x n%u %d,%d %02x%02x%02x%02x%02x%02x%02x%02x",
-            done, s.error, x.reads, x.xferErrors, x.statusErrors, x.crcErrors, x.idle, x.initFrames, x.active, x.published,
-            x.lastType, x.lastCount, x.lastX, x.lastY, x.last[0], x.last[1], x.last[2], x.last[3], x.last[4], x.last[5],
-            x.last[6], x.last[7]);
+        snprintf(r, n, "TCH T%u e%d rd%u x%u st%u crc%u idle%u init%u act%u pub%u irq%u/%u/%u t%x n%u %d,%d %02x%02x%02x%02x",
+            done, s.error, x.reads, x.counts.xfer_errors, x.counts.status_errors, x.counts.crc_errors, x.idle, x.initFrames, x.active,
+            x.published, x.irqLowReads, x.irqLowActive, x.irqHighActive, x.lastType, x.lastCount, x.lastX, x.lastY, x.last[0],
+            x.last[1], x.last[2], x.last[3]);
 }
 void mark(Session &x, int step) {x.s.step = step; native_touch_step = static_cast<uint32_t>(step); rows(x);}
 
@@ -284,8 +281,9 @@ void logSummary(const char *when, const Session &x) {
           x.chipHi, x.chipLo, x.firmware, x.vendor, x.idStatus, x.idCrcOk);
     if (native_touch_stage_req < 5) return;
     IOLog("ASTEROIDS TOUCH: %s reports %u xfer errors %u status errors %u crc errors %u idle %u init %u active %u published %u "
-          "last type %x n %u at %d,%d\n", when, x.reads, x.xferErrors, x.statusErrors, x.crcErrors, x.idle, x.initFrames, x.active,
-          x.published, x.lastType, x.lastCount, x.lastX, x.lastY);
+          "last type %x n %u at %d,%d; irq low at %u reads (%u with contacts), high at %u reads with contacts\n", when, x.reads,
+          x.counts.xfer_errors, x.counts.status_errors, x.counts.crc_errors, x.idle, x.initFrames, x.active, x.published, x.lastType,
+          x.lastCount, x.lastX, x.lastY, x.irqLowReads, x.irqLowActive, x.irqHighActive);
 }
 
 // ---- Stage 1 (read-only) ----
@@ -589,34 +587,17 @@ bool openBus(Session &x) {
 }
 
 // ---- Stage 4: the FocalTech frame and the chip id ----
-// Read n bytes of register reg; the data lands in out. Returns 0, a GENI error, -70 status bits set, -71 CRC mismatch.
+// Read n bytes of register reg into out through the FocalTech core (FtsSpi.c): 0, a GENI error, FTS_SPI_STATUS (-70) status bits set
+// on every attempt, FTS_SPI_CRC (-71) CRC mismatch (the data is kept; the first eight are logged).
+int spiTransfer(void *context, const uint8_t *tx, uint8_t *rx, size_t length) {
+    return geni_spi_transfer(&static_cast<Session *>(context)->spi, tx, rx, length, 0);
+}
 int ftsRead(Session &x, uint8_t reg, uint8_t *out, unsigned n, bool keepFirst) {
-    const unsigned len = kHeader + n + 2;
-    memset(x.tx, 0, len);
-    x.tx[0] = reg;
-    x.tx[1] = 0xA0;
-    x.tx[2] = static_cast<uint8_t>(n >> 8);
-    x.tx[3] = static_cast<uint8_t>(n);
-    int rc = 0;
-    for (unsigned attempt = 0; attempt < 3; ++attempt) {
-        rc = geni_spi_transfer(&x.spi, x.tx, x.rx, len, 0);
-        ioDelayUs(nullptr, 150);   // CS high between frames
-        if (keepFirst && !attempt) memcpy(x.firstRx, x.rx, sizeof x.firstRx);
-        if (rc) {++x.xferErrors; continue;}
-        x.idStatus = x.rx[3];
-        if (x.rx[3] & 0xA0) {++x.statusErrors; rc = -70; continue;}
-        // A CRC mismatch is counted and logged, not dropped: the CRC parameters are read from the vendor driver, not yet seen
-        // on the wire, so a wrong guess must not hide good frames. The status byte above already passed.
-        const uint16_t want = static_cast<uint16_t>(x.rx[kHeader + n] | x.rx[kHeader + n + 1] << 8);
-        const uint16_t got = crc16(x.rx + kHeader, n);
-        memcpy(out, x.rx + kHeader, n);
-        if (got != want) {
-            if (++x.crcErrors <= 8) IOLog("ASTEROIDS TOUCH: crc reg %02x len %u computed %04x received %04x\n", reg, n, got, want);
-            return -71;
-        }
-        return 0;
-    }
-    memcpy(out, x.rx + kHeader, n);   // the last attempt's bytes, for the log
+    const int rc = fts_spi_read(&x.io, x.tx, x.rx, reg, out, n, &x.counts, &x.idStatus);
+    if (keepFirst) memcpy(x.firstRx, x.rx, sizeof x.firstRx);   // the last attempt's raw bytes since T64 (the first before)
+    if (rc == FTS_SPI_CRC && x.counts.crc_errors <= 8)
+        IOLog("ASTEROIDS TOUCH: crc reg %02x len %u computed %04x received %04x\n", reg, n, fts_spi_crc16(x.rx + FTS_SPI_HEADER, n),
+              static_cast<unsigned>(x.rx[FTS_SPI_HEADER + n] | x.rx[FTS_SPI_HEADER + n + 1] << 8));
     return rc;
 }
 bool identify(Session &x) {
@@ -625,63 +606,35 @@ bool identify(Session &x) {
     x.tx = static_cast<uint8_t *>(IOMallocData(256));
     x.rx = static_cast<uint8_t *>(IOMallocData(256));
     if (!x.tx || !x.rx) {fail(s, 40, -12); return false;}
+    static_assert(FTS_SPI_WIRE_BYTES <= 256, "frame buffers");
+    x.io = {&x, spiTransfer, ioDelayUs};
     static const unsigned order[4] = {0, 3, 1, 2};
     for (unsigned i = 0; i < 4; ++i) {
         x.mode = order[i];
         geni_spi_setup(&x.spi, ((x.mode & 1) ? GENI_SPI_CPHA : 0) | ((x.mode & 2) ? GENI_SPI_CPOL : 0), 0);
         uint8_t hi = 0, lo = 0;
-        x.idRc = ftsRead(x, kRegChipHi, &hi, 1, i == 0);
-        if (!x.idRc || x.idRc == -71) {
-            const int rcLo = ftsRead(x, kRegChipLo, &lo, 1, false);
-            if (rcLo && rcLo != -71) x.idRc = rcLo;
+        x.idRc = ftsRead(x, FTS_REG_CHIP_HI, &hi, 1, i == 0);
+        if (!x.idRc || x.idRc == FTS_SPI_CRC) {
+            const int rcLo = ftsRead(x, FTS_REG_CHIP_LO, &lo, 1, false);
+            if (rcLo && rcLo != FTS_SPI_CRC) x.idRc = rcLo;
         }
         x.chipHi = hi; x.chipLo = lo;
-        x.idCrcOk = x.idRc != -71;
+        x.idCrcOk = x.idRc != FTS_SPI_CRC;
         IOLog("ASTEROIDS TOUCH: id mode %u rc %d chip %02x/%02x status %02x rx %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
               x.mode, x.idRc, hi, lo, x.idStatus, x.rx[0], x.rx[1], x.rx[2], x.rx[3], x.rx[4], x.rx[5], x.rx[6], x.rx[7], x.rx[8],
               x.rx[9]);
         rows(x);
-        if ((!x.idRc || x.idRc == -71) && hi == 0x56) break;
+        if ((!x.idRc || x.idRc == FTS_SPI_CRC) && hi == FTS_CHIP_FT3683G_HI) break;
     }
-    if (x.idRc && x.idRc != -71) {fail(s, 41, x.idRc); return false;}
-    if (x.chipHi != 0x56) {fail(s, 41, -19); return false;}
-    ftsRead(x, kRegFirmware, &x.firmware, 1, false);
-    ftsRead(x, kRegVendor, &x.vendor, 1, false);
+    if (x.idRc && x.idRc != FTS_SPI_CRC) {fail(s, 41, x.idRc); return false;}
+    if (x.chipHi != FTS_CHIP_FT3683G_HI) {fail(s, 41, -19); return false;}
+    ftsRead(x, FTS_REG_FIRMWARE, &x.firmware, 1, false);
+    ftsRead(x, FTS_REG_VENDOR, &x.vendor, 1, false);
     return true;
 }
 
 // ---- Stages 5-6: reports ----
-// Decoded contact in panel pixels.
-struct Contact {int id, x, y;};
-unsigned decode(const uint8_t *b, unsigned &type, Contact *out) {
-    // b[0] is the first data byte (register 0x01's content).
-    type = b[1] >> 4;
-    unsigned n = 0;
-    if (type == 2) {                     // protocol v2: count in b[1] & 15, 8-byte records from b[4]
-        const unsigned count = b[1] & 15;
-        for (unsigned i = 0; i < count && i < 10 && n < kSlots; ++i) {
-            const uint8_t *r = b + 4 + 8 * i;
-            if ((r[0] >> 6) == 1) continue;  // lifted
-            out[n].id = r[2] >> 4;
-            out[n].x = (((r[0] & 15) << 12) | (r[1] << 4) | (r[4] >> 4)) / 16;
-            out[n].y = (((r[2] & 15) << 12) | (r[3] << 4) | (r[4] & 15)) / 16;
-            ++n;
-        }
-    } else if (type == 0) {              // legacy: 6-byte records from b[2], 12-bit pixels, event in the top bits of x, id 15 ends
-        for (unsigned i = 0; i < 10 && n < kSlots; ++i) {
-            const uint8_t *r = b + 2 + 6 * i;
-            const int id = r[2] >> 4;
-            if (id >= 15) break;
-            if ((r[0] >> 6) == 1) continue;  // lifted
-            out[n].id = id;
-            out[n].x = ((r[0] & 15) << 8) | r[1];
-            out[n].y = ((r[2] & 15) << 8) | r[3];
-            ++n;
-        }
-    }
-    return n;
-}
-void publish(Session &x, const Contact *c, unsigned n) {
+void publish(Session &x, const FtsContact *c, unsigned n) {
     uint32_t seq = __atomic_load_n(&native_touch_seq, __ATOMIC_RELAXED);
     __atomic_store_n(&native_touch_seq, seq + 1, __ATOMIC_RELEASE);
     __asm__ volatile("dmb ish" ::: "memory");
@@ -704,31 +657,34 @@ void publish(Session &x, const Contact *c, unsigned n) {
 }
 void reportLoop(Session &x, bool publishing) {
     mark(x, 50);
-    uint8_t frame[kReport];
+    uint8_t frame[FTS_SPI_REPORT_BYTES];
     unsigned logged = 0, lastPublished = 0;
     uint64_t round = 0;
     for (;;) {
         ++round;
-        const int rc = ftsRead(x, kRegReport, frame, kReport, false);
+        // The interrupt line (GPIO 19, input with pull-up) just before the read: low should mean a report is waiting.
+        const bool irqLow = !(rd32(x.pins[kPinIrq].va, 4) & 1);
+        if (irqLow) ++x.irqLowReads;
+        const int rc = ftsRead(x, FTS_REG_REPORT, frame, FTS_SPI_REPORT_BYTES, false);
         ++x.reads;
-        if (!rc || rc == -71) {
-            if (frame[1] == 0xff && frame[2] == 0xff && frame[3] == 0xff && frame[4] == 0xff) {
+        if (!rc || rc == FTS_SPI_CRC) {
+            if (fts_spi_idle(frame)) {
                 // All 0xFF: idle, or the firmware just (re)started.
                 ++x.idle;
                 if (frame[0] == 0xff) ++x.initFrames;
                 if (publishing && lastPublished) {publish(x, nullptr, 0); lastPublished = 0;}
             } else {
-                Contact c[kSlots];
+                FtsContact c[kSlots];
                 unsigned type = 0;
-                const unsigned n = decode(frame, type, c);
+                const unsigned n = fts_spi_decode(frame, &type, c, kSlots);
                 x.lastType = type; x.lastCount = n;
                 memcpy(x.last, frame, sizeof x.last);
-                if (n) {++x.active; x.lastX = c[0].x; x.lastY = c[0].y;}
+                if (n) {++x.active; x.lastX = c[0].x; x.lastY = c[0].y; ++(irqLow ? x.irqLowActive : x.irqHighActive);}
                 if (logged < 32) {
                     ++logged;
-                    IOLog("ASTEROIDS TOUCH: frame %u type %x n %u %d,%d raw %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                          x.reads, type, n, n ? c[0].x : -1, n ? c[0].y : -1, frame[0], frame[1], frame[2], frame[3], frame[4],
-                          frame[5], frame[6], frame[7], frame[8], frame[9], frame[10], frame[11]);
+                    IOLog("ASTEROIDS TOUCH: frame %u type %x n %u %d,%d irq %s raw %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                          x.reads, type, n, n ? c[0].x : -1, n ? c[0].y : -1, irqLow ? "low" : "high", frame[0], frame[1], frame[2],
+                          frame[3], frame[4], frame[5], frame[6], frame[7], frame[8], frame[9], frame[10], frame[11]);
                 }
                 if (publishing && (n || lastPublished)) {publish(x, c, n); lastPublished = n;}
             }
@@ -780,7 +736,7 @@ void touchThread(void *, wait_result_t) {
 }
 }
 
-extern "C" void asteroids_touch_probe(void) {
+extern "C" void asteroids_focal_touch_start(void) {
     // Stage 6 (touch input) unless the boot argument asks for another stage; asteroids-touch=0 turns the probe off.
     unsigned value = 6;
     PE_parse_boot_argn("asteroids-touch", &value, sizeof value);

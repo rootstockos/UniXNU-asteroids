@@ -19,10 +19,10 @@ kit = "asteroids"
 # (rootstockos/AdrenoFirmware asteroids). Dependencies (Sm8550Platform, VirtioMmioBlock, VerifiedRoot, ShengNovatekTouch)
 # are linked into the tree and not built. Sm7635Platform is the SoC profile's GMU kit (UniXNU-sm7635-common).
 # drivers/ArmDTPlatform is a plain copy of UniXNU/ArmDTPlatform 417ff95 plus the wall-clock forwarding to IORTC (T39), until it
-# has a fork repository; QcomPmicRtc is in-tree in rootstockos/UniXNU t36 (drivers/QcomPmicRtc).
+# has a fork repository; QcomPmicRtc is in-tree in rootstockos/UniXNU t36 (drivers/QcomPmicRtc), FocalTechSpiTouch since T64.
 [components]
 include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "RamBlock", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "AppleKeyStoreState",
-           "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "ShengHidInput",
+           "QcomGeniSpi", "FocalTechSpiTouch", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "ShengHidInput",
            "Sm7635Platform", "QcomPmicRtc"]
 
 # The hardware description: dts/asteroids.dts on the SoC's dts/sm7635.dtsi. The common ADT generator builds the ADT from it.
@@ -255,7 +255,7 @@ kernel_args = [
   # (package default; sheng-banner=0 switches them off, the rows go to the UFS log either way), the audio DSP and battery service
   # start by default (sheng-adsp=2) and the GPU IO coherence probe is off by default (sheng-gpu-coherent=1 runs it).
   "sheng-gpu-addon=1",
-  # Touch: package/AsteroidsTouchProbe.cpp runs stage 6 by default (asteroids-touch=<n> for another stage, 0 for none) and
+  # Touch: package/AsteroidsFocalTouch.cpp (with the core's FocalTechSpiTouch) runs stage 6 by default (asteroids-touch=<n> for another stage, 0 for none) and
   # publishes the FT3683G's contacts to TouchState; UniXNU's NativeHidInput hands them to backboardd only with this argument
   # (read by the core driver, so it stays). The boot-ui-focus rows for PerfPowerServices and SpringBoard were dropped in T32.
   "sheng-touch-hid=1",
