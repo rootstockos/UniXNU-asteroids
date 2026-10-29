@@ -4,15 +4,15 @@
   build-asteroids-metal-plugin.py --unixnu PATH --trust-cache ORIGINAL.bundle [--published]
 
 Runs on macOS with Xcode's iPhoneOS SDK, after scripts/prepare-asteroids-turnip.py (Turnip for iOS against this repository's ABI).
---published also needs UniXNU's metal2vulkan bridge for iOS (scripts/build-adreno-metal-bridge.py --target ios, build/adreno-metal-bridge/ios).
+Also needs UniXNU's metal2vulkan bridge for iOS (scripts/build-adreno-metal-bridge.py --target ios, build/adreno-metal-bridge/ios).
 Output in build/asteroids-metal-plugin, or build/asteroids-metal-plugin-published (ignored):
   NativeTurnipShaders.h      the Turnip smoke shaders (UniXNU drivers/AdrenoMetal/shaders) as SPIR-V words: glslang, then spirv-val
   NativeAdrenoMetal.bundle   package/AsteroidsMetalPlugin.mm (principal class NativeAdrenoMetalDevice) with Turnip beside it, each signed
                              ad hoc with 4 KiB pages
   asteroids-metal.addon      the NGPUADD2 file for `unixnu build payload --gpu-addon` (scripts/make-gpu-addon.py's format, paths below
                              /private/var/ngpu): addons/NativeAdrenoMetal.bundle/*. Test-only: no NativeAdrenoMetal.publish beside it, so the
-                             plugin only tests. Published: the bundle also holds UniXNU's native Metal frontend (NativeBridgeMetalFrontend.mm)
-                             and the bridge, built with ASTEROIDS_METAL_PUBLISH, and addons/NativeAdrenoMetal.publish is beside it. No daemon,
+                             plugin only tests. The bundle always holds UniXNU's native Metal frontend (NativeBridgeMetalFrontend.mm) and the
+                             bridge (T63: the plugin is sheng's); published, addons/NativeAdrenoMetal.publish is beside it. No daemon,
                              no launchd job either way. T41: also audio/ShengAudio.driver/*, the audio server plug-in (--no-audio leaves it out).
   owner-trust.bundle         for `--owner-trust-cache`: one owner module with the CDHashes (plugin, Turnip, audio plug-in), then the original modules of
                              ORIGINAL.bundle byte for byte
@@ -69,7 +69,7 @@ def cdhash(path):
 
 if not TURNIP.is_file():
     sys.exit('Build Turnip first: scripts/prepare-asteroids-turnip.py --unixnu ' + str(ROOT))
-if args.published and not BRIDGE.is_file():
+if not BRIDGE.is_file():
     sys.exit('Build the bridge first: python3 scripts/build-adreno-metal-bridge.py --target ios (in ' + str(ROOT) + ')')
 original = args.trust_cache.read_bytes()
 if hashlib.sha256(original).hexdigest() != ORIGINAL_TRUST_SHA256:
@@ -103,11 +103,14 @@ run(['xcrun', 'clang', *base, '-std=c11', '-c', ROOT / 'kits/AdrenoPM4/AdrenoPM4
 bundle = OUT / 'NativeAdrenoMetal.bundle'
 bundle.mkdir()
 exe = bundle / 'NativeAdrenoMetal'
-# Published: the native frontend and the bridge, as UniXNU's build-adreno-metal-plugin.py links them (without its TurnipReplay and prime list).
-published = (['-DASTEROIDS_METAL_PUBLISH=1', '-x', 'objective-c++', METAL / 'NativeBridgeMetalFrontend.mm'] if args.published else [])
+# T63: the plugin is sheng's (AsteroidsMetalPlugin.mm), which always links the native frontend and the bridge, as UniXNU's
+# build-adreno-metal-plugin.py does (without its TurnipReplay); --published only adds the marker beside the bundle. The OS image's .metallib
+# paths (scripts/data/prime-list.txt, from the image's System and Applications; the OS cryptex's few are not in it) go into the
+# executable's __DATA,__primelist section, where PrimeShaders.h reads them when the list file beside the bundle is missing or unreadable.
+prime_list = DEVICE / 'scripts/data/prime-list.txt'
 run(['xcrun', 'clang++', *base, '-std=c++17', '-fobjc-arc', '-Wno-deprecated-declarations', '-bundle', *includes,
-     '-x', 'objective-c++', DEVICE / 'package/AsteroidsMetalPlugin.mm', *published, '-x', 'none', pm4,
-     *([BRIDGE, '-Wl,-dead_strip', '-framework', 'IOSurface'] if args.published else []),
+     '-x', 'objective-c++', DEVICE / 'package/AsteroidsMetalPlugin.mm', METAL / 'NativeBridgeMetalFrontend.mm', '-x', 'none', pm4,
+     BRIDGE, '-Wl,-dead_strip', f'-Wl,-sectcreate,__DATA,__primelist,{prime_list}', '-lobjc', '-framework', 'IOSurface',
      '-framework', 'Foundation', '-framework', 'Metal', '-o', exe])
 pm4.unlink()
 # The symbols for the T20 stack samples (offsets in the plugin go back to functions with atos or nm).
