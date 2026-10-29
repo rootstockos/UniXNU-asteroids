@@ -1295,6 +1295,9 @@ int ucBurst(IOService *svc, UcSteps &step) {
 // Row ([coherence] in the boot log): H d<dirty lines of 64> a<attempts> r<GPU read new>/<old> w<CPU saw GPU>/<DRAM> s<status> k<step>
 extern "C" volatile uint32_t native_adreno_io_coherent __attribute__((weak));
 // T40f test: sheng-gpu-import-skip=1 has the driver skip the per-submission clean of imports without coherence (NativeAdrenoVm.cpp).
+// T64d: the default. T40f showed no stale content with every import skipped and submissions 7x cheaper; T40g kept the clean for
+// read-only imports, which in T63 was 89 GiB of cleaning in 88 s (about 3 ms of each 4.4 ms submission, under the driver's lock), while
+// every app now draws on the GPU (T62) and few surfaces are CPU-written. sheng-gpu-import-skip=0 cleans them again.
 extern "C" volatile uint32_t native_adreno_import_skip __attribute__((weak));
 // T52: per-client maintenance (NativeAdreno NativeAdrenoVm::setOwner), sheng-gpu-own-maint=1.
 extern "C" volatile uint32_t native_adreno_owner_maint __attribute__((weak));
@@ -1420,7 +1423,7 @@ void ucStart() {
           t1 - t0);
     if (u[3] || u[4]) {native_gpu_power_stage = 0x10f; return;}
     coherenceProbe(vm, bits);
-    if (&native_adreno_import_skip) native_adreno_import_skip = bootArg("sheng-gpu-import-skip", 0) == 1 ? 1 : 0;
+    if (&native_adreno_import_skip) native_adreno_import_skip = bootArg("sheng-gpu-import-skip", 1) ? 1 : 0;
     if (&native_adreno_owner_maint) native_adreno_owner_maint = bootArg("sheng-gpu-own-maint", 0) == 1 ? 1 : 0;
     if (&native_adreno_import_policy) native_adreno_import_policy = bootArg("sheng-gpu-import-policy", 1) ? 1 : 0;
     u[0] = 3;

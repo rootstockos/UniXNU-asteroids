@@ -160,6 +160,9 @@ extern volatile uint32_t native_adreno_map_fail[7][2] __attribute__((weak_import
 // T64: user BOs from system memory (sheng's Adreno740 882f4bf): [0] made, [1] their spans, [2] refused, [3] last refusal, [4] MiB now,
 // [5] peak MiB, [6] kernel-owned allocations, [7] import spans.
 extern volatile uint32_t native_adreno_bo_memory[8] __attribute__((weak_import));
+// T65: the BO pool again (sheng's ad01b92 chunks, reserved at bring-up from XNU's memory): [0] MiB, [1] BOs from it, [2] sent to the
+// system (no room), [3] MiB in use, [4] peak MiB, [5] the reservation's last IOReturn, [6] the write-combine's (bit 31 tried), [7] chunks.
+extern volatile uint32_t native_adreno_pool_stats[8] __attribute__((weak_import));
 // T64: GpuPowerProbe's kernel-client test (mode 17): the stage (0x108 passed, 0x10e missed), its counters and its result lines. A missed
 // test leaves the accelerator unpublished, so every process renders on the CPU (T64's first boot).
 extern volatile uint32_t native_gpu_power_stage __attribute__((weak_import));
@@ -622,6 +625,13 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     snprintf(row, sizeof row, "[bo memory] system BOs %u (%u spans), in use %u MiB (peak %u), refused %u (last %x) | kernel-owned %u | import spans %u",
              native_adreno_bo_memory[0], native_adreno_bo_memory[1], native_adreno_bo_memory[4], native_adreno_bo_memory[5],
              native_adreno_bo_memory[2], native_adreno_bo_memory[3], native_adreno_bo_memory[6], native_adreno_bo_memory[7]);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  if (&native_adreno_pool_stats) {
+    char row[200];
+    snprintf(row, sizeof row, "[bo pool] %u MiB in %u chunks (reserve %x, wc %x), BOs %u, to system %u, in use %u MiB (peak %u)",
+             native_adreno_pool_stats[0], native_adreno_pool_stats[7], native_adreno_pool_stats[5], native_adreno_pool_stats[6],
+             native_adreno_pool_stats[1], native_adreno_pool_stats[2], native_adreno_pool_stats[3], native_adreno_pool_stats[4]);
     at = put(out, at, cap, row, sizeof row);
   }
   if (&native_gpu_uc && &native_gpu_uc_text && &native_gpu_power_stage) {
