@@ -1097,6 +1097,19 @@ extern "C" __attribute__((weak)) unsigned int native_pmap_user_mappings(ppnum_t,
 // stays off. Weak, so real ones win once linked.
 extern "C" __attribute__((weak)) uint64_t native_ufs_import_blocks(void) {return 0;}
 extern "C" __attribute__((weak)) int native_ufs_import_read(uint64_t, uint32_t, void *) {return 0;}
+// T64c: the driver reads a stalled job's system-memory BOs (no kernel mapping since 882f4bf) through the board's DRAM reader; this board
+// had none, so T64b's [gpu stall] rows showed deadbeef for every IB. ml_phys_read_word maps the page with its own attribute, uncached for
+// write-combined BOs, so the word is the one in DRAM. Only XNU's own RAM is read.
+extern "C" {
+extern int (*native_adreno_dram_read32)(uint64_t, uint32_t *);
+extern uint64_t gPhysBase, gPhysSize;
+unsigned int ml_phys_read_word(vm_offset_t paddr);
+}
+static int dramRead32(uint64_t physical, uint32_t *value) {
+    if (!value || (physical & 3) || physical < gPhysBase || physical - gPhysBase >= gPhysSize) return 1;
+    *value = ml_phys_read_word(vm_offset_t(physical));
+    return 0;
+}
 NativeAdrenoSubmit gSubmit;
 NativeAdrenoTimer gTimer;
 // T62 (sheng's iPadOS 27 driver, 2df9f1c): every process has its own GPU address space, from GpuClientVaStart (msm ADRENO_VM_START,
@@ -1387,6 +1400,7 @@ void coherenceProbe(NativeAdrenoVm *vm, unsigned bits) {
 }
 void ucStart() {
     native_gpu_power_stage = 0x100;
+    native_adreno_dram_read32 = dramRead32;
     uint32_t *u = native_gpu_uc;
     if (native_gpu_bar[9] == 0 || native_gpu_bar[10]) {IOLog("ASTEROIDS GPU: uc skipped: mode 16 did not finish\n"); return;}
     NativeAdrenoVm *vm = NativeAdrenoGpuContextVm();
