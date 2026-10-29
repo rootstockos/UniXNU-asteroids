@@ -1073,9 +1073,16 @@ uint32_t native_adreno_publish_stats(uint32_t *);
 IOService *native_adreno_published_service();
 extern volatile uint32_t native_adreno_bo_memory[8];
 // step reached, pool test bad words, adopt, submit attach, timer attach, publish, round 1 and 2 matched words (of 4),
-// steps ok, steps, first error, its step, burst matched (of 32), BOs from the pool, opened, closed
+// steps ok, steps, first error, its step, burst matched (of 32), BOs from the pool (system BOs since T64), opened, closed
 uint32_t native_gpu_uc[16];
+// T64: the test's result lines (rounds 1 and 2, the burst, the summary) for BootLog's [gpu uc] rows: T64 fell back to the CPU
+// because this test missed, and its IOLog lines had left the kernel buffer by the time the log was read.
+char native_gpu_uc_text[4][120];
 }
+#define UC_LINE(slot, ...) do { \
+        snprintf(native_gpu_uc_text[slot], sizeof native_gpu_uc_text[slot], __VA_ARGS__); \
+        IOLog("ASTEROIDS GPU: uc %s\n", native_gpu_uc_text[slot]); \
+    } while (0)
 // NativeAdrenoPublish.cpp hands backboardd's boot-log pieces to sheng's boot-log export, which this board does not link; a
 // weak-import reference cannot stay undefined in the kernel link, so the probe refuses every piece (-1, as Publish does
 // when the export is absent). Weak, so a real export wins once one is linked.
@@ -1211,9 +1218,9 @@ int ucRound(IOService *svc, UcSteps &step, unsigned round) {
         }
         NativeAdrenoAbiTimestamp ts{};
         step(ucCall(uc, NativeAdrenoMethodGetTimestamp, nullptr, &ts));
-        IOLog("ASTEROIDS GPU: uc round %u: abi %u in %u out %u max %llx, fence %llu, words %08x %08x %08x %08x, ticks %llu\n",
-              round, params.abi_version, params.input_bits, params.output_bits, params.max_bo_bytes, fence, tw[0], tw[1], tw[2],
-              tw[3], ts.ticks);
+        UC_LINE(round - 1, "round %u: abi %u in %u out %u max %llx, fence %llu, words %08x %08x %08x %08x, ticks %llu",
+               round, params.abi_version, params.input_bits, params.output_bits, params.max_bo_bytes, fence, tw[0], tw[1], tw[2],
+               tw[3], ts.ticks);
     }
     for (auto *m : maps) if (m) m->release();
     for (auto *d : desc) if (d) d->release();
@@ -1252,8 +1259,7 @@ int ucBurst(IOService *svc, UcSteps &step) {
                 for (unsigned i = 0; i < 32; ++i) matched += tw[i] == (0xb0000000u | i);
             }
         }
-        IOLog("ASTEROIDS GPU: uc burst: last fence %llu, matched %d of 32, word 31 %08x, word 32 %08x\n", fence, matched, tw[31],
-              tw[32]);
+        UC_LINE(2, "burst: last fence %llu, matched %d of 32, word 31 %08x, word 32 %08x", fence, matched, tw[31], tw[32]);
     }
     for (auto *m : maps) if (m) m->release();
     for (auto *d : desc) if (d) d->release();
@@ -1427,9 +1433,9 @@ void ucStart() {
     u[13] = native_adreno_bo_memory[0];
     u[14] = native_adreno_publish_stats(&u[15]);
     const bool ok = v1 == 4 && v2 == 4 && burst == 32 && step.ok == step.n;
-    IOLog("ASTEROIDS GPU: uc steps %d/%d err %x@%d rounds %d/%d of 4 burst %d of 32, system BOs %u, opened %u closed %u, jobs done %u %s\n",
-          step.ok, step.n, unsigned(step.err), step.at, v1, v2, burst, u[13], u[14], u[15], unsigned(gSubmit.stats().completed),
-          ok ? "ok" : "miss");
+    UC_LINE(3, "steps %d/%d err %x@%d rounds %d/%d of 4 burst %d of 32, system BOs %u, opened %u closed %u, jobs done %u %s",
+           step.ok, step.n, unsigned(step.err), step.at, v1, v2, burst, u[13], u[14], u[15], unsigned(gSubmit.stats().completed),
+           ok ? "ok" : "miss");
     cpState("uc");
     native_gpu_power_stage = ok ? 0x108 : 0x10e;
 }
@@ -1825,6 +1831,13 @@ void probeThread(void *, wait_result_t) {
     if (gMode >= 16) barStart();
     if (gMode >= 17 && native_gpu_bar[9] && !native_gpu_bar[10]) irqAttach();
     if (gMode >= 17) ucStart();
+    // T64: asteroids-gpu-publish-unverified=1 publishes the accelerator although the kernel client's test missed (stage 0x10e), to
+    // see whether user space renders while the test does not pass. Off by default: a failed test otherwise leaves the GPU unpublished.
+    if (native_gpu_power_stage == 0x10e && bootArg("asteroids-gpu-publish-unverified", 0)) {
+        strlcat(native_gpu_uc_text[3], " (published anyway)", sizeof native_gpu_uc_text[3]);
+        IOLog("ASTEROIDS GPU: uc missed; publishing anyway (asteroids-gpu-publish-unverified=1)\n");
+        native_gpu_power_stage = 0x108;
+    }
     if (gMode >= 19 && native_gpu_power_stage == 0x108) {
         publishMetal();
         metalReport("published");

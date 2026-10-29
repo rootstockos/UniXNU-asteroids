@@ -160,6 +160,11 @@ extern volatile uint32_t native_adreno_map_fail[7][2] __attribute__((weak_import
 // T64: user BOs from system memory (sheng's Adreno740 882f4bf): [0] made, [1] their spans, [2] refused, [3] last refusal, [4] MiB now,
 // [5] peak MiB, [6] kernel-owned allocations, [7] import spans.
 extern volatile uint32_t native_adreno_bo_memory[8] __attribute__((weak_import));
+// T64: GpuPowerProbe's kernel-client test (mode 17): the stage (0x108 passed, 0x10e missed), its counters and its result lines. A missed
+// test leaves the accelerator unpublished, so every process renders on the CPU (T64's first boot).
+extern volatile uint32_t native_gpu_power_stage __attribute__((weak_import));
+extern uint32_t native_gpu_uc[16] __attribute__((weak_import));
+extern char native_gpu_uc_text[4][120] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wc_audit[6] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_submit_ibs[4] __attribute__((weak_import));
 extern volatile uint32_t native_touch_edge_stats[4] __attribute__((weak_import));
@@ -618,6 +623,18 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
              native_adreno_bo_memory[0], native_adreno_bo_memory[1], native_adreno_bo_memory[4], native_adreno_bo_memory[5],
              native_adreno_bo_memory[2], native_adreno_bo_memory[3], native_adreno_bo_memory[6], native_adreno_bo_memory[7]);
     at = put(out, at, cap, row, sizeof row);
+  }
+  if (&native_gpu_uc && &native_gpu_uc_text && &native_gpu_power_stage) {
+    char row[200];
+    snprintf(row, sizeof row, "[gpu uc] stage %x | rounds %u/%u of 4, steps %u/%u, first error %x at step %u, burst %u of 32, system BOs %u, opened %u closed %u",
+             native_gpu_power_stage, native_gpu_uc[6], native_gpu_uc[7], native_gpu_uc[8], native_gpu_uc[9], native_gpu_uc[10],
+             native_gpu_uc[11], native_gpu_uc[12], native_gpu_uc[13], native_gpu_uc[14], native_gpu_uc[15]);
+    at = put(out, at, cap, row, sizeof row);
+    for (unsigned i = 0; i < 4; ++i)
+      if (native_gpu_uc_text[i][0]) {
+        snprintf(row, sizeof row, "[gpu uc] %.120s", native_gpu_uc_text[i]);
+        at = put(out, at, cap, row, sizeof row);
+      }
   }
   // GPU clients: name opens/refused/closes, live slot (- none), highest GPU address its mappings reached (MiB), last refusal.
   if (&native_adreno_client_log) {
