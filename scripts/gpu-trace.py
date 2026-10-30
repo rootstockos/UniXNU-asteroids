@@ -27,7 +27,8 @@ DRAW = struct.Struct('<IHHQQIBBBBB6BBB3x4HQ')
 SHADER = struct.Struct('<QBBBBbbbbII16H8HI')
 FRAG = struct.Struct('<IHBBIIQ')
 NOTE = struct.Struct('<I')
-TYPES = {1: 'pass', 3: 'draw', 4: 'shader', 5: 'frag', 6: 'note'}
+SUBMIT = struct.Struct('<QQII')
+TYPES = {1: 'pass', 3: 'draw', 4: 'shader', 5: 'frag', 6: 'note', 7: 'submit'}
 KINDS = ['gmem', 'sysmem', 'blit', 'copy', 'resolve', 'clear']
 STAGES = {0: 'vs', 1: 'tcs', 2: 'tes', 3: 'gs', 4: 'fs', 5: 'cs'}
 LARGE_PX = 1 << 20
@@ -44,7 +45,7 @@ def read(path):
     magic, freq, pid, ns = FILE_HEAD.unpack_from(data)
     if magic != b'TUDWTRC1':
         sys.exit(f'{path}: not a TU_DW_TRACE file')
-    t = dict(freq=freq, pid=pid, ns=ns, pass_=[], draw=[], shader={}, frag=[], lost=0, torn=0, binaries={})
+    t = dict(freq=freq, pid=pid, ns=ns, pass_=[], draw=[], shader={}, frag=[], submit=[], lost=0, torn=0, binaries={})
     at = FILE_HEAD.size
     while at + HEAD.size <= len(data):
         kind, _, size = HEAD.unpack_from(data, at)
@@ -81,6 +82,12 @@ def read(path):
             t['frag'].append(dict(zip(('serial', 'pass_no', 'sysmem', 'has_samples', 'draws', 'area', 'samples'), v)))
         elif kind == 6:
             t['lost'] += NOTE.unpack_from(data, body)[0]
+        elif kind == 7:
+            # T78 (letter q): a kernel submission, CLOCK_UPTIME_RAW ns before and after it (the frames trace's clock, in us there),
+            # the queue's fence, then its command buffers' serials.
+            before, after, fence, count = SUBMIT.unpack_from(data, body)
+            serials = struct.unpack_from(f'<{count}I', data, body + SUBMIT.size)
+            t['submit'].append(dict(before=before, after=after, fence=fence, serials=serials))
         at += size
     if not t['torn'] and at < len(data):
         t['torn'] = len(data) - at
