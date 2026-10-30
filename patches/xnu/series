@@ -7,6 +7,8 @@ zzyd-board-audio-addon-mount.patch
 # sheng's CPU governor idle helper and the E/P Edge scheduler (UniXNU-sheng 08cde20 zzye/zzyf).
 zzye-board-cpu-idle.patch
 zzyf-board-amp.patch
+# T76: the board's classes registered under the kext lock (OSKextRegisterBoardClasses; T75f's boot deadlock).
+zzyg-board-class-registration.patch
 arch:../../../patches/xnu/zzzz-offline-owner-systemos-bringup.patch
 arch:../../../patches/xnu/zzzzz-video-console-physical-fb.patch
 arch:../../../patches/xnu/zzzzzz-video-console-text.patch

@@ -41,6 +41,7 @@ extern "C" {
 #include <IOKit/IOService.h>
 #include <libkern/OSKextLib.h>
 #include <mach/kmod.h>
+#include "BoardClasses.h"
 
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_audio_service_static_init(void) __asm__("__GLOBAL__sub_I_ShengAudioService.cpp");
@@ -1230,10 +1231,7 @@ bool openGraphs() {
 }
 
 bool publishService() {
-    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
-    if (!handle) return false;
-    native_audio_service_static_init();
-    if (OSMetaClass::postModLoad(handle)) return false;
+    if (OSKextRegisterBoardClasses(g_kernel_kmod_info.name, native_audio_service_static_init)) return false;
     sheng_audio_service_start();
     return true;
 }

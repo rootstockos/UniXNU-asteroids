@@ -8,6 +8,7 @@
 #include <libkern/c++/OSSymbol.h>
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
+#include "BoardClasses.h"
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
 extern "C" IOService *native_keyevents_allocate(void);
@@ -102,10 +103,7 @@ static void native_keyevents_probe(void) {
     if (!absent) return;
     IOService *provider = IOService::getResourceService();
     if (!provider) return;
-    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
-    if (!handle) return;
-    native_keyevents_static_init();
-    native_keyevents_status = OSMetaClass::postModLoad(handle);
+    native_keyevents_status = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, native_keyevents_static_init);
     if (native_keyevents_status) return;
     native_keyevents_stage = 2;
     IOService *service = native_keyevents_allocate();

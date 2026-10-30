@@ -43,6 +43,7 @@ public:
   void exitCPUIdle(UInt64 *) override { unavailable(175); }
   void updateCPUIdle(UInt64 *) override { unavailable(176); }
 #include "GuardedPMGRSlots.inc"
+#include "BoardClasses.h"
 };
 OSDefineMetaClassWithInit(ShengPlatformPower, ApplePMGR, )
 OSMetaClassConstructorInit(ShengPlatformPower, ApplePMGR, )
@@ -80,10 +81,8 @@ extern "C" void sheng_pmgr_run(void)
   if (!parent || parent != &ApplePMGR::gMetaClass || parent->getClassSize() != 0x4b8a8 ||
       !nubMeta || nubMeta->getClassSize() != 0x740) { sheng_pmgr_checkpoint(); return; }
   sheng_pmgr_observation[2] = parent->getClassSize();
-  void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
-  if (!handle) { sheng_pmgr_checkpoint(); return; }
-  sheng_pmgr_static_init();
-  result = OSMetaClass::postModLoad(handle);
+  result = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, sheng_pmgr_static_init);
+  if (result == kOSReturnNoMemory) { sheng_pmgr_checkpoint(); return; }
   if (result) { sheng_pmgr_observation[1] = static_cast<uint32_t>(result); sheng_pmgr_checkpoint(); return; }
   sheng_pmgr_observation[9] = ShengPlatformPower::gMetaClass.getInstanceCount();
   sheng_pmgr_observation[11] = nubMeta->getInstanceCount();

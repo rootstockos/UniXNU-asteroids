@@ -7,6 +7,7 @@
 #include <libkern/OSKextLib.h>
 #include <mach/kmod.h>
 #include <pexpert/pexpert.h>
+#include "BoardClasses.h"
 
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_battery_static_init(void) __asm__("__GLOBAL__sub_I_ShengBattery.cpp");
@@ -19,9 +20,9 @@ extern "C" void sheng_battery_probe(void) {
     PE_parse_boot_argn("sheng-adsp", &adsp, sizeof adsp);
     if (!PE_parse_boot_argn("sheng-battery", &enabled, sizeof enabled)) enabled = adsp == 2;
     if (enabled != 1 || native_battery_stats[0]) return;
-    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
-    if (!handle) {native_battery_stats[0] = -10; return;}
-    native_battery_static_init();
-    if (OSMetaClass::postModLoad(handle)) {native_battery_stats[0] = -11; return;}
+    if (const OSReturn status = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, native_battery_static_init)) {
+        native_battery_stats[0] = status == kOSReturnNoMemory ? -10 : -11;
+        return;
+    }
     sheng_battery_start();
 }

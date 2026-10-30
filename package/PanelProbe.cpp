@@ -24,6 +24,7 @@
 #include <kern/clock.h>
 #include <mach/mach_time.h>
 #include <pexpert/pexpert.h>
+#include "BoardClasses.h"
 
 // [0] stage (1 mapped, 2 test done, 3 service started, 4 service published, negative: the step that failed), [1] HW_VERSION, [2] DSI_CTRL,
 // [3] COMMAND_MODE_DMA_CTRL, [4] TRIG_CTRL, [5] INT_CTRL, [6] VIDEO_MODE_ACTIVE_V, [7] CLK_CTRL, [8] commands sent, [9] commands that
@@ -157,11 +158,8 @@ void panelThread(void *, wait_result_t) {
     } else if (gMode == 3) {
         // The service class registers with the kernel's module here (its static initializer is out of __mod_init_func), as sheng's
         // BacklightProbe.cpp does.
-        void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
-        if (!handle) {fail(5, -12); return;}
-        asteroids_backlight_static_init();
-        const OSReturn status = OSMetaClass::postModLoad(handle);
-        if (status) {fail(5, status); return;}
+        const OSReturn status = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, asteroids_backlight_static_init);
+        if (status) {fail(5, status == kOSReturnNoMemory ? -12 : status); return;}
         if (!asteroids_backlight_start()) {fail(6, -19); return;}
         native_panel_stats[0] = 3;
     }

@@ -55,6 +55,7 @@ extern "C" {
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/task.h>
 #include <kern/clock.h>
+#include "BoardClasses.h"
 
 extern "C" {
 struct gpb_result native_gpu_power_result;
@@ -1509,10 +1510,8 @@ void publishMetal() {
     OSSafeReleaseNULL(name);
     if (!parent || parent->getClassSize() != 136) {gMetalStatus = kIOReturnNotFound; return;}
     gMetalStage = 2;
-    void *handle = OSMetaClass::preModLoad(g_kernel_kmod_info.name);
-    if (!handle) {gMetalStatus = kIOReturnNoResources; return;}
-    native_adreno_accelerator_static_init();
-    gMetalStatus = OSMetaClass::postModLoad(handle);
+    gMetalStatus = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, native_adreno_accelerator_static_init);
+    if (gMetalStatus == kOSReturnNoMemory) gMetalStatus = kIOReturnNoResources;
     if (gMetalStatus) return;
     if (native_adreno_accelerator_instance_size() != 136) {gMetalStatus = kIOReturnInvalid; return;}
     gMetalStage = 3;
