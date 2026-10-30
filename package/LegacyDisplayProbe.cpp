@@ -55,6 +55,10 @@ static bool publishOrMatchWord(IORegistryEntry *entry,const char *key,uint32_t v
 }
 extern "C" {
 volatile uint32_t native_legacy_stage;
+// asteroids T73: which late probe bsd_autoconf's thread is in (1 keystore .. 10 HID input, 11 IOSurface load, 12 its wait, 13 the display,
+// 14 no display to start), and that thread, so the boot log can show where it waits (T67 and T72 twice stopped inside bsd_autoconf).
+volatile uint32_t native_late_probe_step;
+void *boot_late_probe_thread;
 volatile int native_legacy_meta_status=-1;
 volatile uint32_t native_legacy_init_result,native_legacy_start_result,native_legacy_probe_match;
 volatile uint32_t native_legacy_parent_match,native_legacy_object_size,native_legacy_released;
@@ -733,21 +737,23 @@ extern "C" void sheng_battery_probe(void);
 extern "C" void sheng_audio_probe(void);
 extern "C" void asteroids_touch_probe(void);
 void native_legacy_display_late_probe(void) {
-    native_keystore_probe();
-    sheng_cpufreq_probe();     // asteroids T35: CPU clocks (package/CpuFreqProbe.cpp); nothing without sheng-cpufreq
-    sheng_gpu_power_probe();   // asteroids T30: GPU power (package/GpuPowerProbe.cpp); nothing without sheng-gpu-power
-    asteroids_touch_probe();   // asteroids T30: touch stage 1 (package/AsteroidsTouchProbe.cpp); nothing without asteroids-touch
-    sheng_buttons_probe();     // asteroids T35: power and volume buttons (package/ButtonProbe.cpp); nothing without sheng-buttons=1
-    asteroids_panel_probe();   // asteroids T37: panel brightness and sleep (package/PanelProbe.cpp); nothing without asteroids-panel
-    sheng_adsp_probe();        // asteroids T38: the audio DSP (package/AdspProbe.cpp); nothing without sheng-adsp
-    sheng_battery_probe();     // asteroids T38: battery and charger from the DSP (package/BatteryProbe.cpp); nothing without sheng-battery
-    sheng_audio_probe();       // asteroids T41: speakers (package/AsteroidsAudioProbe.cpp); nothing without sheng-audio
-    native_hid_input_probe();
-    IOService *display=pendingLegacyDisplay;if(!display)return;pendingLegacyDisplay=nullptr;
+    boot_late_probe_thread=IOThreadSelf();
+    native_late_probe_step=1;native_keystore_probe();
+    native_late_probe_step=2;sheng_cpufreq_probe();     // asteroids T35: CPU clocks (package/CpuFreqProbe.cpp); nothing without sheng-cpufreq
+    native_late_probe_step=3;sheng_gpu_power_probe();   // asteroids T30: GPU power (package/GpuPowerProbe.cpp); nothing without sheng-gpu-power
+    native_late_probe_step=4;asteroids_touch_probe();   // asteroids T30: touch stage 1 (package/AsteroidsTouchProbe.cpp); nothing without asteroids-touch
+    native_late_probe_step=5;sheng_buttons_probe();     // asteroids T35: power and volume buttons (package/ButtonProbe.cpp); nothing without sheng-buttons=1
+    native_late_probe_step=6;asteroids_panel_probe();   // asteroids T37: panel brightness and sleep (package/PanelProbe.cpp); nothing without asteroids-panel
+    native_late_probe_step=7;sheng_adsp_probe();        // asteroids T38: the audio DSP (package/AdspProbe.cpp); nothing without sheng-adsp
+    native_late_probe_step=8;sheng_battery_probe();     // asteroids T38: battery and charger from the DSP (package/BatteryProbe.cpp); nothing without sheng-battery
+    native_late_probe_step=9;sheng_audio_probe();       // asteroids T41: speakers (package/AsteroidsAudioProbe.cpp); nothing without sheng-audio
+    native_late_probe_step=10;native_hid_input_probe();
+    native_late_probe_step=11;
+    IOService *display=pendingLegacyDisplay;if(!display){native_late_probe_step=14;return;}pendingLegacyDisplay=nullptr;
     native_legacy_surface_status=OSKextLoadKextWithIdentifier("com.apple.iokit.IOSurface");
-    OSDictionary *matching=IOService::nameMatching("IOCoreSurfaceRoot");
+    native_late_probe_step=12;OSDictionary *matching=IOService::nameMatching("IOCoreSurfaceRoot");
     IOService *surface=matching?IOService::waitForMatchingService(matching,5000000000ULL):nullptr;
-    native_legacy_surface_found=surface!=nullptr;OSSafeReleaseNULL(surface);OSSafeReleaseNULL(matching);
+    native_legacy_surface_found=surface!=nullptr;OSSafeReleaseNULL(surface);OSSafeReleaseNULL(matching);native_late_probe_step=13;
     PE_Video video={};
     if(!native_legacy_surface_status && native_legacy_surface_found && !PE_current_console(&video)
         && video.v_baseAddr && video.v_width && video.v_height && video.v_depth==32

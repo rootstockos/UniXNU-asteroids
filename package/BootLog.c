@@ -69,6 +69,12 @@ extern volatile int native_staged_apps_error __attribute__((weak_import));
 extern char native_staged_apps_path[96] __attribute__((weak_import));
 extern const char *boot_progress_tag(void) __attribute__((weak_import));
 extern unsigned boot_ui_trace_role_rows(unsigned, char [][120], unsigned, unsigned) __attribute__((weak_import));
+extern unsigned boot_kthread_blocked_rows(char [][120], unsigned) __attribute__((weak_import));
+extern volatile uint32_t native_late_probe_step __attribute__((weak_import));
+extern volatile uint32_t native_keyevents_stage __attribute__((weak_import));
+extern volatile int native_keyevents_status __attribute__((weak_import));
+extern volatile uint32_t native_cpufreq_stage __attribute__((weak_import));
+extern struct vnode *rootvnode;
 extern unsigned boot_ui_trace_hot_rows(char [][120], unsigned) __attribute__((weak_import));
 extern unsigned long vm_kernel_slide;
 extern volatile uint64_t native_gop_wait_stats[7] __attribute__((weak_import));
@@ -477,6 +483,21 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     at = put(out, at, cap, "[stacks]", 10);
     for (unsigned role = 0; role < 4; ++role) {
       unsigned n = boot_ui_trace_role_rows(role, rows, 64, 2);   // 2: with each thread group's deeper frames
+      for (unsigned i = 0; i < n; ++i) at = put(out, at, cap, rows[i], 120);
+    }
+  }
+  // asteroids T73: until the root is mounted, where bsd_autoconf's late probes are (native_late_probe_step, LegacyDisplayProbe.cpp; key
+  // events and CPU clock stages) and every kernel thread that waits with its stack (BootUiTraceProbe.c), for the hangs before the root mount.
+  if (!rootvnode) {
+    char row[120];
+    snprintf(row, sizeof row, "[late probe] step %u keyevents %u/%d cpufreq %u", &native_late_probe_step ? native_late_probe_step : 0,
+             &native_keyevents_stage ? native_keyevents_stage : 0, &native_keyevents_status ? native_keyevents_status : 0,
+             &native_cpufreq_stage ? native_cpufreq_stage : 0);
+    at = put(out, at, cap, row, sizeof row);
+    if (&boot_kthread_blocked_rows) {
+      static char rows[150][120];
+      unsigned n = boot_kthread_blocked_rows(rows, 150);
+      at = put(out, at, cap, n ? "[kernel threads]" : "[kernel threads] task lock busy", 40);
       for (unsigned i = 0; i < n; ++i) at = put(out, at, cap, rows[i], 120);
     }
   }

@@ -341,6 +341,39 @@ int boot_kthread_report(const char *name,char *out,unsigned size) {
  task_unlock(kernel_task);
  return found;
 }
+// asteroids T73: every kernel thread that keeps its kernel stack (a thread parked with a continuation gives it away: an idle worker), for
+// the boots that stop before the root mount (T67, T72 twice: bsd_autoconf's thread and the UFS disk's matching both stalled). Per thread a
+// row with its name ('*' the thread that ran the late probes in bsd_autoconf), id, state, block hint, priority and wait event, then rows of
+// unslid kernel return addresses. Rows written; 0 while the task lock is busy.
+extern void *boot_late_probe_thread __attribute__((weak_import));
+unsigned boot_kthread_blocked_rows(char rows[][120],unsigned max) {
+ if(!task_lock_try(kernel_task))return 0;
+ unsigned n=0;thread_t thread;
+ queue_iterate(&kernel_task->threads,thread,thread_t,task_threads) {
+  if(n+3>max)break;
+  if(thread==current_thread())continue;
+  uint64_t frames[BT_KFRAMES];unsigned state=0,hint=0;int pri=0;uint64_t event=0;bool keep=false;
+  bool irq=ml_set_interrupts_enabled(false);
+  if(simple_lock_try(&thread->sched_lock,&thread_lck_grp)) {
+   state=(unsigned)thread->state;keep=thread->kernel_stack && !(state&TH_IDLE);
+   if(keep){bt_kernel_stack(thread,frames);hint=(unsigned)thread->block_hint;pri=thread->sched_pri;event=(uint64_t)thread->wait_event;}
+   thread_unlock(thread);
+  }
+  ml_set_interrupts_enabled(irq);
+  if(!keep)continue;
+  char tn[64];tn[0]=0;thread_get_thread_name(thread,tn);
+  const bool late=&boot_late_probe_thread && (void *)thread==boot_late_probe_thread;
+  snprintf(rows[n++],120,"%c%.48s tid %llx st=%x hint=%u pri=%d ev=%llx",late?'*':' ',tn[0]?tn:"-",(unsigned long long)thread->thread_id,
+   state,hint,pri,(unsigned long long)VM_KERNEL_UNSLIDE_OR_PERM(event));
+  for(unsigned i=0;i<BT_KFRAMES && frames[i] && n<max;i+=6) {
+   int at=snprintf(rows[n],120,"  k");
+   for(unsigned j=i;j<i+6 && j<BT_KFRAMES && frames[j] && at>0 && at<120;++j)at+=snprintf(rows[n]+at,120-(unsigned)at," %llx",(unsigned long long)VM_KERNEL_UNSLIDE(frames[j]));
+   ++n;
+  }
+ }
+ task_unlock(kernel_task);
+ return n;
+}
 // Every other processor asked to check its ASTs again, as the scheduler's own preemption signal does. For a thread that was made runnable
 // while the processor meant to run it never took the signal. out: per processor its state, the priority it runs at and the signal bits
 // still pending before this one was sent (bits that stay set mean a processor that does not take its interrupts).
