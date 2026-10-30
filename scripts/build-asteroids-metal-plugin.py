@@ -124,6 +124,8 @@ if struct.unpack('<3I', header)[:2] != (0xfeedfacf, 0x100000c) or struct.unpack(
 #    the bundle's resource seal covers its final bytes.
 turnip = bundle / 'libvulkan_freedreno.dylib'
 shutil.copyfile(TURNIP, turnip)
+# T76: kept unstripped beside NativeAdrenoMetal.unstripped, for the encode thread's CPU profile (its A rows are image offsets).
+shutil.copyfile(TURNIP, OUT / 'libvulkan_freedreno.unstripped')
 run(['strip', '-x', turnip])
 run(['codesign', '--force', '--sign', '-', '--pagesize', '4096', '--identifier', 'org.rootstockos.turnip', turnip])
 (bundle / 'Info.plist').write_bytes(plistlib.dumps(dict(

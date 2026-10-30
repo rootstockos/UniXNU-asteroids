@@ -191,7 +191,9 @@ jobs:
         run: |
           [ -n "$ARTIFACT_PASSPHRASE" ] || { echo "::error::No ARTIFACT_PASSPHRASE secret: nothing is uploaded."; exit 1; }
           mkdir -p "$RUNNER_TEMP/encrypted"
+          # The unstripped plugin and Turnip ride along for symbolizing CPU profiles (the A rows' image offsets); the phone gets neither.
           tar -C device/build/asteroids-metal-plugin-published -czf - asteroids-metal.addon owner-trust.bundle inputs.txt \
+            NativeAdrenoMetal.unstripped libvulkan_freedreno.unstripped \
             | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ARTIFACT_PASSPHRASE \
               -out "$RUNNER_TEMP/encrypted/gpu-addon.tar.gz.enc"
 
