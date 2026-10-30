@@ -2,6 +2,7 @@
 // Default-off original HID observation; a separate explicit gate starts an
 // owned offline input source. No entitlement or original provider is replaced.
 #include <IOKit/IOService.h>
+#include "BoardClasses.h"
 #include <IOKit/IOLib.h>
 #include <libkern/c++/OSMetaClass.h>
 #include <libkern/c++/OSSymbol.h>
@@ -9,7 +10,6 @@
 #include <libkern/c++/OSKext.h>
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
-#include "BoardClasses.h"
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_hid_static_init(void) __asm__("__GLOBAL__sub_I_NativeHidInput.cpp");
 extern "C" IOService *native_hid_input_allocate(void);

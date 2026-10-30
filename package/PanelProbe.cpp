@@ -15,6 +15,7 @@
 // a trigger close to the active area can leave the engine waiting), the software trigger starts it, and INT_CTRL bit 0 (DMA done)
 // ends it; then the FIFO and the trigger setup are reset as dsi_ctrl_hw_22_reset_trigger_controls does.
 #include <IOKit/IOLib.h>
+#include "BoardClasses.h"
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IOService.h>
@@ -24,7 +25,6 @@
 #include <kern/clock.h>
 #include <mach/mach_time.h>
 #include <pexpert/pexpert.h>
-#include "BoardClasses.h"
 
 // [0] stage (1 mapped, 2 test done, 3 service started, 4 service published, negative: the step that failed), [1] HW_VERSION, [2] DSI_CTRL,
 // [3] COMMAND_MODE_DMA_CTRL, [4] TRIG_CTRL, [5] INT_CTRL, [6] VIDEO_MODE_ACTIVE_V, [7] CLK_CTRL, [8] commands sent, [9] commands that

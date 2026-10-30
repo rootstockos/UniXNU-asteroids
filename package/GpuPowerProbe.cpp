@@ -21,6 +21,7 @@
 // gpb_gmu_context_gate passes; the GMU itself stays in reset, so no transaction uses the context yet. Modes 9-15 write
 // through ShengGmu's adapter instead: the GMU from mode 9, the GPU block only from mode 13 (gGpuWrites), CX_MISC never.
 #include <IOKit/IOLib.h>
+#include "BoardClasses.h"
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IOPlatformExpert.h>
@@ -55,7 +56,6 @@ extern "C" {
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/task.h>
 #include <kern/clock.h>
-#include "BoardClasses.h"
 
 extern "C" {
 struct gpb_result native_gpu_power_result;

@@ -19,6 +19,7 @@
 // silence). asteroids-audio-prm (bits, default 3): 1 LPASS core vote, 2 MI2S bit clock.
 // On start the amplifiers power up after the graphs run: they wait for the bit clock (CLKS) before the amplifier turns on.
 #include <IOKit/IOLib.h>
+#include "BoardClasses.h"
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
@@ -41,7 +42,6 @@ extern "C" {
 #include <IOKit/IOService.h>
 #include <libkern/OSKextLib.h>
 #include <mach/kmod.h>
-#include "BoardClasses.h"
 
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_audio_service_static_init(void) __asm__("__GLOBAL__sub_I_ShengAudioService.cpp");

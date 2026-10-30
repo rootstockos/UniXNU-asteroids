@@ -3,6 +3,7 @@
 // unpublished objects, 2 publishes the original nub, 3 tests power refusal.
 // No clocks, sleep, reset or secondary-CPU success is advertised.
 #include "OriginalPMGRABI.h"
+#include "BoardClasses.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOPlatformExpert.h>
 #include <libkern/c++/OSSymbol.h>
@@ -43,7 +44,6 @@ public:
   void exitCPUIdle(UInt64 *) override { unavailable(175); }
   void updateCPUIdle(UInt64 *) override { unavailable(176); }
 #include "GuardedPMGRSlots.inc"
-#include "BoardClasses.h"
 };
 OSDefineMetaClassWithInit(ShengPlatformPower, ApplePMGR, )
 OSMetaClassConstructorInit(ShengPlatformPower, ApplePMGR, )

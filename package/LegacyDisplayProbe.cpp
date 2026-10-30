@@ -4,6 +4,7 @@
 // audio DSP, battery, buttons, backlight or DPU timing probes).
 // Bounded offline original lifecycle instrument; no desktop claim.
 #include <stdarg.h>
+#include "BoardClasses.h"
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/IODeviceTreeSupport.h>
@@ -17,7 +18,6 @@
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
 #include <machine/machine_routines.h>
-#include "BoardClasses.h"
 extern "C" kmod_info_t g_kernel_kmod_info;
 extern "C" void native_legacy_display_static_init(void) __asm__("__GLOBAL__sub_I_NativeLegacyDisplay.cpp");
 extern "C" IOService *native_legacy_display_allocate(void);

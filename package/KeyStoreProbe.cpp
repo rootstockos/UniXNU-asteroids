@@ -2,13 +2,13 @@
 // Mutually exclusive offline probes: unchanged target keystore loading, or
 // ephemeral notification-only service. Neither supplies keys or unlock state.
 #include <IOKit/IOService.h>
+#include "BoardClasses.h"
 #include <IOKit/IODeviceTreeSupport.h>
 #include <libkern/c++/OSKext.h>
 #include <libkern/c++/OSData.h>
 #include <libkern/c++/OSSymbol.h>
 #include <pexpert/pexpert.h>
 #include <mach/kmod.h>
-#include "BoardClasses.h"
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_keyevents_static_init(void) __asm__("__GLOBAL__sub_I_NativeKeyStoreEvents.cpp");
 extern "C" IOService *native_keyevents_allocate(void);

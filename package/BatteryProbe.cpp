@@ -4,10 +4,10 @@
 // kernel's module (its static initializer, which the build takes out of __mod_init_func), then creates the service, which is published
 // once the first refresh is complete.
 #include <IOKit/IOService.h>
+#include "BoardClasses.h"
 #include <libkern/OSKextLib.h>
 #include <mach/kmod.h>
 #include <pexpert/pexpert.h>
-#include "BoardClasses.h"
 
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void native_battery_static_init(void) __asm__("__GLOBAL__sub_I_ShengBattery.cpp");
