@@ -17,7 +17,7 @@ window is absent (size 0) and the RSC setup list is empty.
 arrays, for the kernel build only: build/ is ignored, never commit it) and source-report.json; --check compares.
 Inside the UniXNU build tree (kits/asteroids links to the device package) board.toml and .cache are read from the
 device repository, where the CI bootstrap fetched them; the headers still go to the tree's build/sheng-gmu."""
-import hashlib, json, re, struct, subprocess, sys, tomllib
+import hashlib, json, os, re, struct, subprocess, sys, tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -56,16 +56,22 @@ def fetch():
     # The fetch takes all the commit's trees (minutes on a hosted runner) and the checkout the sparse paths' blobs. GitHub answers
     # hosted runners' clones of torvalds/linux with 429 at times (T40d's first two runs), so kernel.org's copy of the same commit is
     # the fallback; it ignores the blob filter (a bigger fetch), and the files are checked by sha256 whatever the source.
+    # A source that stops sending is given up like one that refuses (T76: a GitHub fetch hung for 25 minutes with no fallback): git
+    # aborts a transfer under 1 KiB/s for a minute, and each source has 15 minutes in all.
+    env = dict(os.environ, GIT_HTTP_LOW_SPEED_LIMIT='1024', GIT_HTTP_LOW_SPEED_TIME='60')
     for repository in (PIN['repository'], MIRROR):
         subprocess.run(['git', '-C', str(SRC), 'remote', 'set-url', 'origin', repository], check=True)
         print('fetching', repository, PIN['commit'], 'trees only', flush=True)
-        if subprocess.run(['git', '-C', str(SRC), 'fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin',
-                           PIN['commit']]).returncode == 0:
-            break
+        try:
+            if subprocess.run(['git', '-C', str(SRC), 'fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin',
+                               PIN['commit']], env=env, timeout=900).returncode == 0:
+                break
+        except subprocess.TimeoutExpired:
+            print('fetching', repository, 'timed out', flush=True)
     else:
         raise SystemExit('linux %s: no source answered' % PIN['commit'])
     print('checking out the adreno sources', flush=True)
-    subprocess.run(['git', '-C', str(SRC), 'checkout', '-q', 'FETCH_HEAD'], check=True)
+    subprocess.run(['git', '-C', str(SRC), 'checkout', '-q', 'FETCH_HEAD'], env=env, check=True, timeout=900)
 
 
 def covers(variants):
