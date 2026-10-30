@@ -1,8 +1,8 @@
 diff --git a/libkern/c++/OSKext.cpp b/libkern/c++/OSKext.cpp
-index becc2f5..fb4a0cb 100644
+index becc2f5..35a3a17 100644
 --- a/libkern/c++/OSKext.cpp
 +++ b/libkern/c++/OSKext.cpp
-@@ -1710,6 +1710,32 @@ OSKextResetAfterUserspaceReboot(void)
+@@ -1710,6 +1710,33 @@ OSKextResetAfterUserspaceReboot(void)
  	OSKext::resetAfterUserspaceReboot();
  }
  
@@ -14,10 +14,11 @@ index becc2f5..fb4a0cb 100644
 + * disk's matching waited behind both. This takes the two locks in OSKext::load's order. Before OSKext is initialized no kext
 + * loads, and the class lock alone is taken.
 + */
++extern "C" OSReturn OSKextRegisterBoardClasses(const char *kextIdentifier, void (*constructors)(void));
 +extern "C" OSReturn
 +OSKextRegisterBoardClasses(const char *kextIdentifier, void (*constructors)(void))
 +{
-+	OSReturn result = kOSReturnNoMemory;
++	OSReturn result = kOSKextReturnNoMemory;
 +	if (sKextLock) {
 +		IORecursiveLockLock(sKextLock);
 +	}

@@ -159,7 +159,7 @@ void panelThread(void *, wait_result_t) {
         // The service class registers with the kernel's module here (its static initializer is out of __mod_init_func), as sheng's
         // BacklightProbe.cpp does.
         const OSReturn status = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, asteroids_backlight_static_init);
-        if (status) {fail(5, status == kOSReturnNoMemory ? -12 : status); return;}
+        if (status) {fail(5, status == kOSKextReturnNoMemory ? -12 : status); return;}
         if (!asteroids_backlight_start()) {fail(6, -19); return;}
         native_panel_stats[0] = 3;
     }

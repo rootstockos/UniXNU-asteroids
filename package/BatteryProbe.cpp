@@ -21,7 +21,7 @@ extern "C" void sheng_battery_probe(void) {
     if (!PE_parse_boot_argn("sheng-battery", &enabled, sizeof enabled)) enabled = adsp == 2;
     if (enabled != 1 || native_battery_stats[0]) return;
     if (const OSReturn status = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, native_battery_static_init)) {
-        native_battery_stats[0] = status == kOSReturnNoMemory ? -10 : -11;
+        native_battery_stats[0] = status == kOSKextReturnNoMemory ? -10 : -11;
         return;
     }
     sheng_battery_start();

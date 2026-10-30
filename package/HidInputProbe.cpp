@@ -169,7 +169,7 @@ void native_hid_input_probe(void) {
         unsigned sendHome=1;PE_parse_boot_argn("offline-hid-home",&sendHome,sizeof(sendHome));
         if(resource && sendHome==1 && native_hid_class_sizes[4]==208) {
             native_hid_input_meta_status=OSKextRegisterBoardClasses(g_kernel_kmod_info.name,native_hid_static_init);
-            if(native_hid_input_meta_status!=kOSReturnNoMemory) {
+            if(native_hid_input_meta_status!=kOSKextReturnNoMemory) {
                 if(!native_hid_input_meta_status) {
                     IOService *device=native_hid_input_allocate();
                     native_hid_input_object=(uintptr_t)device;

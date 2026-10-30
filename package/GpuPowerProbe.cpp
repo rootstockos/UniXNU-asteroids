@@ -1511,7 +1511,7 @@ void publishMetal() {
     if (!parent || parent->getClassSize() != 136) {gMetalStatus = kIOReturnNotFound; return;}
     gMetalStage = 2;
     gMetalStatus = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, native_adreno_accelerator_static_init);
-    if (gMetalStatus == kOSReturnNoMemory) gMetalStatus = kIOReturnNoResources;
+    if (gMetalStatus == kOSKextReturnNoMemory) gMetalStatus = kIOReturnNoResources;
     if (gMetalStatus) return;
     if (native_adreno_accelerator_instance_size() != 136) {gMetalStatus = kIOReturnInvalid; return;}
     gMetalStage = 3;

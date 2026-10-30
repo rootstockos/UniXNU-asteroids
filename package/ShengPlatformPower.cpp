@@ -82,7 +82,7 @@ extern "C" void sheng_pmgr_run(void)
       !nubMeta || nubMeta->getClassSize() != 0x740) { sheng_pmgr_checkpoint(); return; }
   sheng_pmgr_observation[2] = parent->getClassSize();
   result = OSKextRegisterBoardClasses(g_kernel_kmod_info.name, sheng_pmgr_static_init);
-  if (result == kOSReturnNoMemory) { sheng_pmgr_checkpoint(); return; }
+  if (result == kOSKextReturnNoMemory) { sheng_pmgr_checkpoint(); return; }
   if (result) { sheng_pmgr_observation[1] = static_cast<uint32_t>(result); sheng_pmgr_checkpoint(); return; }
   sheng_pmgr_observation[9] = ShengPlatformPower::gMetaClass.getInstanceCount();
   sheng_pmgr_observation[11] = nubMeta->getInstanceCount();
