@@ -631,14 +631,18 @@ static id deviceForPort(unsigned port) {
         // Every Metal library of the OS through the runtime, 90 s after the render server opened the device (PrimeShaders.h); the boots that froze
         // or crashed before three minutes never primed anything. Progress is kept in the Data cache directory, so later boots resume.
         // The translator recurses deeply on large functions: give it the stack of a main thread.
+        // T86: not with the boot letter z (asteroids-tu-trace): each new runtime or Turnip build primes every library again, from 90 s
+        // after the device opened, while the desktop animates; a render server restarted after a crash ran at 120 Hz.
         pthread_attr_setstacksize(&attributes, 8u << 20);
         pthread_t primer;
-        pthread_create(&primer, &attributes, [](void *) -> void * {
-            char list[1024];
-            prime::run((id<MTLDevice>)device, gCacheDirectory, 90,
-                       requestedPath("NativeAdrenoMetal.primelist", list, sizeof list) ? std::string(list) : std::string());
-            return nullptr;
-        }, nullptr);
+        const char *letters = getenv("TU_DW_TRACE");
+        if (!letters || !strchr(letters, 'z'))
+            pthread_create(&primer, &attributes, [](void *) -> void * {
+                char list[1024];
+                prime::run((id<MTLDevice>)device, gCacheDirectory, 90,
+                           requestedPath("NativeAdrenoMetal.primelist", list, sizeof list) ? std::string(list) : std::string());
+                return nullptr;
+            }, nullptr);
         pthread_attr_destroy(&attributes);
         gpu->mark(0x6803);
         return device;
