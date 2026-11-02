@@ -660,6 +660,12 @@ extern "C" {volatile uint32_t native_mic_port[8];}
 // ANA_TX_CH2 << 8 | CDC_ANA_TX_CLK_CTL << 16 | CDC_AMIC_CTL << 24; [3] TX_COM_TXFE_DIV_CTL | PDM_WD_CTL0 << 8 | SM0_MB_SEL << 16 |
 // MB_PULLUP_EN << 24. T89-T92s3 captured digital zero at every port timing (interval 1 and 3, offsets 0 and 1, lanes 0-2).
 extern "C" {volatile uint32_t native_mic_codec[4];}
+// T95 ([mic page]): whether paged access reaches the codec. T94n read 0 from every paged register with the page registers written before
+// each access. [0] SCP_AddrPage1 | AddrPage2 << 8 read back after setting them for ANA_TX_CH1 (0x4018000e) | the values written << 16;
+// [1] the raw read FIFO word of that paged read; [2] the master's interrupt status (0x200) before | after << 16 (a command error or NAK
+// shows there); [3] DEV_VER (0x40100070) | ANA_TX_CH1 << 8 | the unpaged SCP_DevId_0 (0x50) << 16 | reads that failed << 24.
+extern "C" {volatile uint32_t native_mic_page[4];}
+static uint32_t gSwrLastRead;
 // The TX decimator the microphone feeds (asteroids-mic-dec, default 1): T51 used decimator 0 and captured digital zero for 19 s; the
 // vendor's handset-mic path (mixer_paths amic_1_3) takes AMIC1 through TX SMIC MUX1 = SWR_MIC0 into DEC1 on TX_AIF1_CAP. The DSP's
 // codec DMA reads the decimators named by its channel mask (the vendor's tx_macro_get_channel_map passes active_ch_mask), so the
@@ -791,6 +797,7 @@ bool swrRead(uint8_t dev, uint16_t reg, uint8_t *value) {
     for (unsigned i = 0; i < 200; ++i) {
         if ((rd32(gSwr.r.va, gSwr.status) >> 16) & 0x1f) {
             const uint32_t v = rd32(gSwr.r.va, gSwr.fifo);
+            gSwrLastRead = v;
             if (((v >> 8) & 0xf) == id) {*value = (uint8_t)v; return true;}
             wr32(gSwr.r.va, 0x308, 1);   // SWRM_CMD_FIFO_CMD: flush, give up on a stale answer
             break;
@@ -1064,6 +1071,23 @@ void micPortSnapshot() {
         }
         native_mic_codec[w] = word;
     }
+    // [mic page]
+    const uint16_t low = wcdPage(W_ANA_TX_CH1);
+    const uint8_t p1 = (uint8_t)(W_ANA_TX_CH1 >> 15), p2 = (uint8_t)(W_ANA_TX_CH1 >> 23);
+    uint8_t r1 = 0xff, r2 = 0xff, gain = 0xff, ver = 0xff, id0 = 0xff;
+    uint32_t failed = 0;
+    failed += !swrRead(gSwr.dev, 0x48, &r1);
+    failed += !swrRead(gSwr.dev, 0x49, &r2);
+    wcdPage(W_ANA_TX_CH1);
+    const uint32_t irqBefore = rd32(m, 0x200);
+    gSwrLastRead = 0;
+    failed += !swrRead(gSwr.dev, low, &gain);
+    native_mic_page[1] = gSwrLastRead;
+    native_mic_page[2] = (irqBefore & 0xffff) | (rd32(m, 0x200) & 0xffff) << 16;
+    failed += !wcdRead(0x40100070, &ver);
+    failed += !swrRead(gSwr.dev, 0x50, &id0);
+    native_mic_page[0] = r1 | (uint32_t)r2 << 8 | (uint32_t)p1 << 16 | (uint32_t)p2 << 24;
+    native_mic_page[3] = ver | (uint32_t)gain << 8 | (uint32_t)id0 << 16 | failed << 24;
 }
 // sheng's capture test: the graphs, then 200 periods (2 s) through four buffers in the second half of the DSP buffer.
 bool micCaptureTest() {

@@ -89,6 +89,7 @@ WEAK volatile int32_t native_audio_passed;
 WEAK volatile uint32_t native_mic_regs[16];
 WEAK volatile uint32_t native_mic_port[8];
 WEAK volatile uint32_t native_mic_codec[4];
+WEAK volatile uint32_t native_mic_page[4];
 WEAK volatile int32_t native_mic_capture[8];
 WEAK volatile uint64_t native_audio_pa;
 WEAK char native_adsp_text[96];
