@@ -969,6 +969,19 @@ bool micPath() {
         wr32(m, 0x1134 + 0x40 * bank, 0xf0);
     }
     wr32(m, 0x112c, 0);
+    // T90: the frame shape to the codec. The master frames at 50 rows and 16 columns (0x101c), but a device leaves reset at the
+    // SoundWire default of 48 rows and 2 columns, and only a bank switch tells it otherwise: T89's [mic port] read the codec's
+    // SCP_FrameCtrl 0 in both banks, so it placed its samples for a 2-column frame while the master read a 16-column one, and the
+    // capture was digital zero. As mainline's sdw_bank_switch with qcom_swrm_pre_bank_switch: the master's bank 1 frame like its bank 0,
+    // then a broadcast write of the same shape to SCP_FrameCtrl_B1, which switches every device and the master to bank 1 at the frame's
+    // end (both banks hold the ports above). asteroids-mic-frame=0 leaves the codec at its default (T89).
+    uint32_t frame = 1;
+    PE_parse_boot_argn("asteroids-mic-frame", &frame, sizeof frame);
+    if (frame) {
+        wr32(m, 0x105c, rd32(m, 0x101c));
+        swrWrite(15, 0x70, (uint8_t)rd32(m, 0x101c));
+        IOSleep(2);
+    }
     ok = wcdUpdate(W_TX_CH12_MUX, 0x07, 0x01) && wcdWrite(W_SM0_MICB, 0x05);
     IOSleep(1);
     ok = ok && wcdUpdate(W_ANA_TX_CH1, 0x1f, 6) && wcdUpdate(W_SYS_USAGE, 0x0f, 0) && wcdWrite(W_SM0_USAGE, 0x05) &&
