@@ -1075,19 +1075,19 @@ void micPortSnapshot() {
     const uint16_t low = wcdPage(W_ANA_TX_CH1);
     const uint8_t p1 = (uint8_t)(W_ANA_TX_CH1 >> 15), p2 = (uint8_t)(W_ANA_TX_CH1 >> 23);
     uint8_t r1 = 0xff, r2 = 0xff, gain = 0xff, ver = 0xff, id0 = 0xff;
-    uint32_t failed = 0;
-    failed += !swrRead(gSwr.dev, 0x48, &r1);
-    failed += !swrRead(gSwr.dev, 0x49, &r2);
+    uint32_t pageFailed = 0;
+    if (!swrRead(gSwr.dev, 0x48, &r1)) ++pageFailed;
+    if (!swrRead(gSwr.dev, 0x49, &r2)) ++pageFailed;
     wcdPage(W_ANA_TX_CH1);
     const uint32_t irqBefore = rd32(m, 0x200);
     gSwrLastRead = 0;
-    failed += !swrRead(gSwr.dev, low, &gain);
+    if (!swrRead(gSwr.dev, low, &gain)) ++pageFailed;
     native_mic_page[1] = gSwrLastRead;
     native_mic_page[2] = (irqBefore & 0xffff) | (rd32(m, 0x200) & 0xffff) << 16;
-    failed += !wcdRead(0x40100070, &ver);
-    failed += !swrRead(gSwr.dev, 0x50, &id0);
+    if (!wcdRead(0x40100070, &ver)) ++pageFailed;
+    if (!swrRead(gSwr.dev, 0x50, &id0)) ++pageFailed;
     native_mic_page[0] = r1 | (uint32_t)r2 << 8 | (uint32_t)p1 << 16 | (uint32_t)p2 << 24;
-    native_mic_page[3] = ver | (uint32_t)gain << 8 | (uint32_t)id0 << 16 | failed << 24;
+    native_mic_page[3] = ver | (uint32_t)gain << 8 | (uint32_t)id0 << 16 | pageFailed << 24;
 }
 // sheng's capture test: the graphs, then 200 periods (2 s) through four buffers in the second half of the DSP buffer.
 bool micCaptureTest() {
