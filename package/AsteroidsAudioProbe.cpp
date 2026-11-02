@@ -651,7 +651,8 @@ extern "C" {volatile uint32_t native_mic_extra[8];}
 // T89 ([mic port]): the capture's data path read back 300 ms into the capture, as the decimator is unmuted. [0] TX decimator | DMA
 // channel mask << 8; [1] its SMIC mux (ADC_MUXn_CFG0) | DEC mux (CFG1) << 8 | TX path CTL << 16 | CFG0 << 24; the codec's data port 1:
 // [2] PortCtrl | ChannelEn bank 0 << 8 | bank 1 << 16 | IntStat << 24, [3] SCP_FrameCtrl bank 0 | bank 1 << 8 | PrepareStatus << 16 |
-// reads that failed << 24; the master's port 1: [4] bank 0 and [5] bank 1 control, [6] its control 2, [7] the decimator's TX path CTL.
+// reads that failed << 24; the master's port 1: [4] bank 0 and [5] bank 1 control, [6] the master's MCP_STATUS (bit 0 its bank), [7] the
+// decimator's TX path CTL.
 extern "C" {volatile uint32_t native_mic_port[8];}
 // The TX decimator the microphone feeds (asteroids-mic-dec, default 1): T51 used decimator 0 and captured digital zero for 19 s; the
 // vendor's handset-mic path (mixer_paths amic_1_3) takes AMIC1 through TX SMIC MUX1 = SWR_MIC0 into DEC1 on TX_AIF1_CAP. The DSP's
@@ -770,7 +771,8 @@ uint32_t swrPack(uint8_t data, uint8_t dev, uint8_t id, uint16_t reg) {return re
 uint8_t nextId() {gSwr.id = gSwr.id < 14 ? gSwr.id + 1 : 0; return gSwr.id;}
 bool swrWrite(uint8_t dev, uint16_t reg, uint8_t value) {
     for (unsigned i = 0; i < 100 && ((rd32(gSwr.r.va, gSwr.status) >> 8) & 0x1f) >= 8; ++i) IODelay(50);
-    wr32(gSwr.r.va, gSwr.wr, swrPack(value, dev, nextId(), reg));
+    // A broadcast (device 15) carries command id 0xf (mainline's SWR_BROADCAST_CMD_ID); T90's, with an ordinary id, never landed.
+    wr32(gSwr.r.va, gSwr.wr, swrPack(value, dev, dev == 15 ? 0xf : nextId(), reg));
     IODelay(50);
     return true;
 }
@@ -980,7 +982,7 @@ bool micPath() {
     if (frame) {
         wr32(m, 0x105c, rd32(m, 0x101c));
         swrWrite(15, 0x70, (uint8_t)rd32(m, 0x101c));
-        IOSleep(2);
+        IOSleep(10);   // mainline lets a broadcast complete for up to 10 ms
     }
     ok = wcdUpdate(W_TX_CH12_MUX, 0x07, 0x01) && wcdWrite(W_SM0_MICB, 0x05);
     IOSleep(1);
@@ -1027,7 +1029,7 @@ void micPortSnapshot() {
     native_mic_port[3] = v[4] | v[5] << 8 | v[6] << 16 | failed << 24;
     native_mic_port[4] = rd32(m, 0x1124);
     native_mic_port[5] = rd32(m, 0x1164);
-    native_mic_port[6] = rd32(m, 0x112c);
+    native_mic_port[6] = rd32(m, 0x104c);   // MCP_STATUS: bit 0 the bank in use
     native_mic_port[7] = rd32(tx, path);
 }
 // sheng's capture test: the graphs, then 200 periods (2 s) through four buffers in the second half of the DSP buffer.
