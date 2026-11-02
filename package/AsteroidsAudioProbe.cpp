@@ -962,6 +962,14 @@ bool micPath() {
         ok = swrWrite(d, (uint16_t)(0x122 + bank), si) && swrWrite(d, (uint16_t)(0x123 + bank), 0) && swrWrite(d, (uint16_t)(0x124 + bank), off1) &&
              swrWrite(d, (uint16_t)(0x125 + bank), 0) && swrWrite(d, (uint16_t)(0x126 + bank), 0xff) && swrWrite(d, (uint16_t)(0x128 + bank), lane) &&
              swrWrite(d, (uint16_t)(0xe0 + bank), 0x01);
+    // T92: prepare channel 1 (DP1_PrepareCtrl) before enabling it, as sheng's working WCD938x path does (its 0x105 write); T90's [mic port]
+    // read DP1_PrepareStatus 0, a port never prepared. PrepareStatus is polled for up to 10 ms ([mic port] reads it again later).
+    ok = ok && swrWrite(d, 0x105, 0x01);
+    uint8_t prepared = 0;
+    for (unsigned i = 0; i < 20 && ok; ++i) {
+        if (swrRead(d, 0x104, &prepared) && (prepared & 0x01)) break;
+        IODelay(500);
+    }
     for (uint16_t bank = 0; bank <= 0x10 && ok; bank += 0x10) ok = swrWrite(d, (uint16_t)(0x120 + bank), 0x01);
     if (!ok) return false;
     const uintptr_t m = gSwr.r.va;
