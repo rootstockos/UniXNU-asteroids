@@ -148,6 +148,7 @@ extern volatile int32_t native_mic_capture[8] __attribute__((weak_import));
 extern volatile int32_t native_mic_peaks[30] __attribute__((weak_import));
 extern volatile uint32_t native_mic_capture_at __attribute__((weak_import)), native_mic_capture_s __attribute__((weak_import));
 extern volatile uint32_t native_mic_extra[8] __attribute__((weak_import));
+extern volatile uint32_t native_mic_port[8] __attribute__((weak_import));
 #include "ShengAudioAbi.h"
 extern const ShengAudioDiag *sheng_audio_diag(void) __attribute__((weak_import));
 extern volatile uint64_t native_audio_pa __attribute__((weak_import));
@@ -1374,6 +1375,11 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
       snprintf(row, sizeof row, "[mic regs] tx %x %x %x %x va %x %x %x swr %x %x %x %x %x %x %x pin %x slew %x", native_mic_regs[0], native_mic_regs[1],
                native_mic_regs[2], native_mic_regs[3], native_mic_regs[4], native_mic_regs[5], native_mic_regs[6], native_mic_regs[7], native_mic_regs[8],
                native_mic_regs[9], native_mic_regs[10], native_mic_regs[11], native_mic_regs[12], native_mic_regs[13], native_mic_regs[14], native_mic_regs[15]);
+      at = put(out, at, cap, row, sizeof row);
+    }
+    if (&native_mic_port && native_mic_port[0] | native_mic_port[1]) {
+      snprintf(row, sizeof row, "[mic port] dec %x tx %x codec %x %x master %x %x %x path %x", native_mic_port[0], native_mic_port[1],
+               native_mic_port[2], native_mic_port[3], native_mic_port[4], native_mic_port[5], native_mic_port[6], native_mic_port[7]);
       at = put(out, at, cap, row, sizeof row);
     }
   }

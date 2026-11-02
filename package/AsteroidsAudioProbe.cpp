@@ -648,6 +648,16 @@ extern "C" {volatile int32_t native_mic_peaks[30];volatile uint32_t native_mic_c
 // 0x42xx-0x46xx either: the rails are the RPMh's alone, ldob7 already on for the eUSB2 repeater), [2]/[4] VSET low | VSET high << 8 | MODE << 16 | read status << 24 (0xff not read), [5]/[6]/[7] the
 // master's COMP_STATUS 1 ms, 100 ms and 1 s after it was enabled.
 extern "C" {volatile uint32_t native_mic_extra[8];}
+// T89 ([mic port]): the capture's data path read back 300 ms into the capture, as the decimator is unmuted. [0] TX decimator | DMA
+// channel mask << 8; [1] its SMIC mux (ADC_MUXn_CFG0) | DEC mux (CFG1) << 8 | TX path CTL << 16 | CFG0 << 24; the codec's data port 1:
+// [2] PortCtrl | ChannelEn bank 0 << 8 | bank 1 << 16 | IntStat << 24, [3] SCP_FrameCtrl bank 0 | bank 1 << 8 | PrepareStatus << 16 |
+// reads that failed << 24; the master's port 1: [4] bank 0 and [5] bank 1 control, [6] its control 2, [7] the decimator's TX path CTL.
+extern "C" {volatile uint32_t native_mic_port[8];}
+// The TX decimator the microphone feeds (asteroids-mic-dec, default 1): T51 used decimator 0 and captured digital zero for 19 s; the
+// vendor's handset-mic path (mixer_paths amic_1_3) takes AMIC1 through TX SMIC MUX1 = SWR_MIC0 into DEC1 on TX_AIF1_CAP. The DSP's
+// codec DMA reads the decimators named by its channel mask (the vendor's tx_macro_get_channel_map passes active_ch_mask), so the
+// capture asks for 1 << decimator.
+static uint32_t gMicDec = 1;
 // [0] stage, [1] last DSP status, [2] periods asked, [3] returned, [4] bytes, [5] peak, [6] mean absolute value, [7] non-zero samples
 // The VA macro's clock source switch (DT qcom,va-island-mode-muxsel; va-clk-mux-select = 1, use-clk-id 3 = VA core clock): the vendor's
 // clock manager sets it to 1 once the VA core clock runs. asteroids-mic-mux=1 does the same (T41: the master's link never came up with
@@ -974,25 +984,46 @@ bool micPath() {
     if (!ok || act != 0) return false;
     // TX decimator 0: SMIC mux 0 = SWR_MIC0, DEC0 mux = SWR_MIC, 48 kHz, 150 Hz high-pass, clock on, muted until the path settles.
     const uintptr_t tx = gTx.va;
-    wr32(tx, 0x100, (rd32(tx, 0x100) & ~0xfu) | 1);
-    wr32(tx, 0x104, (rd32(tx, 0x104) & ~3u) | 1);
-    wr32(tx, 0x404, (rd32(tx, 0x404) & ~(3u << 5 | 3u << 1)) | 2u << 5);
-    wr32(tx, 0x400, (rd32(tx, 0x400) & ~0x3fu) | 4 | 0x10);
-    wr32(tx, 0x400, rd32(tx, 0x400) | 0x20);
+    PE_parse_boot_argn("asteroids-mic-dec", &gMicDec, sizeof gMicDec);
+    if (gMicDec > 7) gMicDec = 1;
+    const uint32_t mux = 0x100 + 8 * gMicDec, path = 0x400 + 0x80 * gMicDec;
+    wr32(tx, mux, (rd32(tx, mux) & ~0xfu) | 1);
+    wr32(tx, mux + 4, (rd32(tx, mux + 4) & ~3u) | 1);
+    wr32(tx, path + 4, (rd32(tx, path + 4) & ~(3u << 5 | 3u << 1)) | 2u << 5);
+    wr32(tx, path, (rd32(tx, path) & ~0x3fu) | 4 | 0x10);
+    wr32(tx, path, rd32(tx, path) | 0x20);
     const uint32_t txr[4] = {0x0, 0x4, 0x100, 0x400}, var[3] = {0x0, 0x4, 0x80};
-    for (unsigned k = 0; k < 4; ++k) native_mic_regs[k] = rd32(tx, txr[k]);
+    for (unsigned k = 0; k < 4; ++k) native_mic_regs[k] = rd32(tx, k < 2 ? txr[k] : k == 2 ? mux : path);
     for (unsigned k = 0; k < 3; ++k) native_mic_regs[4 + k] = rd32(gVa.va, var[k]);
     return true;
 }
 
 void capStage(int s) {native_mic_capture[0] = s;}
+// [mic port] (T89): the data path while the capture runs.
+void micPortSnapshot() {
+    const uintptr_t tx = gTx.va, m = gSwr.r.va;
+    const uint32_t mux = 0x100 + 8 * gMicDec, path = 0x400 + 0x80 * gMicDec;
+    native_mic_port[0] = gMicDec | (1u << gMicDec) << 8;
+    native_mic_port[1] = (rd32(tx, mux) & 0xff) | (rd32(tx, mux + 4) & 0xff) << 8 | (rd32(tx, path) & 0xff) << 16 | (rd32(tx, path + 4) & 0xff) << 24;
+    uint8_t v[8] = {};
+    const uint16_t regs[8] = {0x102, 0x120, 0x130, 0x100, 0x60, 0x70, 0x104, 0};
+    uint32_t failed = 0;
+    for (unsigned k = 0; k < 7; ++k)
+        if (!swrRead(gSwr.dev, regs[k], &v[k])) {v[k] = 0xff; ++failed;}
+    native_mic_port[2] = v[0] | v[1] << 8 | v[2] << 16 | (uint32_t)v[3] << 24;
+    native_mic_port[3] = v[4] | v[5] << 8 | v[6] << 16 | failed << 24;
+    native_mic_port[4] = rd32(m, 0x1124);
+    native_mic_port[5] = rd32(m, 0x1164);
+    native_mic_port[6] = rd32(m, 0x112c);
+    native_mic_port[7] = rd32(tx, path);
+}
 // sheng's capture test: the graphs, then 200 periods (2 s) through four buffers in the second half of the DSP buffer.
 bool micCaptureTest() {
     capStage(1);
     uint8_t b[GPR_MAX_PACKET];
     const ArFormat f = {kRate, 16, 1};
     if (!command(ar_open_mic_device(b, sizeof b, kPort, ++gAudio.token), b, AR_OP_GRAPH_OPEN)) {capStage(-6); return false;}
-    if (!command(ar_config_mic_device(b, sizeof b, kPort, ++gAudio.token, &f, 1), b, AR_OP_SET_CFG)) {capStage(-7); return false;}
+    if (!command(ar_config_mic_device(b, sizeof b, kPort, ++gAudio.token, &f, 1u << gMicDec), b, AR_OP_SET_CFG)) {capStage(-7); return false;}
     if (!command(ar_open_capture_stream(b, sizeof b, kPort, ++gAudio.token), b, AR_OP_GRAPH_OPEN)) {capStage(-8); return false;}
     if (!command(ar_config_capture_stream(b, sizeof b, kPort, ++gAudio.token, &f), b, AR_OP_SET_CFG)) {capStage(-9); return false;}
     for (uint32_t sg : kMicUp)
@@ -1001,7 +1032,8 @@ bool micCaptureTest() {
         if (!command(ar_graph_command(b, sizeof b, kPort, ++gAudio.token, AR_OP_GRAPH_START, sg), b, AR_OP_GRAPH_START)) {capStage(-11); return false;}
     capStage(6);
     IOSleep(300);
-    wr32(gTx.va, 0x400, rd32(gTx.va, 0x400) & ~0x10u);   // unmute after the analog path's settling time
+    wr32(gTx.va, 0x400 + 0x80 * gMicDec, rd32(gTx.va, 0x400 + 0x80 * gMicDec) & ~0x10u);   // unmute after the analog path's settling time
+    micPortSnapshot();
     uint64_t sum = 0, samples = 0;
     int32_t peak = 0, nonzero = 0;
     uint32_t asked = 0, back = 0;
