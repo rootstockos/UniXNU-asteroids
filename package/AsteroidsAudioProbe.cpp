@@ -654,11 +654,20 @@ extern "C" {volatile uint32_t native_mic_extra[8];}
 // reads that failed << 24; the master's port 1: [4] bank 0 and [5] bank 1 control, [6] the master's MCP_STATUS (bit 0 its bank), [7] the
 // decimator's TX path CTL.
 extern "C" {volatile uint32_t native_mic_port[8];}
+// T93 ([mic codec]): the codec's own state at the same moment, a byte each (0xff a read that failed): [0] TX sequencer 0 status
+// (SEQ_TX0_STAT 0x40180592) | SmartMIC0 FUNC_STAT << 8 | its actual power state (PDE11_ACT_PS) << 16 | its requested one << 24; [1] its
+// usage (IT11_USAGE) | micbias usage (IT11_MICB) << 8 | SYS_USAGE_CTRL << 16 | TX_NEW_CH12_MUX << 24; [2] ANA_TX_CH1 (ADC1 gain) |
+// ANA_TX_CH2 << 8 | CDC_ANA_TX_CLK_CTL << 16 | CDC_AMIC_CTL << 24; [3] TX_COM_TXFE_DIV_CTL | PDM_WD_CTL0 << 8 | SM0_MB_SEL << 16 |
+// MB_PULLUP_EN << 24. T89-T92s3 captured digital zero at every port timing (interval 1 and 3, offsets 0 and 1, lanes 0-2).
+extern "C" {volatile uint32_t native_mic_codec[4];}
 // The TX decimator the microphone feeds (asteroids-mic-dec, default 1): T51 used decimator 0 and captured digital zero for 19 s; the
 // vendor's handset-mic path (mixer_paths amic_1_3) takes AMIC1 through TX SMIC MUX1 = SWR_MIC0 into DEC1 on TX_AIF1_CAP. The DSP's
 // codec DMA reads the decimators named by its channel mask (the vendor's tx_macro_get_channel_map passes active_ch_mask), so the
 // capture asks for 1 << decimator.
 static uint32_t gMicDec = 1;
+// The SmartMIC0 ADC usage (asteroids-mic-usage, default 0x05 ADC_LP as the vendor's TX0 MODE; 0x03 NORMAL is the LKML driver's choice on a
+// 9.6 MHz bus, paired with mainline's port interval 1, while LP's 4.8 MHz port rate needs interval 3 there).
+static uint32_t micUsage() {uint32_t u = 0x05; PE_parse_boot_argn("asteroids-mic-usage", &u, sizeof u); return u & 0xff;}
 // [0] stage, [1] last DSP status, [2] periods asked, [3] returned, [4] bytes, [5] peak, [6] mean absolute value, [7] non-zero samples
 // The VA macro's clock source switch (DT qcom,va-island-mode-muxsel; va-clk-mux-select = 1, use-clk-id 3 = VA core clock): the vendor's
 // clock manager sets it to 1 once the VA core clock runs. asteroids-mic-mux=1 does the same (T41: the master's link never came up with
@@ -994,7 +1003,7 @@ bool micPath() {
     }
     ok = wcdUpdate(W_TX_CH12_MUX, 0x07, 0x01) && wcdWrite(W_SM0_MICB, 0x05);
     IOSleep(1);
-    ok = ok && wcdUpdate(W_ANA_TX_CH1, 0x1f, 6) && wcdUpdate(W_SYS_USAGE, 0x0f, 0) && wcdWrite(W_SM0_USAGE, 0x05) &&
+    ok = ok && wcdUpdate(W_ANA_TX_CH1, 0x1f, 6) && wcdUpdate(W_SYS_USAGE, 0x0f, 0) && wcdWrite(W_SM0_USAGE, (uint8_t)micUsage()) &&
          wcdUpdate(W_ANA_TX_CH2, 0x40, 0x40) && wcdWrite(W_SM0_REQ_PS, 0x00);
     IODelay(800);
     ok = ok && wcdUpdate(W_ANA_TX_CH2, 0x40, 0);
@@ -1039,6 +1048,17 @@ void micPortSnapshot() {
     native_mic_port[5] = rd32(m, 0x1164);
     native_mic_port[6] = rd32(m, 0x104c);   // MCP_STATUS: bit 0 the bank in use
     native_mic_port[7] = rd32(tx, path);
+    const uint32_t codec[16] = {0x40180592, 0x41080000, W_SM0_ACT_PS, W_SM0_REQ_PS, W_SM0_USAGE, W_SM0_MICB, W_SYS_USAGE, W_TX_CH12_MUX,
+                                W_ANA_TX_CH1, W_ANA_TX_CH2, W_TX_CLK_CTL, 0x4018045a, W_TXFE_DIV, W_PDM_WD0, W_SM0_MB_SEL, 0x401805b3};
+    for (unsigned w = 0; w < 4; ++w) {
+        uint32_t word = 0;
+        for (unsigned b = 0; b < 4; ++b) {
+            uint8_t value = 0xff;
+            if (!wcdRead(codec[w * 4 + b], &value)) value = 0xff;
+            word |= (uint32_t)value << (8 * b);
+        }
+        native_mic_codec[w] = word;
+    }
 }
 // sheng's capture test: the graphs, then 200 periods (2 s) through four buffers in the second half of the DSP buffer.
 bool micCaptureTest() {
