@@ -1383,7 +1383,7 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
                native_mic_port[2], native_mic_port[3], native_mic_port[4], native_mic_port[5], native_mic_port[6], native_mic_port[7]);
       at = put(out, at, cap, row, sizeof row);
     }
-    if (&native_mic_codec && native_mic_codec[0] | native_mic_codec[1]) {
+    if (&native_mic_codec && &native_mic_port && native_mic_port[0]) {
       snprintf(row, sizeof row, "[mic codec] seq/stat/act/req %x usage/micb/sys/mux %x gain/ch2/txclk/amic %x txfe/wd/mbsel/pullup %x",
                native_mic_codec[0], native_mic_codec[1], native_mic_codec[2], native_mic_codec[3]);
       at = put(out, at, cap, row, sizeof row);

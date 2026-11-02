@@ -801,11 +801,16 @@ bool swrRead(uint8_t dev, uint16_t reg, uint8_t *value) {
     return false;
 }
 // A codec register: at 0x8000 and above through SCP paging (Page1 0x48 = bits 22:15, Page2 0x49 = bits 30:23), kept while unchanged.
+// T94: both page registers are written before every paged access. T93n read 0 from every paged register while the capture ran, its
+// usage among them (written 3 a moment before): a page cache the codec had dropped (it may reset SCP_AddrPage1/2) sends every access to
+// page 0. asteroids-mic-pagecache=1 keeps the T47-T93 cache.
 uint16_t wcdPage(uint32_t reg) {
     if (reg < 0x8000) return (uint16_t)reg;
+    static int cache = -1;
+    if (cache < 0) {uint32_t c = 0; PE_parse_boot_argn("asteroids-mic-pagecache", &c, sizeof c); cache = c ? 1 : 0;}
     const uint8_t p1 = (uint8_t)(reg >> 15), p2 = (uint8_t)(reg >> 23);
-    if (p1 != gSwr.page1) {swrWrite(gSwr.dev, 0x48, p1); gSwr.page1 = p1;}
-    if (p2 != gSwr.page2) {swrWrite(gSwr.dev, 0x49, p2); gSwr.page2 = p2;}
+    if (!cache || p1 != gSwr.page1) {swrWrite(gSwr.dev, 0x48, p1); gSwr.page1 = p1;}
+    if (!cache || p2 != gSwr.page2) {swrWrite(gSwr.dev, 0x49, p2); gSwr.page2 = p2;}
     return (uint16_t)((reg & 0x7fff) | 0x8000);
 }
 bool wcdWrite(uint32_t reg, uint8_t value) {return swrWrite(gSwr.dev, wcdPage(reg), value);}
