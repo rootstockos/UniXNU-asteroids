@@ -671,9 +671,9 @@ static uint32_t gSwrLastRead;
 // codec DMA reads the decimators named by its channel mask (the vendor's tx_macro_get_channel_map passes active_ch_mask), so the
 // capture asks for 1 << decimator.
 static uint32_t gMicDec = 1;
-// The SmartMIC0 ADC usage (asteroids-mic-usage, default 0x05 ADC_LP as the vendor's TX0 MODE; 0x03 NORMAL is the LKML driver's choice on a
-// 9.6 MHz bus, paired with mainline's port interval 1, while LP's 4.8 MHz port rate needs interval 3 there).
-static uint32_t micUsage() {uint32_t u = 0x05; PE_parse_boot_argn("asteroids-mic-usage", &u, sizeof u); return u & 0xff;}
+// The SmartMIC0 ADC usage (asteroids-mic-usage, default 0x03 NORMAL, the LKML driver's choice on a 9.6 MHz bus, paired with the port's
+// interval 1: T96n recorded with it; 0x05 ADC_LP is the vendor's TX0 MODE, whose 4.8 MHz port rate needs interval 3 there).
+static uint32_t micUsage() {uint32_t u = 0x03; PE_parse_boot_argn("asteroids-mic-usage", &u, sizeof u); return u & 0xff;}
 // [0] stage, [1] last DSP status, [2] periods asked, [3] returned, [4] bytes, [5] peak, [6] mean absolute value, [7] non-zero samples
 // The VA macro's clock source switch (DT qcom,va-island-mode-muxsel; va-clk-mux-select = 1, use-clk-id 3 = VA core clock): the vendor's
 // clock manager sets it to 1 once the VA core clock runs. asteroids-mic-mux=1 does the same (T41: the master's link never came up with
@@ -1428,6 +1428,9 @@ extern "C" void sheng_audio_probe(void) {
     PE_parse_boot_argn("sheng-audio-atten", &gAudio.atten, sizeof gAudio.atten);
     PE_parse_boot_argn("asteroids-audio-prm", &gAudio.prm, sizeof gAudio.prm);
     PE_parse_boot_argn("asteroids-audio-i2s", &port, sizeof port);
+    // The microphone serves the plug-in's input stream by default since T96n recorded (asteroids-mic=0 leaves it off, a lower stage stops
+    // the bring-up there).
+    gAudio.micWant = 8;
     PE_parse_boot_argn("asteroids-mic", &gAudio.micWant, sizeof gAudio.micWant);
     if (gAudio.micWant > 8) gAudio.micWant = 8;
     gAudio.i2s.intf = port & 0xff;
