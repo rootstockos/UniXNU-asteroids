@@ -811,11 +811,17 @@ bool swrRead(uint8_t dev, uint16_t reg, uint8_t *value) {
 // T94: both page registers are written before every paged access. T93n read 0 from every paged register while the capture ran, its
 // usage among them (written 3 a moment before): a page cache the codec had dropped (it may reset SCP_AddrPage1/2) sends every access to
 // page 0. asteroids-mic-pagecache=1 keeps the T47-T93 cache.
+// T96: which address bits go to which page register. Qualcomm's regmap-swr (the stock driver's path on this phone,
+// refs/nulldebris-modules soc/regmap-swr.c) writes bits 30:23 to SCP 0x48 and bits 22:15 to 0x49; the probe had the MIPI header's
+// order (0x48 bits 22:15, 0x49 bits 30:23), so every paged access since T47 went to an empty address (T95n: page registers held what was
+// written, reads answered 0 without an error). asteroids-mic-pageswap=0 restores the T47-T95 order.
 uint16_t wcdPage(uint32_t reg) {
     if (reg < 0x8000) return (uint16_t)reg;
-    static int cache = -1;
+    static int cache = -1, qcom = -1;
     if (cache < 0) {uint32_t c = 0; PE_parse_boot_argn("asteroids-mic-pagecache", &c, sizeof c); cache = c ? 1 : 0;}
-    const uint8_t p1 = (uint8_t)(reg >> 15), p2 = (uint8_t)(reg >> 23);
+    if (qcom < 0) {uint32_t q = 1; PE_parse_boot_argn("asteroids-mic-pageswap", &q, sizeof q); qcom = q ? 1 : 0;}
+    const uint8_t low = (uint8_t)(reg >> 15), high = (uint8_t)(reg >> 23);
+    const uint8_t p1 = qcom ? high : low, p2 = qcom ? low : high;
     if (!cache || p1 != gSwr.page1) {swrWrite(gSwr.dev, 0x48, p1); gSwr.page1 = p1;}
     if (!cache || p2 != gSwr.page2) {swrWrite(gSwr.dev, 0x49, p2); gSwr.page2 = p2;}
     return (uint16_t)((reg & 0x7fff) | 0x8000);
@@ -1073,7 +1079,7 @@ void micPortSnapshot() {
     }
     // [mic page]
     const uint16_t low = wcdPage(W_ANA_TX_CH1);
-    const uint8_t p1 = (uint8_t)(W_ANA_TX_CH1 >> 15), p2 = (uint8_t)(W_ANA_TX_CH1 >> 23);
+    const uint8_t p1 = gSwr.page1, p2 = gSwr.page2;
     uint8_t r1 = 0xff, r2 = 0xff, gain = 0xff, ver = 0xff, id0 = 0xff;
     uint32_t pageFailed = 0;
     if (!swrRead(gSwr.dev, 0x48, &r1)) ++pageFailed;
