@@ -39,7 +39,6 @@
 #include "NativeMetalBridgePhase.h"
 #include "CacheExport.h"
 #include "PrimeShaders.h"
-#include "CacheImport.h"
 #include "ExceptionDiag.h"
 
 @interface _MTLDevice : NSObject
@@ -493,28 +492,14 @@ static id deviceForPort(unsigned port) {
             strlcat(candidates[i], "m2v", sizeof candidates[i]);
             mkdir(candidates[i], 0700);
             if (access(candidates[i], W_OK) != 0) continue;
-            // The pipeline caches compiled ahead on the host, read on demand from the userdata import region behind this directory
-            // (CacheImport.h), and the files an earlier image's copying import left half written there (int 590aaee2), which hold memory
-            // of the RAM Data disk.
+            // The files an earlier image's copying import left half written here (int 590aaee2), which hold memory of the RAM Data disk.
+            // Pipelines are compiled on the device only since the 2026-11-03 upstream sync (AdrenoMetal dropped CacheImport.h and the
+            // runtime's shader-cache fallback source).
             {
                 static bool once;
                 if (!once) {
                     once = true;
                     removeHalfImported(candidates[i]);
-                    if (cacheimport::open(*gpu)) {
-                        nmb_set_shader_cache_fallback(cacheimport::read);
-                        uint8_t *done = nullptr;
-                        size_t length = 0;
-                        if (cacheimport::read("prime-done", &done, &length)) {
-                            const std::string text(reinterpret_cast<const char *>(done), length);
-                            free(done);
-                            for (size_t at = 0, end; at < text.size(); at = end + 1) {
-                                end = text.find('\n', at);
-                                if (end == std::string::npos) end = text.size();
-                                if (end > at) prime::extraDone().insert(text.substr(at, end - at));
-                            }
-                        }
-                    }
                 }
             }
             // The image's pipeline pack (an earlier boot's export), into this directory before the runtime reads it. Marker 0x6Cnn: files written
