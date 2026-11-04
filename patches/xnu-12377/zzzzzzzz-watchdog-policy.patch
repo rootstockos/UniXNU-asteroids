@@ -1,0 +1,21 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 943eebb..f70d072 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -9250,12 +9250,12 @@ load_init_program(proc_t p)
+ 	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
+ 	boot_progress_stage("Data mount returned");
+ 	if (data_error) panic("offline scratch Data mount failed: %d", data_error);
+-#if defined(XNU_BOOT_PROGRESS) && XNU_BOOT_PROGRESS
++#if (defined(XNU_BOOT_PROGRESS) && XNU_BOOT_PROGRESS) || (defined(XNU_WATCHDOG_POLICY) && XNU_WATCHDOG_POLICY)
+ 	extern int sheng_boot_watchdog_policy(void *, uint64_t);
+-	boot_progress_stage("temporary watchdog launch policy enter");
+ 	int policy_error=sheng_boot_watchdog_policy(p, (uint64_t)scratch_addr);
+-	if (policy_error) panic("sheng watchdog launch policy failed: %d", policy_error);
+-	boot_progress_stage("temporary watchdog launch policy ready");
++	if (policy_error) {
++		printf("sheng watchdog launch policy: %d\n", policy_error);
++	}
+ #else
+ 	/* Without BootProgress (iPadOS 27): the same launchd job policy, from the source storage archive. */
+ 	extern int sheng_boot_watchdog_policy(void *, uint64_t) __attribute__((weak_import));
