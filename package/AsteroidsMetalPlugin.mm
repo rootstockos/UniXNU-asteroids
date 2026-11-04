@@ -21,6 +21,7 @@
 #import <Foundation/Foundation.h>
 #include <pthread.h>
 #include <dlfcn.h>
+#include <mach-o/dyld.h>
 #if __has_feature(ptrauth_calls)
 #include <ptrauth.h>
 #endif
@@ -270,6 +271,29 @@ static bool readTask(uintptr_t address, void *out, size_t size) {
 [[maybe_unused]] static bool writeTask(uintptr_t address, const void *data, size_t size) {   // arm64e only on asteroids
     return vm_write(mach_task_self(), address, (vm_offset_t) data, (mach_msg_type_number_t) size) == KERN_SUCCESS;
 }
+#if defined(__arm64e__)
+// QuartzCore addresses of one dyld shared cache, before its slide, found by name in that cache's symbols (ipsw dyld symaddr): an iPad and an
+// iPhone of the same build have different caches, so an address is used only in the cache whose UUID it was read from.
+struct QuartzCoreSites {
+    uint8_t uuid[16];
+    uintptr_t renderServerStart;   // _CARenderServerStart, for the slide
+    uintptr_t debugValues;         // CA's float debug options (__ZL12debug_values); the EDR headroom override is index 21
+};
+static const QuartzCoreSites kQuartzCoreSites[] = {
+    // iPadOS 27.0.1 24A446 (iPad17,1-4) CE33B2BA-2EBB-3B58-A04E-1953E12112AE
+    {{0xce, 0x33, 0xb2, 0xba, 0x2e, 0xbb, 0x3b, 0x58, 0xa0, 0x4e, 0x19, 0x53, 0xe1, 0x21, 0x12, 0xae}, 0x1846dce88, 0x1e7020fc0},
+    // iOS 27.0.1 24A446 (iPhone17,4) A54D617A-342B-3A29-8F63-B9F93CE76141: QuartzCore's code at the iPad's addresses, its data 0x4000 higher
+    {{0xa5, 0x4d, 0x61, 0x7a, 0x34, 0x2b, 0x3a, 0x29, 0x8f, 0x63, 0xb9, 0xf9, 0x3c, 0xe7, 0x61, 0x41}, 0x1846dce88, 0x1e7024fc0},
+};
+// The entry of the running cache, or null: then nothing is read or written by address.
+static const QuartzCoreSites *quartzCoreSites() {
+    uuid_t uuid;
+    if (!_dyld_get_shared_cache_uuid(uuid)) return nullptr;
+    for (const QuartzCoreSites &sites : kQuartzCoreSites)
+        if (!memcmp(sites.uuid, uuid, sizeof uuid)) return &sites;
+    return nullptr;
+}
+#endif
 // EXPERIMENT (second report onward): this display path takes plain 8-bit BGRA only, so tell the render server's display that it has neither the deep
 // (10-bit) framebuffer nor universal buffer compression. Whether the state it reads those from is the whole story is what the markers show.
 static unsigned gReports;
@@ -454,14 +478,17 @@ static id deviceForPort(unsigned port) {
         // iPadOS 27 picks a 64-bit half-float framebuffer ('RGhA') whenever the display's EDR headroom is above 1 (this panel reports XDR
         // headroom), which the display path can only show converted, slowly and greyed. As on iPadOS 17, where the render server drew plain
         // 8-bit BGRA, the headroom is held at 1: the render server's headroom override (CA::WindowServer::Display::edr_headroom reads it
-        // first when nonzero; 24A446 QuartzCore __DATA_DIRTY 0x1e7021014, CARenderServerStart at 0x1846dce88 for the cache slide) and its
-        // environment spelling for an option table read after this.
+        // first when nonzero; QuartzCore's debug_values index 21, at the address of this cache's kQuartzCoreSites entry) and its
+        // environment spelling for an option table read after this. A cache without an entry keeps only the environment (marker 0x6EF0).
         setenv("CA_DISPLAY_EDR_HEADROOM", "1", 1);
-        if (void *start = dlsym(RTLD_DEFAULT, "CARenderServerStart")) {
-            const uintptr_t slide = (uintptr_t)ptrauth_strip(start, ptrauth_key_function_pointer) - 0x1846dce88;
+        const QuartzCoreSites *sites = quartzCoreSites();
+        void *start = sites ? dlsym(RTLD_DEFAULT, "CARenderServerStart") : nullptr;
+        if (start) {
+            const uintptr_t slide = (uintptr_t)ptrauth_strip(start, ptrauth_key_function_pointer) - sites->renderServerStart;
             const float one = 1.0f;
-            gpu->mark(writeTask(0x1e7021014 + slide, &one, sizeof one) ? 0x6E01 : 0x6EF1);
-        }
+            gpu->mark(writeTask(sites->debugValues + 21 * sizeof(float) + slide, &one, sizeof one) ? 0x6E01 : 0x6EF1);
+        } else
+            gpu->mark(0x6EF0);
 #endif
         // On an iPad the render server's queue runs at a high GPU priority (CoreAnimation asks for it with setGPUPriority: when it makes
         // its MetalContext). A Vulkan queue's priority is fixed when the device opens, before that call, so the render server asks the
