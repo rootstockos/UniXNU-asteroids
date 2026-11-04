@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "block_bytes": 4096,
+  "image_bytes": 6020923392,
+  "block_count": 1469952,
+  "volume_uuid": "FA95C6F7-CDBC-46A3-A7E2-39E32EA5D265",
+  "generation": 1,
+  "image_sha256": "17ca9d50a93c776eaab17b85779d6186f56b7aca3b5921a9ddbf64b5a3208b3d",
+  "hash_table_sha256": "dc98de4f3cbc2bf01c8f847c7b0c1b0000683a154088857aaa739648cfcb12ce",
+  "trusted_key_sha256": "c97a039baef14b9455ee030f3d3c99bba2882914ca3d3cb0b84c7a1e5d572ab9",
+  "signature_algorithm": "RSA3072-PKCS1v1.5-SHA256",
+  "signature_verified_by_openssl": true,
+  "image_modified": false,
+  "hardware_tested": false,
+  "boot_root_authenticated": false
+}
