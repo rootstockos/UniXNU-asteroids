@@ -18,6 +18,13 @@ on:
         description: rootstockos/UniXNU ref (seed scripts)
         required: true
         default: asteroids-dev
+      os_profile:
+        description: OS profile whose OS volume seeds Data
+        type: choice
+        options:
+          - ipados-17.7.11-21H461
+          - ios-27.0.1-24A446
+        default: ipados-17.7.11-21H461
       grow_gib:
         description: Data container size in GiB (userdata is 224.8 GiB, the root image about 10 GiB, the log reserve 1 GiB)
         required: true
@@ -50,6 +57,12 @@ jobs:
           path: unixnu
           persist-credentials: false
 
+      - name: Check out the device repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: device
+          persist-credentials: false
+
       - name: DarwinBoot (packed ramdisk format)
         working-directory: unixnu
         run: git submodule update --init --depth 1 drivers/DarwinBoot
@@ -59,6 +72,7 @@ jobs:
           python-version: "3.13"
 
       - name: The IPSW's OS volume, mounted read-only
+        if: inputs.os_profile == 'ipados-17.7.11-21H461'
         working-directory: unixnu
         run: |
           url=$(python3 -c "import tomllib; print(tomllib.load(open('profiles/os/ipados-17.7.11-21H461/profile.toml', 'rb'))['ipsw']['url'])")
@@ -70,22 +84,41 @@ jobs:
           mkdir -p .cache/firmware/target-volumes/os-mount
           hdiutil attach -readonly -nobrowse -owners off -mountpoint .cache/firmware/target-volumes/os-mount "$dmg"
 
+      # iOS 27: the profile's IPSW ships its OS volume as AEA; the ipsw tool fetches the key and macOS aea decrypts it to a raw disk image.
+      - name: The IPSW's OS volume, mounted read-only (AEA)
+        if: inputs.os_profile != 'ipados-17.7.11-21H461'
+        working-directory: unixnu
+        env:
+          OS_PROFILE: ${{ inputs.os_profile }}
+        run: |
+          brew install blacktop/tap/ipsw
+          image=$(python3 ../device/scripts/fetch-os-volume.py . "$OS_PROFILE" .cache/firmware/target-volumes | tail -1)
+          mkdir -p .cache/firmware/target-volumes/os-mount
+          hdiutil attach -readonly -nobrowse -owners off -imagekey diskimage-class=CRawDiskImage \
+            -mountpoint .cache/firmware/target-volumes/os-mount "$image"
+
       - name: Seed, packed, grown
         id: seed
         working-directory: unixnu
         env:
           GROW_GIB: ${{ inputs.grow_gib }}
           SKIP_SETUP: ${{ inputs.skip_setup }}
+          OS_PROFILE: ${{ inputs.os_profile }}
         run: |
           mkdir -p build out-seed
-          python3 scripts/prepare-owner-data-fixture.py
+          # The OS's launchd and build: the fixture refuses another OS volume, and LastSystemVersion must name the booted build.
+          case "$OS_PROFILE" in
+            ios-27.0.1-24A446) launchd=c640246d38aaeb2d2372aff1e5aa0de59dec267f53c0dfc155f7837e717af68b; build=24A446 ;;
+            *) launchd=8cec9a3c44a443b08e977ccc5d577850316ad428c575dc01f09b018dbd5b6a25; build=21H461 ;;
+          esac
+          python3 scripts/prepare-owner-data-fixture.py --launchd-sha256 "$launchd"
           hdiutil detach .cache/firmware/target-volumes/os-mount
           python3 drivers/DarwinBoot/Test/packed_ramdisk.py build/owner-data-fixture/owner-data-32.cdr build/owner-data-32.dbr
           # Setup is marked on the 32 MiB seed, before the grow: skip-setup mounts its image read-write, and on the grown 200 GiB
           # container that kept the step busy for over 15 minutes (run 40478905791). The grow keeps the files and the volume UUID.
           base=build/owner-data-32.dbr
           if [ "$SKIP_SETUP" = true ]; then
-            python3 scripts/seed-data-skip-setup.py build/owner-data-32.dbr build/owner-data-32-setup.dbr
+            python3 scripts/seed-data-skip-setup.py build/owner-data-32.dbr build/owner-data-32-setup.dbr --build="$build"
             base=build/owner-data-32-setup.dbr
           fi
           python3 scripts/seed-data-grow.py --gib "$GROW_GIB" "$base" out-seed/data.dbr
@@ -93,6 +126,7 @@ jobs:
           uuid=$(python3 -c "import json; print(json.load(open('out-seed/seed.json'))['volume_uuid'])")
           {
             echo "unixnu $(git rev-parse HEAD)"
+            echo "os_profile $OS_PROFILE"
             echo "grow_gib $GROW_GIB"
             echo "skip_setup $SKIP_SETUP"
             echo "volume_uuid $uuid"

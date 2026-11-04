@@ -2482,5 +2482,10 @@
    "evidence": "pure slot: the original vtable entry is __cxa_pure_virtual; every original call site of this slot authenticates with this discriminator"
   }
  },
- "source": "remapped from legacy-display-24A446.json (iPad17,3) by local/tools/remap-display-fixture.py"
+ "source": "remapped from legacy-display-24A446.json (iPad17,3) by local/tools/remap-display-fixture.py",
+ "family_text": [
+  "0xfffffff00a17cc80",
+  "0xfffffff00a19ac80"
+ ],
+ "family_text_note": "build-gop-legacy-display-27.py's IOMobileGraphicsFamily range 0xfffffe000a27c000-0xfffffe000a29a000 of the iPad cache, moved by its offset in the kext's __TEXT_EXEC (+0x5390 to +0x23390); the segment has the same size (0x23230) in both caches"
 }
