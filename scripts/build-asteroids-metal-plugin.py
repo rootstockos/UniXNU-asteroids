@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Build the 3a's Metal plugin, test-only (T17) or published (T18, --published), into a GPU addon and an owner trust bundle for the boot payload.
 
-  build-asteroids-metal-plugin.py --unixnu PATH --trust-cache ORIGINAL.bundle [--published]
+  build-asteroids-metal-plugin.py --unixnu PATH --trust-cache ORIGINAL.bundle [--published] [--target ios|ios27]
+
+--target ios27 (the ios-27.0.1-24A446 profile) builds arm64e for iOS 27 against Turnip and the bridge built with --target ios27, and
+takes the iPhone17,4 24A446 trust bundle (bundle-ipsw-trust.py of its StaticTrustCache, Cryptex1,SystemTrustCache and
+Cryptex1,AppTrustCache).
 
 Runs on macOS with Xcode's iPhoneOS SDK, after scripts/prepare-asteroids-turnip.py (Turnip for iOS against this repository's ABI).
 Also needs UniXNU's metal2vulkan bridge for iOS (scripts/build-adreno-metal-bridge.py --target ios, build/adreno-metal-bridge/ios).
@@ -36,7 +40,10 @@ import shader_tools
 
 DEVICE = Path(__file__).resolve().parents[1]
 OUT = DEVICE / 'build/asteroids-metal-plugin'
-ORIGINAL_TRUST_SHA256 = '7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7'
+# The unchanged original trust bundle of each target's IPSW: iPad7,1 21H461 (static and System) and iPhone17,4 24A446 (static and
+# the two cryptex trust caches).
+ORIGINAL_TRUST_SHA256 = {'ios': '7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7',
+                         'ios27': '856cae44229b7c4ab2b502e505d32d28f68a1ced0107d4ba97b10774f9f8f223'}
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument('--unixnu', type=Path, required=True)
 parser.add_argument('--trust-cache', type=Path, required=True, help='the unchanged original static/System trust bundle')
@@ -45,14 +52,17 @@ parser.add_argument('--clients', default='*',
                     help='T31: the Metal clients beside backboardd (NativeAdrenoMetal.clients; T62: "*" every process); empty for none')
 parser.add_argument('--sample-only', action='store_true', help='T22, with --published: no Metal device, only the stack samples')
 parser.add_argument('--no-audio', action='store_true', help='T41: leave out the audio server plug-in (audio/ShengAudio.driver)')
+parser.add_argument('--target', choices=('ios', 'ios27'), default='ios', help='iOS 17 arm64 (default) or iOS 27 arm64e')
 args = parser.parse_args()
 ROOT = args.unixnu.resolve()
 if args.published:
     OUT = OUT.with_name(OUT.name + ('-sample' if args.sample_only else '-published'))
-TURNIP = ROOT / 'build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dylib'
+IOS27 = args.target == 'ios27'
+TRIPLE = 'arm64e-apple-ios27.0' if IOS27 else 'arm64-apple-ios17.0'
+TURNIP = ROOT / ('build/mesa-tu-ios27' if IOS27 else 'build/mesa-tu-ios') / 'src/freedreno/vulkan/libvulkan_freedreno.dylib'
 VULKAN_INCLUDE = ROOT / '.cache/mesa-work/include'
 METAL = ROOT / 'drivers/AdrenoMetal'
-BRIDGE = ROOT / 'build/adreno-metal-bridge/ios/libadreno_metal_bridge.a'
+BRIDGE = ROOT / 'build/adreno-metal-bridge' / args.target / 'libadreno_metal_bridge.a'
 
 
 def run(command, **kw):
@@ -68,11 +78,11 @@ def cdhash(path):
 
 
 if not TURNIP.is_file():
-    sys.exit('Build Turnip first: scripts/prepare-asteroids-turnip.py --unixnu ' + str(ROOT))
+    sys.exit('Build Turnip first: scripts/prepare-asteroids-turnip.py --unixnu ' + str(ROOT) + ' --target ' + args.target)
 if not BRIDGE.is_file():
-    sys.exit('Build the bridge first: python3 scripts/build-adreno-metal-bridge.py --target ios (in ' + str(ROOT) + ')')
+    sys.exit('Build the bridge first: python3 scripts/build-adreno-metal-bridge.py --target ' + args.target + ' (in ' + str(ROOT) + ')')
 original = args.trust_cache.read_bytes()
-if hashlib.sha256(original).hexdigest() != ORIGINAL_TRUST_SHA256:
+if hashlib.sha256(original).hexdigest() != ORIGINAL_TRUST_SHA256[args.target]:
     sys.exit('The trust bundle is not the unchanged original static/System bundle')
 shutil.rmtree(OUT, ignore_errors=True)
 OUT.mkdir(parents=True)
@@ -96,7 +106,7 @@ for source in sorted((METAL / 'shaders').glob('smoke_*')):
 
 # 2. The plugin executable. TurnipReplay.h is on no include path here (AsteroidsMetalPlugin.mm refuses to build with it).
 sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
-base = ['-target', 'arm64-apple-ios17.0', '-isysroot', sdk, '-O2', '-Wall', '-Wextra', '-Werror']
+base = ['-target', TRIPLE, '-isysroot', sdk, '-O2', '-Wall', '-Wextra', '-Werror']
 includes = ['-I', DEVICE / 'drivers/Adreno740', '-I', METAL, '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE, '-I', OUT]
 pm4 = OUT / 'AdrenoPM4.o'
 run(['xcrun', 'clang', *base, '-std=c11', '-c', ROOT / 'kits/AdrenoPM4/AdrenoPM4.c', '-o', pm4])
@@ -117,8 +127,8 @@ pm4.unlink()
 shutil.copyfile(exe, OUT / 'NativeAdrenoMetal.unstripped')
 run(['strip', '-x', exe])
 header = exe.read_bytes()[:12]
-if struct.unpack('<3I', header)[:2] != (0xfeedfacf, 0x100000c) or struct.unpack('<3I', header)[2] & 0xffffff:
-    sys.exit('Expected an ordinary ARM64 (subtype 0) Mach-O')
+if struct.unpack('<3I', header)[:2] != (0xfeedfacf, 0x100000c) or struct.unpack('<3I', header)[2] & 0xffffff != (2 if IOS27 else 0):
+    sys.exit('Expected an ARM64 Mach-O of subtype ' + ('2 (arm64e)' if IOS27 else '0'))
 
 # 3. Turnip inside the bundle (NativeTurnipSmoke.h's libraryPath looks next to the executable), signed on its own before the bundle so
 #    the bundle's resource seal covers its final bytes.
@@ -130,18 +140,18 @@ run(['strip', '-x', turnip])
 run(['codesign', '--force', '--sign', '-', '--pagesize', '4096', '--identifier', 'org.rootstockos.turnip', turnip])
 (bundle / 'Info.plist').write_bytes(plistlib.dumps(dict(
     CFBundleIdentifier='org.rootstockos.NativeAdrenoMetal', CFBundleExecutable='NativeAdrenoMetal', CFBundlePackageType='BNDL',
-    CFBundleVersion='1', CFBundleShortVersionString='1', NSPrincipalClass='NativeAdrenoMetalDevice', MinimumOSVersion='17.0'),
+    CFBundleVersion='1', CFBundleShortVersionString='1', NSPrincipalClass='NativeAdrenoMetalDevice', MinimumOSVersion='27.0' if IOS27 else '17.0'),
     fmt=plistlib.FMT_XML))
 run(['codesign', '--force', '--sign', '-', '--pagesize', '4096', '--identifier', 'org.rootstockos.NativeAdrenoMetal', bundle])
 for path in (bundle, turnip):
     run(['codesign', '--verify', '--strict', path])
 hashes = {'plugin_cdhash': cdhash(bundle), 'turnip_cdhash': cdhash(turnip)}
 # T41: sheng's audio server plug-in (hal/ShengAudioPlugIn.c, scripts/build-sheng-audio-hal.py), which opens the kernel's audio service
-# (package/AsteroidsAudioProbe.cpp, sheng-audio). The addon carries it as audio/ShengAudio.driver; the kernel mounts audio/ over
+# (package/AsteroidsAudioProbe.cpp, audio=1). The addon carries it as audio/ShengAudio.driver; the kernel mounts audio/ over
 # /System/Library/Audio/Plug-Ins/HAL (patches/xnu/zzyd-board-audio-addon-mount.patch), and its CDHash joins the owner trust module.
 audio = None
 if not args.no_audio:
-    run([sys.executable, DEVICE / 'scripts/build-sheng-audio-hal.py', OUT / 'audio-hal'])
+    run([sys.executable, DEVICE / 'scripts/build-sheng-audio-hal.py', OUT / 'audio-hal', TRIPLE])
     audio = OUT / 'audio-hal/ShengAudio.driver'
     hashes['audio_cdhash'] = cdhash(audio)
 
@@ -177,20 +187,20 @@ addon.write_bytes(b'NGPUADD2' + struct.pack('<IIQ', len(files), 0, 24 + len(body
 
 # 5. The owner trust bundle (make-owner-trust-bundle.py's layout; DarwinBoot wants a module's hashes strictly ascending).
 count = struct.unpack_from('<I', original)[0]
-assert count == 2
-offsets = struct.unpack_from('<2I', original, 4)
-originals = [original[offsets[0]:offsets[1]], original[offsets[1]:]]
+assert count >= 2
+offsets = struct.unpack_from(f'<{count}I', original, 4)
+originals = [original[start:end] for start, end in zip(offsets, offsets[1:] + (len(original),))]
 ordered = sorted(bytes.fromhex(h) for h in hashes.values())
 if len(set(ordered)) != len(ordered):
     sys.exit('Duplicate CDHash')
 identifier = uuid.uuid5(uuid.NAMESPACE_URL, 'org.rootstockos.asteroids-metal-plugin:' + ''.join(h.hex() for h in ordered))
 own = struct.pack('<I16sI', 2, identifier.bytes, len(ordered)) + b''.join(h + bytes([2, 0, 0, 0]) for h in ordered)
 modules = [own, *originals]
-starts, cursor = [], 16
+starts, cursor = [], 4 + 4 * len(modules)
 for module in modules:
     starts.append(cursor)
     cursor += len(module)
-trust = struct.pack('<4I', 3, *starts) + b''.join(modules)
+trust = struct.pack(f'<{1 + len(modules)}I', len(modules), *starts) + b''.join(modules)
 assert trust[starts[1]:] == original[offsets[0]:]
 (OUT / 'owner-trust.bundle').write_bytes(trust)
 (OUT / 'trust.json').write_text(json.dumps(dict(hashes, addon_sha256=hashlib.sha256(addon.read_bytes()).hexdigest(),

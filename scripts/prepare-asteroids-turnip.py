@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare and build Turnip (Mesa freedreno Vulkan with UniXNU's Darwin kernel backend) for the 3a's Adreno 810.
 
-  prepare-asteroids-turnip.py --unixnu PATH [--fetch-only]
+  prepare-asteroids-turnip.py --unixnu PATH [--fetch-only] [--target ios|ios27]
 
 Runs on macOS with Xcode's iPhoneOS SDK. Everything goes under the UniXNU tree's ignored .cache/ and build/:
   .cache/mesa-work   Mesa at the commit scripts/data/adreno-compiler-inputs.json pins, sparse, with the recorded patches applied
@@ -10,6 +10,7 @@ Runs on macOS with Xcode's iPhoneOS SDK. Everything goes under the UniXNU tree's
   .cache/mesa-tools  bison at the pinned version and checksum (macOS ships 2.3; Mesa needs 3)
   .cache/shader-tools glslangValidator for Mesa's Vulkan runtime (shader_tools.py)
 Then UniXNU's scripts/build-turnip-darwin.py --target ios builds build/mesa-tu-ios/src/freedreno/vulkan/libvulkan_freedreno.dylib
+(--target ios27: arm64e for iOS 27, in build/mesa-tu-ios27)
 against this repository's NativeAdreno ABI (drivers/Adreno740/NativeAdrenoABI.h), the one the 3a's kernel serves.
 
 The pinned Mesa already lists the Adreno 810 (freedreno_devices.py: chip id 0xffff44010000, a8xx_gen1, one CCU, one slice), so the
@@ -31,6 +32,7 @@ DEVICE = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument('--unixnu', type=Path, required=True, help='the UniXNU tree (rootstockos/UniXNU asteroids-dev)')
 parser.add_argument('--fetch-only', action='store_true', help='prepare the source and tools, do not build')
+parser.add_argument('--target', choices=('ios', 'ios27'), default='ios', help='iOS 17 arm64 (default) or iOS 27 arm64e')
 args = parser.parse_args()
 ROOT = args.unixnu.resolve()
 CACHE = ROOT / '.cache'
@@ -111,4 +113,4 @@ if args.fetch_only:
 
 # 4. Turnip for iOS against this board's ABI. Mesa's Vulkan runtime compiles its internal shaders with glslangValidator.
 shader_tools.ensure(ROOT)
-run([sys.executable, ROOT / 'scripts/build-turnip-darwin.py', '--target', 'ios', '--abi-dir', DEVICE / 'drivers/Adreno740'], cwd=ROOT)
+run([sys.executable, ROOT / 'scripts/build-turnip-darwin.py', '--target', args.target, '--abi-dir', DEVICE / 'drivers/Adreno740'], cwd=ROOT)
