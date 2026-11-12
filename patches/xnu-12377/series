@@ -1,12 +1,15 @@
 # Board patches for xnu-12377 (the iOS 27 profile) in application order, after the arch, SoC and OS series.
-# sheng's xnu-12377 board series (UniXNU/UniXNU-sheng patches/xnu-12377, 2026-11-04): the CPU idle helper and the E/P Edge
-# scheduler (the 3a's A520 / A720 clusters as sheng's), the audio add-on mount, the optional source storage hook and its
-# iPadOS 27 kernel bring-up. Its Wi-Fi and latency trace patches are left out.
+# sheng's xnu-12377 board series (UniXNU/UniXNU-sheng patches/xnu-12377, cd73e23 2026-11-12): the CPU idle helper and the E/P Edge
+# scheduler (the 3a's A520 / A720 clusters as sheng's), the audio add-on mount, the optional source storage hook, its
+# iPadOS 27 kernel bring-up, the dyld pager's source page release and the SIGP assert after SGI recovery. Left out: its Wi-Fi,
+# Bluetooth and AppSync runtime, its latency and profile traces, and the two-cluster Edge matrix (sheng's E cluster and one P
+# cluster; the 3a has a third, the prime A720).
 zzye-sheng-cpu-idle.patch
 zzyf-sheng-amp.patch
 zzyd-sheng-audio-addon-mount.patch
 source-storage-runtime.patch
 zzzz-sheng-ipados27-bringup.patch
+vmwait-dyld-pager-source-release.patch
 # T76: the board's classes registered under the kext lock (OSKextRegisterBoardClasses), unchanged from xnu-10063.
 zzyg-board-class-registration.patch
 # rootstockos/UniXNU's bring-up patches of the xnu-10063 series; these apply to xnu-12377 unchanged.
@@ -17,3 +20,4 @@ arch:../../../patches/xnu/zzzzzz-video-console-text.patch
 arch:../../../patches/xnu/zzzzzzz-last-panic-print.patch
 # The watchdog launch policy logs a failure instead of panicking, ported to sheng's xnu-12377 call site.
 zzzzzzzz-watchdog-policy.patch
+zzzzzzzzzz-sheng-sigp-reinit-assert.patch

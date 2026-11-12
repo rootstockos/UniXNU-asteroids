@@ -394,3 +394,124 @@ button-names = ["hold", "voldown", "volup"]
 
 [adt.buttons.u32]
 home-button-type = 2
+
+# ---- iPhone iOS 27 (iPhone17,4 d48ap, 24A446, arm64e): ./unixnu ... --os ios-27.0.1-24A446 ----
+# The values that differ from the iPadOS 17 board above; tables merge over it and arrays replace it. Modelled on sheng's iPadOS 27
+# board (UniXNU-sheng cd73e23). No SoftwareAES, VirtioMmioBlock, platform power or mock root: storage is the verified-root source
+# storage (owner policies in scripts/policies/ios-27.0.1-24A446), the CPU, display, input, audio and GPU board code comes from
+# build-native-legacy-display-27.py. ShengHidInput's own recipe builds for iPadOS 17 only; the 27 builder compiles its source.
+[os_overrides."ios-27.0.1-24A446"]
+remove = ["adt.chosen.bytes.boot-manifest-hash"]   # the iPadOS 17 manifest's hash; OWNER_BOOT_MANIFEST supplies 27's
+
+[os_overrides."ios-27.0.1-24A446".components]
+include = ["ArmDTPlatform", "ArmCpu", "RamBlock", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "AppleKeyStoreState",
+           "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "Sm7635Platform", "QcomPmicRtc"]
+
+[os_overrides."ios-27.0.1-24A446".kernel]
+defconfig = "asteroids_ios27_defconfig"
+config_fragments = ["arch:configs/common.config", "soc:configs/sm7635.config", "os:configs/ipados.config"]
+patch_series = ["arch:patches/xnu/series", "soc:patches/xnu-12377/series", "os:patches/xnu/series", "device:patches/xnu-12377/series"]
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "component:ArmDTPlatform",
+  "component:QcomPmicRtc",
+  "component:ArmCpu",
+  "build-libpthread-kernel.py",
+  "component:ShengUfs",
+  "build-sheng-source-storage.py --policy-dir scripts/policies/ios-27.0.1-24A446",
+  "component:RamBlock",
+  "prepare-asteroids-gmu-votes.py --from-data",
+  "prepare-asteroids-gmu.py",
+  "prepare-asteroids-tfa.py",
+  "component:AppleKeyStoreState",
+  "component:Adreno740",
+  "build-adreno740-accelerator.py",
+  "build-native-legacy-display-27.py",
+  "build-fileset-release-reference.py --tree . --lto",
+]
+
+[os_overrides."ios-27.0.1-24A446".payload]
+size_mib = 176                         # sheng's iPadOS 27 size: the fileset kernel collection and the policy headers
+root_policies = "{tree}/build/sheng-source-storage/root-policies.bin"
+# The iPadOS 17 list without what the verified root replaces (pmgr=2 and the placeholder PMGR, native-ufs-allow-unverified,
+# offline-apfs-load, -apfs_shared_datavolume), plus sheng's iPadOS 27 switches (native-source-storage=1, use_contiguous_hint=0,
+# no-lc=1: launch constraints off for the owner's processes) and the whole-number UI scale 3 (360 points, pixel exact).
+kernel_args = [
+  "-v",
+  "-enable_kprintf_spam",
+  "-textconsole",
+  "serial=3",
+  "debug=0x14e",
+  "kt_fixed_zones=120",
+  "-no_slto_panic",
+  "use_contiguous_hint=0",
+  "ml-timeout-lock-panic-scale=40",
+  "armcpu-diagnostics=1",
+  "native-source-storage=1",
+  "native-ufs-root=1",
+  "no-lc=1",
+  "data-persist=2",
+  "log=1",
+  "lite=1",
+  "disable-jobs=com.apple.bluetoothd,com.apple.coreduetd",
+  "offline-mobile-graphics-load=1",
+  "offline-mobile-graphics-client=0",
+  "offline-legacy-register=1",
+  "offline-legacy-gop=1",
+  "offline-legacy-unit-scale=3",
+  "offline-legacy-pm=1",
+  "offline-legacy-validate=1",
+  "offline-legacy-transfer=1",
+  "offline-legacy-cpu-present=1",
+  "offline-legacy-phase=4",
+  "vsync=120",
+  "build-tag=I27",
+  "cpufreq=4",
+  "gpu-dcvs=1",
+  "gpu-dcvs-min=6",
+  "gpu-dcvs-max=7",
+  "gpu-irq=0",
+  "buttons=1",
+  "asteroids-panel=3",
+  "boot-ui-focus4=backboardd",
+  "gpu-addon=1",
+  "touch-hid=1",
+  "fb-gpu=1",
+  "dpu-flush=1",
+  "dpu-scanout=2",
+  "dpu-linux=1",
+  "audio=1",
+  "smp=1",
+  "armcpu-spi-ipi=1",
+]
+
+[os_overrides."ios-27.0.1-24A446".payload.adt]
+chip_id = "8140"                       # iPhone17,4 (T8140); with the profile's board-id 10 a Mac finds the device class
+root_match_volume_uuid = "634783FE-1961-47A7-959E-C2676F56F57A"   # the iPhone17,4 24A446 OS volume
+
+# The Data seed and the IPSW trust caches (UniXNU scripts/unixnu/runtime.py and build-boot-runtime.py, on macOS). The GPU addon is
+# this board's (build-asteroids-metal-plugin.py --target ios27 with its owner trust bundle), passed as --gpu-addon and
+# --owner-trust-cache, so the runtime step builds the Data seed only; upstream's AdrenoMetal plugin is not built.
+[os_overrides."ios-27.0.1-24A446".payload.runtime]
+tool = "scripts/build-boot-runtime.py"
+target = "ios27"
+build = "24A446"
+data_gib = 200                         # userdata is 224.8 GiB; the iPhone root image ends at 15.1 GiB, the log reserve is 1 GiB
+skip_setup = true
+trust_components = ["StaticTrustCache", "Cryptex1,SystemTrustCache", "Cryptex1,AppTrustCache"]
+
+[os_overrides."ios-27.0.1-24A446".adt.defaults.u32]
+# No Apple PMGR or SEP: report a virtual platform, so AMFI does not wait for an ApplePMGRNub (sheng's iPadOS 27 board).
+vmm-present = 1
+# As sheng: the kernel's vnode table (CONFIG_VNODES 1024) clips desiredvnodes, so XNU reads this first: owned memory / 64 KiB
+# + 1024 for the owned 6 GiB.
+"kern.maxvnodes" = 99328
+
+[os_overrides."ios-27.0.1-24A446".adt.chosen.u32]
+# This SoC has no CTRR: kernel text stays writable by hardware, which XNU must be told (sheng's iPadOS 27 board).
+kernel-ctrr-to-be-enabled = 0
+
+[package.defconfig]
+"ipados-17.7.11-21H461" = "asteroids_defconfig"
+"ios-27.0.1-24A446" = "asteroids_ios27_defconfig"

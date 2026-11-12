@@ -1,0 +1,33 @@
+# Nothing Phone (3a), iPhone17,4 iOS 27.0.1 24A446 (board.toml [os_overrides."ios-27.0.1-24A446"]), arm64e.
+# sheng's sheng_ipados27_defconfig (UniXNU-sheng cd73e23) with this board's SoC and display options. The arm64e
+# fragment (arch:configs/common.config) supplies corecrypto 14, pthread, ArmDTPlatform, ArmCpu, the timer and PAN; the
+# OS fragment the code signature hash cache.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+# The PMK8550 real-time clock (UniXNU-sm7635-common QcomPmicRtc), as on iPadOS 17.
+CONFIG_XNU_QCOM_PMIC_RTC=y
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/sheng-source-storage/libShengSourceStorage.a"
+CONFIG_XNU_KERNEL_CHAINED_FIXUPS=y
+# The boot image carries the signed policy headers (scripts/policies/ios-27.0.1-24A446, our own owner key); their hash
+# tables are the userdata objects OS.vroot and SystemOS.vroot.
+CONFIG_XNU_SOURCE_STORAGE_TABLES="userdata"
+CONFIG_XNU_SOURCE_STORAGE=y
+CONFIG_XNU_OWNER_ROOT_AUDIT=y
+CONFIG_XNU_OWNER_ROOT_TRUST=y
+# SystemOS cryptex, boot manifest and the writable Data volume from the Data seed's RAM disk.
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+CONFIG_XNU_OWNER_BOOT_MANIFEST=y
+CONFIG_XNU_OWNER_DATA_MOUNT=y
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
+# Placeholder: the runtime step ([payload.runtime], UniXNU scripts/unixnu/runtime.py) writes the Data seed's volume UUID here
+# before the kernel build.
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="00000000-0000-0000-0000-000000000000"
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=y
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
+# Off as on iPadOS 17: the Adreno classes are linked from the display archive (build-native-legacy-display-27.py), which
+# also starts the GMU, so the kernel does not force-load libAdreno740.a a second time.
+CONFIG_XNU_NATIVE_ADRENO=n

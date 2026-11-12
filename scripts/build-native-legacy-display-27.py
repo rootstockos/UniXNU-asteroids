@@ -423,7 +423,11 @@ for source_dir, relative in ((hid_src / 'IOHIDFamily', 'IOKit/hid'), (hid_src / 
     for path in sorted(source_dir.glob('*.h')):
         shutil.copyfile(path, destination / path.name)
 sdk_kernel = Path(header_report['sdk']) / 'System/Library/Frameworks/Kernel.framework/Versions/A/Headers'
-hid_source = ROOT / 'drivers/ShengHidInput/NativeHidInput.cpp'
+# The device repository's ShengHidInput submodule, as sheng's 27 builder: its catalog recipe builds for iPadOS 17 only, so the
+# component is not selected on 27 and the tree has no drivers/ShengHidInput link.
+DEVICE = Path(os.environ.get('UNIXNU_DEVICE') or ROOT.parents[5] / 'UniXNU-asteroids')
+hid_source = DEVICE / 'drivers/ShengHidInput/NativeHidInput.cpp'
+require(hid_source.is_file(), f'{hid_source} missing: check out the device repository with its submodules')
 hid_command = source_drivers.compile_command(r, hid_source, SRC / 'NativeHidInput.o', ['-I', str(include), '-idirafter', str(sdk_kernel)],
                                              ['-I', str(ROOT / '.cache/xnu-work/osfmk'), '-DNATIVE_HID_SOURCE_API=1'])
 run(hid_command, cwd=r['directory'])
