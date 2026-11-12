@@ -61,7 +61,7 @@ archives = [
   # T39: the PMK8550 RTC behind the SPMI arbiter (CONFIG_XNU_QCOM_PMIC_RTC), published as IORTC for the platform expert.
   "component:QcomPmicRtc",
   # Kept: the CPU, GICv3 and timer provider (XNU_ARMCPU). The GIC layout (dist 0x17100000, redist 0x17180000, stride
-  # 0x40000) and 19.2 MHz timer are sheng's, taken from the ADT. Secondaries stay off without sheng-smp=1.
+  # 0x40000) and 19.2 MHz timer are sheng's, taken from the ADT. Secondaries stay off without smp=1.
   "component:ArmCpu",
   # Restored after the first boot: XNU registers pthread at early boot (panic "pthread kernel extension not loaded"
   # at pthread_shims.c:318 without it). XNU_SOURCE_PTHREAD links this archive.
@@ -69,7 +69,7 @@ archives = [
   # Restored after the second boot: the unchanged AMFI panics "AMFI: No PMGR?" (ConfigurationSettings.cpp:235) on
   # every boot, not only with a UFS root. sheng's provider (package/ShengPlatformPower.cpp, unchanged) touches no
   # hardware; it only publishes an ApplePMGR whose power operations stop with a panic. Our copy of sheng's build
-  # script pins two values so it builds in a fresh tree. XNU_SHENG_PMGR links it; sheng-pmgr=2 runs it.
+  # script pins two values so it builds in a fresh tree. XNU_SHENG_PMGR links it; pmgr=2 runs it.
   "build-asteroids-platform-power.py",
   # UFS, step 1: NativeUfs for its read-only probe (native-ufs-probe=10: GPT, userdata, first block). Its hardware
   # facts hold on SM7635: host 0x1d84000, apps SMMU 0x15000000 with UFS stream 0x60, and the GCC UFS GDSCs (0x77004,
@@ -89,7 +89,7 @@ archives = [
   "build-mockfs-fixture.py",
   # T25: the boot progress kit (sheng's diagnostics, package/Boot*.c): the live page, user fault evidence, the UI trace of the
   # boot-ui-focus processes, and our launchd watchdog policy (uke's BootWatchdogPolicy.c, formerly build-watchdog-policy.py:
-  # watchdogd off, sheng-disable-jobs, the Gunyah watchdog pet every 5 s).
+  # watchdogd off, disable-jobs, the Gunyah watchdog pet every 5 s).
   "build-boot-progress.py",
   # Display, CPU-rendered (T24b): UniXNU's display recipe (docs/porting/display.md). UniXNU-sheng 0e1f6e5's
   # build-gop-legacy-display.py and LegacyDisplayProbe.cpp (here scripts/build-native-legacy-display.py and
@@ -158,21 +158,21 @@ kernel_args = [
   "-no_slto_panic",                   # kept: generic, avoids the SLTO panic on this non-Apple CPU
   "ml-timeout-lock-panic-scale=40",   # kept: generic; a slow 4 KiB-page bring-up with diagnostics trips lock timeouts
   "armcpu-diagnostics=1",             # kept: generic ArmCpu, prints the CPU and GIC state; first check if interrupts fail
-  "sheng-pmgr=2",                     # kept: also the code default, but UniXNU's payload check requires it here for the UFS root
+  "pmgr=2",                           # kept: also the code default, but UniXNU's payload check requires it here for the UFS root
   # UFS root, step 2, after uke's working set (Allenwdk/UniXNU-uke board.toml) without its display and input:
   "native-ufs-root=1",                # NativeUfs publishes the OS and SystemOS windows of the userdata root image
   "native-ufs-allow-unverified=1",    # without the owner policy bundle (our NativeUfs fork); reads are not authenticated
   "offline-apfs-load=1",              # load APFS (and IOStorageFamily) so the windows' volumes appear
   "-apfs_shared_datavolume",          # as uke and sheng: the Data volume is shared with the root's volume group
-  "sheng-data-persist=2",             # Data writes go through to the store at the end of userdata
-  "sheng-log=1",                      # persistent kernel log at the end of userdata
-  # T40d: sheng-lite=1 as sheng runs it (UniXNU-sheng board.toml): BootWatchdogPolicy.c's list of jobs with nothing to do on this
+  "data-persist=2",                   # Data writes go through to the store at the end of userdata
+  "log=1",                            # persistent kernel log at the end of userdata
+  # T40d: lite=1 as sheng runs it (UniXNU-sheng board.toml): BootWatchdogPolicy.c's list of jobs with nothing to do on this
   # phone (network, iCloud, photo analysis) and the respawn loops (fairplayd.A2 relaunched every few seconds through T40c). It holds
   # T23's XPC wait cycle (identityservicesd, locationd, CommCenter). With the GPU addon it keeps bluetoothd for the addon's daemon;
   # the upstream plugin needs no daemon, so bluetoothd stays off below, with coreduetd (T35, as sheng d4c299b: one thread above
   # 50 % of a core for the whole boot).
-  "sheng-lite=1",
-  "sheng-disable-jobs=com.apple.bluetoothd,com.apple.coreduetd",
+  "lite=1",
+  "disable-jobs=com.apple.bluetoothd,com.apple.coreduetd",
   # The read-only probe (native-ufs-probe=10) found userdata at 0x256248-0x3a8bffa; see [userdata].
   # Display, CPU-rendered, as uke boots it: load IOMobileGraphicsFamily, register NativeLegacyDisplay on the GOP
   # framebuffer as the default surface, and present frames drawn by the CPU. offline-hid-* and offline-key-events publish
@@ -191,7 +191,7 @@ kernel_args = [
   # T24b: the refresh policy step of docs/porting/display.md. GopFramebuffer reports this rate through slot 301 and
   # publishes IOMFBDisplayRefresh before registerService; the render server paces its display timer by it. 120 Hz is the
   # 3a panel's rated mode, not a measured one (there is no DPU timing probe for the SM7635 yet).
-  "sheng-vsync=120",
+  "vsync=120",
   # T25: the boot progress kit's live page and UI trace (docs/guide/debugging.md of UniXNU). The trace samples the render
   # server's process, SpringBoard, and the two that decide launches and kills; one page every 8 s.
   # T25b: T25 found all four idle and liveactivitiesd in a Swift trap loop, and the last display client was pid 71
@@ -206,23 +206,23 @@ kernel_args = [
   # backboardd). t28-power-ack=1 answers a refused power-on (selector 12) with success while the powered word says on;
   # T28b is the same kernel with t28-power-ack=0.
   # T29: AppleKeyStore stand-in published on the persistent Data disk (package/KeyStoreProbe.cpp); T28 logging unchanged.
-  # T30: T29 with the GPU (sheng-gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
-  "sheng-build-tag=T40",
-  "sheng-cpufreq=4",                  # T35: sheng's CPU governor (touch boost, frame floor); T35b/T36a ran it stable
+  # T30: T29 with the GPU (gpu-power=19 and the published Metal addon, below). t28-power-ack is off by default.
+  "build-tag=T40",
+  "cpufreq=4",                        # T35: sheng's CPU governor (touch boost, frame floor); T35b/T36a ran it stable
   # T40c: sheng's GPU governor (GpuPowerProbe gpuDcvsThread, UniXNU-sheng a338c71/36ec562) on, as sheng runs it. sheng's floor
   # (level 3) is 510 MHz on the 3a and held every frame there in T39b; the floor is the former fixed level 6 (763 MHz), so frames
   # never run slower than before. The ceiling is level 7 (895 MHz), not the top: nothing throttles the GPU for temperature yet, a
   # touch holds the ceiling for a second, and 1050 MHz (T34b-l9) gained almost nothing.
-  # T40e: with nothing to draw for 80 ms the GPU drops below the floor to sheng-gpu-dcvs-idle (package default level 1, 264 MHz);
+  # T40e: with nothing to draw for 80 ms the GPU drops below the floor to gpu-dcvs-idle (package default level 1, 264 MHz);
   # T40d idled at 763 MHz.
   # T40g: GPU-written imports (render targets) get no per-submission cache maintenance, read-only imports keep their clean (driver
-  # default; sheng-gpu-import-policy=0 maintains every import as before). T40f-skip found GPU-side imports needed none.
-  "sheng-gpu-dcvs=1",
-  "sheng-gpu-dcvs-min=6",
-  "sheng-gpu-dcvs-max=7",
+  # default; gpu-import-policy=0 maintains every import as before). T40f-skip found GPU-side imports needed none.
+  "gpu-dcvs=1",
+  "gpu-dcvs-min=6",
+  "gpu-dcvs-max=7",
   # T39b: fence waiters that sleep for the GPU interrupt timed out on 72 % of waits (the wake comes late), so they spin, as T37.
-  "sheng-gpu-irq=0",
-  "sheng-buttons=1",                  # T35: power and volume through the PMIC interrupt; T36a: work in iOS
+  "gpu-irq=0",
+  "buttons=1",                        # T35: power and volume through the PMIC interrupt; T36a: work in iOS
   "asteroids-panel=3",                # T37: iOS brightness and panel sleep over DSI0 DCS commands; T37d: works
   "boot-ui-focus4=backboardd",
   # GPU power observation (package/GpuPowerProbe.cpp), one stage per test boot: 1 reads the GCC GPU branches, then GPUCC,
@@ -238,42 +238,42 @@ kernel_args = [
   # WPTR writes) and has it write one word, 15 loads the zap shader (PAS 13) and leaves secure mode, 16 runs a first IB
   # and has the GPU write a red/green/blue bar into the framebuffer, redrawn every 200 ms for 2 minutes, 17 adopts the BO
   # pool, attaches fences and the timer, publishes NativeAdreno's user client and runs it from the kernel, 18 draws the bar
-  # once, does what 17 does, then prints for ten minutes what user space (the GPU addon's test daemon, sheng-gpu-addon=1)
+  # once, does what 17 does, then prints for ten minutes what user space (the GPU addon's test daemon, gpu-addon=1)
   # does with the service, 19 also publishes the AGXAccelerator for the original Metal discovery (the addon's Metal plugin
-  # then tests in backboardd; T18's published plugin returns a Metal device there instead). With 19, sheng-fb-gpu=1 lets
+  # then tests in backboardd; T18's published plugin returns a Metal device there instead). With 19, fb-gpu=1 lets
   # the published plugin copy the display's frames to the scanout with the GPU (drivers/GopFramebuffer/NativeGOPPresenter.cpp);
   # a frame nobody takes keeps the CPU copy.
-  # T33: mode 19 is GpuPowerProbe's default; sheng-gpu-power=0 turns it off.
-  # T24-T29: no sheng-gpu-power (GpuPowerProbe.cpp was not built).
+  # T33: mode 19 is GpuPowerProbe's default; gpu-power=0 turns it off.
+  # T24-T29: no gpu-power (GpuPowerProbe.cpp was not built).
   # T30: mode 19 with T19's published Metal addon (metal2vulkan on Turnip in backboardd). T19 stopped at "encodes, never
   # commits" while SpringBoard itself never finished booting (T28-T29: the missing AppleKeyStore).
-  # T33: these values are now the board package's defaults, so they are no longer passed: sheng-pmgr=2, sheng-aks=1,
-  # sheng-disable-watchdogd=1, offline-legacy-unit-scale=2, boot-progress=2, boot-display-page=1, offline-hid-home=1,
-  # offline-hid-input=1, offline-key-events=1, sheng-gpu-power=19 and asteroids-touch=6 (pass =0 to turn one off).
-  # T33: with mode 19 and the addon the display probe turns the GPU copy to the panel on by itself (sheng-fb-gpu=0 keeps the
+  # T33: these values are now the board package's defaults, so they are no longer passed: pmgr=2, aks=1,
+  # disable-watchdogd=1, offline-legacy-unit-scale=2, boot-progress=2, boot-display-page=1, offline-hid-home=1,
+  # offline-hid-input=1, offline-key-events=1, gpu-power=19 and asteroids-touch=6 (pass =0 to turn one off).
+  # T33: with mode 19 and the addon the display probe turns the GPU copy to the panel on by itself (fb-gpu=0 keeps the
   # CPU copy, which took 143-285 ms a frame and showed stale patches). T40d: the on-screen diagnostics stay on once the UI runs
-  # (package default; sheng-banner=0 switches them off, the rows go to the UFS log either way), the audio DSP and battery service
-  # start by default (sheng-adsp=2) and the GPU IO coherence probe is off by default (sheng-gpu-coherent=1 runs it).
-  "sheng-gpu-addon=1",
+  # (package default; banner=0 switches them off, the rows go to the UFS log either way), the audio DSP and battery service
+  # start by default (adsp=2) and the GPU IO coherence probe is off by default (gpu-coherent=1 runs it).
+  "gpu-addon=1",
   # Touch: package/AsteroidsTouchProbe.cpp runs stage 6 by default (asteroids-touch=<n> for another stage, 0 for none) and
   # publishes the FT3683G's contacts to TouchState; UniXNU's NativeHidInput hands them to backboardd only with this argument
   # (read by the core driver, so it stays). The boot-ui-focus rows for PerfPowerServices and SpringBoard were dropped in T32.
-  "sheng-touch-hid=1",
-  "sheng-fb-gpu=1",
+  "touch-hid=1",
+  "fb-gpu=1",
   # T40g: the 3a's panel is scanned out by VIG 0 alone (recovery's DPU registers: VIG 0 source = the frame, CTL 0 stages only VIG 0; DMA 0-2
-  # empty), so direct scanout (sheng-dpu-scanout=2, drivers/GopFramebuffer fork) flushes bit 0 only. Inert while direct scanout is off.
-  "sheng-dpu-flush=1",                   # kept: UniXNU core's NativeGOPPresenter reads it (default off); without it T34 mixed GPU and CPU copy paths
-  # T49-gpuwait (2026-10-28): zero copy without the flicker. The display bank set up as Linux does (sheng-dpu-linux=1, T40k) and the
+  # empty), so direct scanout (dpu-scanout=2, drivers/GopFramebuffer fork) flushes bit 0 only. Inert while direct scanout is off.
+  "dpu-flush=1",                         # kept: UniXNU core's NativeGOPPresenter reads it (default off); without it T34 mixed GPU and CPU copy paths
+  # T49-gpuwait (2026-10-28): zero copy without the flicker. The display bank set up as Linux does (dpu-linux=1, T40k) and the
   # flip only once the GPU has finished what it was given (GopFramebuffer's default with direct scanout; T49-probe caught 94 % of flips
   # with GPU work outstanding and 39 % of surfaces changing after the flip, T49-gpuwait 0).
-  "sheng-dpu-scanout=2",
-  "sheng-dpu-linux=1",
+  "dpu-scanout=2",
+  "dpu-linux=1",
   # T40k-spk-sd1: the speakers through the audio DSP and the TFA9873 amplifiers; 1 serves iOS without the boot test tone (2).
-  "sheng-audio=1",
+  "audio=1",
   # All eight cores, as uke boots: ArmCpu starts the secondaries through PSCI (cpu_regs below lists 0x000-0x700) with
-  # sheng-smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
+  # smp=1, and armcpu-spi-ipi=1 is the IPI method uke uses. With one core the CPU-rendered display took minutes
   # without a first frame.
-  "sheng-smp=1",
+  "smp=1",
   "armcpu-spi-ipi=1",
   # Dropped: sheng-platform-stage and boot-ui-focus4.
   # Not set: boot-progress=2. Its only reader is kits/sheng/BootProgress.c, which this kernel does not link; the
@@ -287,7 +287,7 @@ chip_id = "207"
 unique_chip_id = "required"            # the platform seed is not stored in any repository
 root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"   # the OS volume of 21H461, as on uke (same IPSW)
 packed_data_ramdisk = true             # the Data seed as a packed ramdisk for NativeRamBlock, as on uke
-persistent_data = true                 # with sheng-data-persist=2, Data is not ephemeral
+persistent_data = true                 # with data-persist=2, Data is not ephemeral
 # The XNU VM is DarwinBoot's owned_memory_size window (boot_args memSize), not dram_size. T19: 4.75 GiB, uke's and sheng's value on
 # the same 12 GB class; 384 MiB left iPadOS short (corpse crashes) and Turnip's heap at 96 MiB, which refused every texture in T18b.
 # T64: 6 GiB. The uefi-asteroids memory map declares the high bank 0x8C0000000-0xAFFE00000 (9 GiB less 2 MiB) as one conventional

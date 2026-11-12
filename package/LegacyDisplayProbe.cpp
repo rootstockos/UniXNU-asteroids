@@ -25,7 +25,7 @@ extern "C" void native_gop_presenter_static_init(void) __asm__("__GLOBAL__sub_I_
 extern "C" IOService *native_gop_presenter_create(void);
 static IOService *pendingLegacyDisplay;
 static IOService *activeGOPPresenter,*activeGOPNub;
-// GPU hand-off presenter (sheng-fb-gpu=1, phase 4): lives beside the display driver, which offers it frames instead of copying them.
+// GPU hand-off presenter (fb-gpu=1, phase 4): lives beside the display driver, which offers it frames instead of copying them.
 static IOService *gpuHandoffPresenter;
 extern "C" bool native_gop_gpu_offer(IOService *,void *display,IOMemoryDescriptor *,uint64_t stride,uint32_t width,uint32_t height);
 extern "C" void native_gop_presenter_set_source(IOService *presenter,IOService *nub);
@@ -220,7 +220,7 @@ extern "C" unsigned native_legacy_swap_timeline(char *out,unsigned cap) {
     }
     return at;
 }
-// The display refresh tick (NativeLegacyDisplay, sheng-vsync): vsync messages sent, arms, idle stops, late ticks, starts, refresh
+// The display refresh tick (NativeLegacyDisplay, vsync): vsync messages sent, arms, idle stops, late ticks, starts, refresh
 // properties reported at that rate, and the rate.
 static volatile uint64_t vsyncEvents[6];
 static volatile unsigned vsyncHz;
@@ -739,14 +739,14 @@ extern "C" void asteroids_touch_probe(void);
 void native_legacy_display_late_probe(void) {
     boot_late_probe_thread=IOThreadSelf();
     native_late_probe_step=1;native_keystore_probe();
-    native_late_probe_step=2;sheng_cpufreq_probe();     // asteroids T35: CPU clocks (package/CpuFreqProbe.cpp); nothing without sheng-cpufreq
-    native_late_probe_step=3;sheng_gpu_power_probe();   // asteroids T30: GPU power (package/GpuPowerProbe.cpp); nothing without sheng-gpu-power
+    native_late_probe_step=2;sheng_cpufreq_probe();     // asteroids T35: CPU clocks (package/CpuFreqProbe.cpp); nothing without cpufreq
+    native_late_probe_step=3;sheng_gpu_power_probe();   // asteroids T30: GPU power (package/GpuPowerProbe.cpp); nothing without gpu-power
     native_late_probe_step=4;asteroids_touch_probe();   // asteroids T30: touch stage 1 (package/AsteroidsTouchProbe.cpp); nothing without asteroids-touch
-    native_late_probe_step=5;sheng_buttons_probe();     // asteroids T35: power and volume buttons (package/ButtonProbe.cpp); nothing without sheng-buttons=1
+    native_late_probe_step=5;sheng_buttons_probe();     // asteroids T35: power and volume buttons (package/ButtonProbe.cpp); nothing without buttons=1
     native_late_probe_step=6;asteroids_panel_probe();   // asteroids T37: panel brightness and sleep (package/PanelProbe.cpp); nothing without asteroids-panel
-    native_late_probe_step=7;sheng_adsp_probe();        // asteroids T38: the audio DSP (package/AdspProbe.cpp); nothing without sheng-adsp
-    native_late_probe_step=8;sheng_battery_probe();     // asteroids T38: battery and charger from the DSP (package/BatteryProbe.cpp); nothing without sheng-battery
-    native_late_probe_step=9;sheng_audio_probe();       // asteroids T41: speakers (package/AsteroidsAudioProbe.cpp); nothing without sheng-audio
+    native_late_probe_step=7;sheng_adsp_probe();        // asteroids T38: the audio DSP (package/AdspProbe.cpp); nothing without adsp
+    native_late_probe_step=8;sheng_battery_probe();     // asteroids T38: battery and charger from the DSP (package/BatteryProbe.cpp); nothing without battery
+    native_late_probe_step=9;sheng_audio_probe();       // asteroids T41: speakers (package/AsteroidsAudioProbe.cpp); nothing without audio
     native_late_probe_step=10;native_hid_input_probe();
     native_late_probe_step=11;
     IOService *display=pendingLegacyDisplay;if(!display){native_late_probe_step=14;return;}pendingLegacyDisplay=nullptr;
@@ -800,10 +800,10 @@ void native_legacy_display_late_probe(void) {
                         activeLegacyDisplay=display;activeGOPNub=nub;native_legacy_stage=10;
                         {
                             // asteroids T33: on by default with the published Metal plugin (GPU power mode 19 and the addon), where T32 showed the
-                            // GPU copy faster and free of the CPU copy's tearing and stale patches; sheng-fb-gpu=0 keeps the CPU copy.
-                            unsigned power=19,addon=0;PE_parse_boot_argn("sheng-gpu-power",&power,sizeof power);   // GpuPowerProbe's default
-                            PE_parse_boot_argn("sheng-gpu-addon",&addon,sizeof addon);
-                            unsigned gpu=power==19 && addon==1;PE_parse_boot_argn("sheng-fb-gpu",&gpu,sizeof gpu);
+                            // GPU copy faster and free of the CPU copy's tearing and stale patches; fb-gpu=0 keeps the CPU copy.
+                            unsigned power=19,addon=0;PE_parse_boot_argn("gpu-power",&power,sizeof power);   // GpuPowerProbe's default
+                            PE_parse_boot_argn("gpu-addon",&addon,sizeof addon);
+                            unsigned gpu=power==19 && addon==1;PE_parse_boot_argn("fb-gpu",&gpu,sizeof gpu);
                             if(gpu==1) {
                                 IOService *handoff=native_gop_presenter_create();
                                 // Not a child of the display subsystem's node: the original display code enumerates that node's children (int-075/077:

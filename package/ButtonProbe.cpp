@@ -2,10 +2,10 @@
 // asteroids (T35): sheng's ButtonProbe.cpp (UniXNU-sheng 08cde20). Every hardware constant below holds on the 3a too (volcano.dtsi
 // spmi@c42d000 and pdc@b220000, pmk8550.dtsi pon_hlos@1300, volcano-pmic-overlay.dtsi gpio-keys, all matching the live DT): power and
 // volume down are the PMK8550 PON (SID 0), volume up is GPIO 6 of the PMXR2230 (the board's PM7550) at SID 1, peripheral 0x8d, the
-// same PPID as sheng's PM8550 GPIO 6. Added here: the thread also wakes every `sheng-buttons-poll-ms` (default 50, 0 = interrupt
+// same PPID as sheng's PM8550 GPIO 6. Added here: the thread also wakes every `buttons-poll-ms` (default 50, 0 = interrupt
 // only) and reads the levels, and it keeps running on that poll when the interrupt cannot be attached (stage 4), because a GIC SPI
 // through the 3a's Gunyah virtual GIC is not yet proven (touch is polled).
-// Power and volume buttons (boot argument sheng-buttons=1), sent as the Consumer Power, Volume Increment and Volume
+// Power and volume buttons (boot argument buttons=1), sent as the Consumer Power, Volume Increment and Volume
 // Decrement bits of the HID input device's report 2 (drivers/ShengHidInput).
 // The devicetree facts: power is the PMK8550 PON (SPMI SID 0, peripheral 0x13, interrupt 7 "pwrkey"), volume down its RESIN (interrupt 6),
 // volume up the PM8550 GPIO 6 (SID 1, peripheral 0x8d, active low with a pull-up, gpio-keys). All three are PMIC peripheral interrupts the
@@ -31,7 +31,7 @@ extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint3
 // failed), [1] interrupts, [2] reports, [3] pressed mask,
 // [4] power APID, [5] GPIO APID, [6] interrupts of other APIDs cleared, [7] PDC version, [8] last error, [9] spurious interrupts
 extern "C" {volatile int32_t native_buttons_stats[10];}
-// Taps (sheng-buttons-taps=1): presses whose release came before the thread read the levels, reported as a press and a release.
+// Taps (buttons-taps=1): presses whose release came before the thread read the levels, reported as a press and a release.
 extern "C" {volatile int32_t native_buttons_taps;}
 
 namespace {
@@ -216,7 +216,7 @@ void buttonsThread(void *, wait_result_t) {
             }
         }
         if (mask != last) {
-            // sheng-buttons-hold-ms: a release that comes sooner than that after its press waits until the press has lasted that long.
+            // buttons-hold-ms: a release that comes sooner than that after its press waits until the press has lasted that long.
             // T49-gpuwait: quick taps raised both interrupts and both reports (45 of 45, none missed) and iOS still ignored them.
             if (gHoldMs && (last & ~mask)) {
                 uint64_t heldNs = 0;
@@ -256,10 +256,10 @@ extern "C" bool sheng_buttons_press(uint32_t mask, uint32_t ms) {
 
 extern "C" void sheng_buttons_probe(void) {
     unsigned enabled = 0;
-    if (!PE_parse_boot_argn("sheng-buttons", &enabled, sizeof enabled) || enabled != 1 || native_buttons_stats[0]) return;
-    PE_parse_boot_argn("sheng-buttons-poll-ms", &gPollMs, sizeof gPollMs);
-    PE_parse_boot_argn("sheng-buttons-taps", &gTaps, sizeof gTaps);
-    PE_parse_boot_argn("sheng-buttons-hold-ms", &gHoldMs, sizeof gHoldMs);
+    if (!PE_parse_boot_argn("buttons", &enabled, sizeof enabled) || enabled != 1 || native_buttons_stats[0]) return;
+    PE_parse_boot_argn("buttons-poll-ms", &gPollMs, sizeof gPollMs);
+    PE_parse_boot_argn("buttons-taps", &gTaps, sizeof gTaps);
+    PE_parse_boot_argn("buttons-hold-ms", &gHoldMs, sizeof gHoldMs);
     if (gHoldMs > 500) gHoldMs = 500;
     native_buttons_stats[0] = 1;
     thread_t thread = nullptr;

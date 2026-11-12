@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Speaker playback on the Nothing Phone (3a) (boot argument sheng-audio, bits: 1 serve, 2 play a test tone first, 8 press the power button
-// once at 150 s for the lock sound; needs sheng-adsp=2). From UniXNU-sheng package/AudioProbe.cpp: the DSP graphs, the service loop and
+// Speaker playback on the Nothing Phone (3a) (boot argument audio, bits: 1 serve, 2 play a test tone first, 8 press the power button
+// once at 150 s for the lock sound; needs adsp=2). From UniXNU-sheng package/AudioProbe.cpp: the DSP graphs, the service loop and
 // the shared timeline are sheng's; the board steps are the 3a's. The microphone (WCD9378) comes up in stages with asteroids-mic=<n>; see
 // micBringUp. One kernel thread brings the path up:
 //   1  pass-through stream mapping in the apps SMMU for the DSP's audio streams (0x1001, 0x1061), and the DSP's period buffers
@@ -11,8 +11,8 @@
 //   5  the audio DSP: "adsp_apps" packet router channel, framework readiness, the LPASS core vote and the MI2S bit clock through the PRM
 //      (the vendor's machine driver votes both: qcom,mi2s-tdm-is-hw-vote-needed), speaker device and playback stream graphs, buffer
 //      mapping
-//   6  the audio service (ShengAudioService.cpp) that iOS's audio server plug-in opens; with sheng-audio=2 a 750 Hz test tone plays first
-//      for sheng-audio-tone-ms (default 1500), attenuated by sheng-audio-atten dB (default 30)
+//   6  the audio service (ShengAudioService.cpp) that iOS's audio server plug-in opens; with audio=2 a 750 Hz test tone plays first
+//      for audio-tone-ms (default 1500), attenuated by audio-atten dB (default 30)
 // The amplifiers take two 32-bit slots per frame (TDMSSIZE/TDMSLLN 31 in the container: P slot 0, S slot 1), so the speaker device runs
 // 32-bit while the stream stays 16-bit; the stream graph's converter widens it. asteroids-audio-i2s = interface | data lines << 8 | bits
 // << 16 overrides the port (default primary, SD1, 32: the 3a's amplifiers take their data on gpio17, T40k-spk-sd1; SD0 gave clocks but
@@ -286,11 +286,11 @@ bool setupSmmu() {
 
 // The DSP takes 32-bit buffer addresses (sheng's i491 to i495) with the stream index (0x1001 & 0xf) in the upper word. The buffer is
 // 64 KiB of low DRAM nothing uses after boot, mapped write-combined: on the 3a the tail of the splash region (sheng's 0xd0000000 lies in
-// the UEFI DXE heap here). sheng-audio-pa moves it.
+// the UEFI DXE heap here). audio-pa moves it.
 constexpr uint64_t kLowBuffer = 0xe6200000ULL;
 bool setupBuffer() {
     uint64_t pa = kLowBuffer;
-    PE_parse_boot_argn("sheng-audio-pa", &pa, sizeof pa);
+    PE_parse_boot_argn("audio-pa", &pa, sizeof pa);
     if ((pa & 0xfff) || pa + kBufferBytes > 0x100000000ULL || !mapRegion(pa, kBufferBytes, gAudio.low, kIOMapWriteCombineCache)) return false;
     gAudio.bufferPa = pa;
     gAudio.dspAddr = pa | 1ull << 32;
@@ -613,7 +613,7 @@ void stopOutput() {
     native_audio_stats[14] = native_audio_stats[14] + (1 << 16);
 }
 
-// ---- the microphone (asteroids-mic=<stage>, with sheng-audio; T41) ----
+// ---- the microphone (asteroids-mic=<stage>, with audio; T41) ----
 // The 3a's main microphone is AMIC1 of the WCD9378 codec (vendor mixer_paths "handset-mic": amic1 on ADC1, MIC BIAS1 by the card's
 // routing), low power ADC mode, gain 6; ADC1 leaves the codec's TX SoundWire slave on data port 1 and enters master port 1 channel 1
 // (SWR_MIC0) of the VA macro's SoundWire master (0x33b0000, v1.7), then TX decimator 0 and codec DMA TX3 (resourcemanager: handset mic
@@ -1317,7 +1317,7 @@ void playTone() {
     stage(57);
 }
 
-// sheng-audio bit 8: at 150 s of uptime one synthetic power button press locks the screen, and SpringBoard plays its lock sound through
+// audio bit 8: at 150 s of uptime one synthetic power button press locks the screen, and SpringBoard plays its lock sound through
 // the audio server, the plug-in and this service; [audio-service] then counts the requests.
 extern "C" bool sheng_buttons_press(uint32_t mask, uint32_t ms) __attribute__((weak_import));
 void lockSoundThread(void *, wait_result_t) {
@@ -1418,14 +1418,14 @@ extern "C" int sheng_audio_request(uint32_t selector) {
 
 extern "C" void sheng_audio_probe(void) {
     unsigned mode = 0;
-    if (!PE_parse_boot_argn("sheng-audio", &mode, sizeof mode) || !mode || mode > 15 || native_audio_stats[0]) return;
+    if (!PE_parse_boot_argn("audio", &mode, sizeof mode) || !mode || mode > 15 || native_audio_stats[0]) return;
     gAudio.mode = mode;
     gAudio.toneMs = (mode & 2) ? 1500 : 0;
     gAudio.atten = 30;
     gAudio.prm = 3;
     uint32_t port = AR_I2S_PRIMARY | AR_I2S_SD1 << 8 | 32u << 16;
-    PE_parse_boot_argn("sheng-audio-tone-ms", &gAudio.toneMs, sizeof gAudio.toneMs);
-    PE_parse_boot_argn("sheng-audio-atten", &gAudio.atten, sizeof gAudio.atten);
+    PE_parse_boot_argn("audio-tone-ms", &gAudio.toneMs, sizeof gAudio.toneMs);
+    PE_parse_boot_argn("audio-atten", &gAudio.atten, sizeof gAudio.atten);
     PE_parse_boot_argn("asteroids-audio-prm", &gAudio.prm, sizeof gAudio.prm);
     PE_parse_boot_argn("asteroids-audio-i2s", &port, sizeof port);
     // The microphone serves the plug-in's input stream by default since T96n recorded (asteroids-mic=0 leaves it off, a lower stage stops

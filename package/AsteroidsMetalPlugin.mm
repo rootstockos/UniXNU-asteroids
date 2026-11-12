@@ -56,7 +56,7 @@
 // asteroids-tu-debug=<flags> from the kernel's boot arguments for one boot ("gmem" or "sysmem" forces every pass's rendering mode; several
 // flags joined with ':'), so GMEM and system memory can be compared without a rebuild. T55: asteroids-tu-time=<passes|all> turns on
 // Turnip's GPU timing brackets (TU_DW_TIME). T61: asteroids-tu-trace=<letters> turns on Turnip's trace file (TU_DW_TRACE: p passes,
-// d draws, s samples per draw, b shader binaries, t pass stages, a blits too; 1 = pdb); sheng-gpu-trace-export=<seconds> brings it home
+// d draws, s samples per draw, b shader binaries, t pass stages, a blits too; 1 = pdb); gpu-trace-export=<seconds> brings it home
 // with the boot log, and scripts/gpu-trace.py reads it. T62: asteroids-tu-light=<percent> (TU_DW_LIGHT) renders a pass in system memory
 // when its history draws less than that share of its area. Those three in the render server only.
 static void bootArgument(const char *args, const char *name, char *out, size_t size) {

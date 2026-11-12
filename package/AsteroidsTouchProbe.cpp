@@ -16,7 +16,7 @@
 //   4  chip: FocalTech read frames of 0xA3/0x9F (chip id, expect 0x56/0x72), 0xA6 (firmware) and 0xA8 (vendor), SPI mode 0
 //      first, then 3, 1, 2.
 //   5  reports: 84 bytes from register 0x01 every 10 ms, decoded (protocol v2 and the legacy layout), nothing published.
-//   6  publishes the contacts to TouchState (scaled to 30480 x 20320); with sheng-touch-hid=1 NativeHidInput reports them.
+//   6  publishes the contacts to TouchState (scaled to 30480 x 20320); with touch-hid=1 NativeHidInput reports them.
 // Written from the hardware facts in that note (live DT, the vendor kernel's clock and pinctrl tables and the FocalTech frame
 // layout as facts, ios-asteroids' measurements); no code from the GPL sources. Structure after UniXNU-sheng's TouchProbe.cpp,
 // SmmuBypass.h and QcomRpmh (BSD-2-Clause-Patent); the SPI engine is the core's QcomGeniSpi.

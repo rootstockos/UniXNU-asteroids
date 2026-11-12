@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Diagnostic file export (int-217): the unified log that logd persisted (/private/var/db/diagnostics, with the format strings in
 // /private/var/db/uuidtext) and the crash reports, read by the kernel itself, so neither a sandbox nor a launchd job that never runs
-// (adrenoprobed) stands in the way. BootLog.c asks for the stream once (sheng-diag-export=<seconds>) and writes it into the half of the
+// (adrenoprobed) stands in the way. BootLog.c asks for the stream once (diag-export=<seconds>) and writes it into the half of the
 // export region the pipeline-cache blob does not hold; scripts/read-sheng-log.py unpacks it into the run's diag/ directory.
 // Stream: "SHEXR001", u32 stream bytes, u32 0, then the cache export's stream (drivers/AdrenoMetal/CacheExport.h, "M2VCACH1") with root
 // "/" and every path relative to it. The scan lists every file first and spends the budget in the order of worth (the log newest file
 // first, then its format strings, then the crash reports), so an older boot's large log files never push out this boot's. The format
 // strings come last among the log's files because they only change with the binaries: the host keeps those of earlier runs.
-// sheng-gpu-trace-export=<seconds> (BootLog.c) exports only the GPU trace directory, every so many seconds (boot_diag_scan_gpu): Turnip's
+// gpu-trace-export=<seconds> (BootLog.c) exports only the GPU trace directory, every so many seconds (boot_diag_scan_gpu): Turnip's
 // records of every pass, draw and shader (TU_DW_TRACE, scripts/gpu-trace.py), so a new question about them needs no new build.
 // screen.bgrx is the panel's scanout at half resolution (16-byte header "SHOT", u32 width, height, stride, then BGRX rows), so the
 // run shows what was on the screen. Files that do not fit the budget are named in diag-skipped.txt, the stream's last file.

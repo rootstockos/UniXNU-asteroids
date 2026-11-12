@@ -222,7 +222,7 @@ hid_source=ROOT/'kits/asteroids/HidInputProbe.cpp'
 hid_obj=OUT/'HidInputProbe.o'
 hid_cmd=[str(hid_source) if str(arg)==str(source) else str(hid_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd]
 run(hid_cmd,cwd=r['directory'])
-# asteroids T35: sheng's CPU governor (package/CpuFreqProbe.cpp, sheng-cpufreq), compiled like the HID probe. It reads each CPU's
+# asteroids T35: sheng's CPU governor (package/CpuFreqProbe.cpp, cpufreq), compiled like the HID probe. It reads each CPU's
 # idle time through sheng_cpu_idle_mach (UniXNU patches/xnu/zzye-board-cpu-idle.patch).
 cpufreq_source=ROOT/'kits/asteroids/CpuFreqProbe.cpp'
 cpufreq_obj=OUT/'CpuFreqProbe.o'
@@ -238,7 +238,7 @@ backlight_obj=OUT/'AsteroidsBacklight.o';backlight_late=OUT/'AsteroidsBacklight.
 run([str(backlight_source) if str(arg)==str(source) else str(backlight_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_AsteroidsBacklight.cpp',
      backlight_obj,backlight_late])
-# Speaker playback (sheng-audio, package/AsteroidsAudioProbe.cpp): the TFA9873 amplifiers over GENI I2C, then sheng's speaker graphs on
+# Speaker playback (audio, package/AsteroidsAudioProbe.cpp): the TFA9873 amplifiers over GENI I2C, then sheng's speaker graphs on
 # the audio DSP; the settings header is prepare-asteroids-tfa.py's (an earlier archive entry). The audio service class the audio server
 # plug-in opens (ShengAudioService.cpp) is staged as the brightness service is.
 tfa_gen=ROOT/'build/asteroids-tfa'
@@ -263,7 +263,7 @@ battery_class_obj=OUT/'ShengBattery.o';battery_class_late=OUT/'ShengBattery.late
 run([str(battery_class_source) if str(arg)==str(source) else str(battery_class_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
 run([llvm/'llvm-objcopy','--remove-section=__DATA,__mod_init_func','--globalize-symbol=__GLOBAL__sub_I_ShengBattery.cpp',
      battery_class_obj,battery_class_late])
-# asteroids T35: sheng's power and volume buttons (package/ButtonProbe.cpp, sheng-buttons=1) with its arbiter helpers (BootResetCore.h).
+# asteroids T35: sheng's power and volume buttons (package/ButtonProbe.cpp, buttons=1) with its arbiter helpers (BootResetCore.h).
 buttons_source=ROOT/'kits/asteroids/ButtonProbe.cpp'
 buttons_obj=OUT/'ButtonProbe.o'
 run([str(buttons_source) if str(arg)==str(source) else str(buttons_obj) if str(arg)==str(OUT/'LegacyDisplayProbe.o') else arg for arg in cmd],cwd=r['directory'])
@@ -383,8 +383,8 @@ for src in vote_sources:
     run([str(src) if arg==str(process_source) else str(gmu_objs[-1]) if arg==str(process_obj) else arg for arg in process_cmd]+
         vote_flags,cwd=pr['directory'])
 touch_kit_sources=[geni/'GeniSpi.c',ROOT/'kits/asteroids/QcomRpmh.c']
-# asteroids T38: sheng's audio DSP bring-up (sheng-adsp) and its protocol cores, without sheng's audio and Wi-Fi modules; QcomRpmh.c is
-# shared with touch. The battery power source (sheng-battery, ShengBattery.cpp) stages its class as the brightness service does.
+# asteroids T38: sheng's audio DSP bring-up (adsp) and its protocol cores, without sheng's audio and Wi-Fi modules; QcomRpmh.c is
+# shared with touch. The battery power source (battery, ShengBattery.cpp) stages its class as the brightness service does.
 adsp_kit_sources=[ROOT/'kits/asteroids'/(n+'.c') for n in ('QcomMdt','FatVolume','QcomQrtr','ShengQrtr','QcomSmem','QcomSmp2p','QcomGlink','QcomQmp','ShengBattmgr')]
 audio_kit_sources=[ROOT/'kits/asteroids'/(n+'.c') for n in ('ShengGpr','ShengAudioReach','GeniI2c','AsteroidsTfa9873')]
 touch_kit_objs=[]

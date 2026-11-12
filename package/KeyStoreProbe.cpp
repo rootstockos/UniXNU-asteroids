@@ -19,7 +19,7 @@ volatile uint64_t native_keyevents_service;
 void native_keyevents_open_refused(void) {
     native_keyevents_refused_opens = native_keyevents_refused_opens + 1;
 }
-// sheng-aks=1: the owned AppleKeyStore answers the state queries (no passcode, nothing locked); counters feed the diagnostic
+// aks=1: the owned AppleKeyStore answers the state queries (no passcode, nothing locked); counters feed the diagnostic
 // page's extension rows (slots 0-1): opens/calls, then selector:count per selector seen ('e' = the last answer was an error).
 extern char boot_progress_ext[8][48];
 volatile uint32_t native_aks_opens, native_aks_calls;
@@ -28,19 +28,19 @@ static volatile int32_t aks_rc[96];
 bool native_aks_state_enabled(void) {
     static int cached = -1;
     if (cached < 0) {
-        // asteroids T33: the AppleKeyStore stand-in by default (T29: the UI needs it); sheng-aks=0 leaves it out.
+        // asteroids T33: the AppleKeyStore stand-in by default (T29: the UI needs it); aks=0 leaves it out.
         unsigned value = 1;
-        PE_parse_boot_argn("sheng-aks", &value, sizeof(value));
+        PE_parse_boot_argn("aks", &value, sizeof(value));
         cached = value == 1;
     }
     return cached == 1;
 }
-// sheng-aks-sls=<n> overrides the reported lock state (default 0 = unlocked; 3 = MobileKeyBag's "no passcode").
+// aks-sls=<n> overrides the reported lock state (default 0 = unlocked; 3 = MobileKeyBag's "no passcode").
 uint32_t native_aks_lock_state(void) {
     static int cached = -1;
     if (cached < 0) {
         unsigned value = 0;
-        if (!PE_parse_boot_argn("sheng-aks-sls", &value, sizeof(value)) || value > 7) value = 0;
+        if (!PE_parse_boot_argn("aks-sls", &value, sizeof(value)) || value > 7) value = 0;
         cached = (int)value;
     }
     return (uint32_t)cached;
@@ -93,7 +93,7 @@ static void native_keyevents_probe(void) {
     if (data && data->getLength() == sizeof(ephemeral))
         memcpy(&ephemeral, data->getBytesNoCopy(), sizeof(ephemeral));
     OSSafeReleaseNULL(chosen);
-    // asteroids T29: with sheng-aks=1 the stand-in is published on a persistent Data disk too (no ephemeral-storage there). T28's
+    // asteroids T29: with aks=1 the stand-in is published on a persistent Data disk too (no ephemeral-storage there). T28's
     // unified log: without it every process failed to open AppleKeyStore (e00002bc), liveactivitiesd trapped on the missing
     // keybag answer, and SpringBoard never finished booting, leaving the backlight off and the render server with nothing to draw.
     if ((ephemeral != 1 && !native_aks_state_enabled()) || original) return;

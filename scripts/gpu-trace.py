@@ -2,7 +2,7 @@
 """Read the render server's GPU trace (Turnip's TU_DW_TRACE, turnip-asteroids-timing.patch) and report on it.
 
 The trace is a file of binary records that Turnip writes in the render server's cache directory (m2v/gpu/trace.bin) when the boot
-arguments carry asteroids-tu-trace=<letters>; sheng-gpu-trace-export=<seconds> exports it with the boot log, and
+arguments carry asteroids-tu-trace=<letters>; gpu-trace-export=<seconds> exports it with the boot log, and
 scripts/pull-asteroids-log.py unpacks it and runs this script. Every pass, draw and shader is in it, so a new question is a change to
 this script, not a new build.
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// asteroids: values and functions sheng's BootLog.c (the UFS diagnostic log, sheng-log=1) reads through weak references, for the probes
+// asteroids: values and functions sheng's BootLog.c (the UFS diagnostic log, log=1) reads through weak references, for the probes
 // and drivers this board does not build (sheng's audio, Wi-Fi, ADSP, battery, backlight and reset paths, the newer ShengUfs display
 // window). A static kernel link needs a definition for each; these are all weak, so a real one wins, and they read as zero, empty or
 // "not available" (-1, NULL), so the log prints those rows empty. Generated against BootLog.c from UniXNU-sheng 08cde20.

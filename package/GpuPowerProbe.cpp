@@ -6,7 +6,7 @@
 // the GPU's own SMMU context and the SQE copy, mode 12, a8xx hw_init's register writes, mode 13, and the CP start through
 // CP_ME_INIT and a first CP_MEM_WRITE, mode 14, the zap shader with the secure-mode exit, mode 15, and the first IBs with a
 // bar the GPU writes into the firmware framebuffer, mode 16, and the BO pool, fences, timer and NativeAdreno's user
-// client run from the kernel, mode 17 (sheng-gpu-power=1..17;
+// client run from the kernel, mode 17 (gpu-power=1..17;
 // absent or 0 does nothing). Modes 9-10 hand the
 // device package's ShengGmu.c (UniXNU-sheng's, with mainline's gen8 branches) its own uncached maps of the GMU, RSCC, GPU and CX_MISC
 // windows and Normal non-cacheable maps of the five payloads mode 5 placed in the pool; its writes go through its own
@@ -443,10 +443,10 @@ void gpuGx() {
         IOLog("ASTEROIDS GPU: gx skipped: cold start status %u\n", native_gpu_gmu_start_status);
         return;
     }
-    // T34: sheng-gpu-level picks the HFI level (1 = 264 MHz ... 9 = 1050 MHz on the 3a's bin, clamped); level 1 made
+    // T34: gpu-level picks the HFI level (1 = 264 MHz ... 9 = 1050 MHz on the 3a's bin, clamped); level 1 made
     // the UI slow. 6 (763 MHz, 6.7 GB/s) stays below the top three while nothing throttles for temperature.
     unsigned level = 6;
-    PE_parse_boot_argn("sheng-gpu-level", &level, sizeof level);
+    PE_parse_boot_argn("gpu-level", &level, sizeof level);
     unsigned bw = 0;
     const unsigned perf = ShengGmuPerfVote(level, &bw);
     IOLog("ASTEROIDS GPU: gx vote perf %u bw %u (%lluk), then OOB GPU_SET\n", perf, bw,
@@ -617,10 +617,10 @@ int ringAcquire(void *, volatile uint32_t *, size_t) {return ringBarrier(nullptr
 uint64_t ringNow(void *) {uint64_t us = 0; gmuNowUs(nullptr, &us); return us;}
 // T39: the fence waits' pause, after UniXNU-sheng's (GpuPowerProbe.cpp ringIdle/gpuIrq/irqAndTimer, BSD-2-Clause-Patent). Until T38
 // every wait spun 20 us at a time, so a core stayed at 100 % whenever a client waited on the GPU (the T38 banner's GOV row). Once
-// irqAttach() has the GPU line, a waiter that may block sleeps until the next GPU interrupt or `sheng-gpu-pause-us` (default 1000),
+// irqAttach() has the GPU line, a waiter that may block sleeps until the next GPU interrupt or `gpu-pause-us` (default 1000),
 // whichever is first; before that, or where it may not block, it spins 20 us as before. Every ring fence is CP_EVENT_WRITE7
 // CACHE_CLEAN with its IRQ bit (NativeAdrenoRing.cpp), which raises RBBM_INT_0 CP_CACHE_FLUSH_TS (bit 20), unmasked by hw_init's
-// A810_INIT_RBBM_INT_0_MASK 0x33d283c2. `sheng-gpu-irq=0` keeps the line detached and the old spin.
+// A810_INIT_RBBM_INT_0_MASK 0x33d283c2. `gpu-irq=0` keeps the line detached and the old spin.
 extern "C" {
 // attach IOReturn (0xdead without ArmCpu, 0xff when off), GICD readback, interrupts after the attach / after a NOP fence, the
 // INT_0_STATUS bits seen, INT_0_STATUS then
@@ -704,7 +704,7 @@ void gpuSubmitted(uint32_t fence) {gSubmitAt[fence & 255] = mach_absolute_time()
 volatile uint32_t gTimingBusy;
 void gpuTimeFences() {
     if (!gGpuCpu[2]) return;
-    // Called from the GPU interrupt when attached (sheng-gpu-irq=1), from the display's flip wait and from the clock governor's tick:
+    // Called from the GPU interrupt when attached (gpu-irq=1), from the display's flip wait and from the clock governor's tick:
     // whichever runs first takes the fences; the others skip.
     if (__atomic_exchange_n(&gTimingBusy, 1u, __ATOMIC_ACQUIRE)) return;
     const uint32_t done = reinterpret_cast<const volatile uint32_t *>(gGpuCpu[2])[1];
@@ -1281,7 +1281,7 @@ int ucBurst(IOService *svc, UcSteps &step) {
     uc->release();
     return matched;
 }
-// T40d: IO coherence (sheng-gpu-coherent, default 1), UniXNU-sheng's coherenceProbe (GpuPowerProbe.cpp at 08cde20,
+// T40d: IO coherence (gpu-coherent, default 1), UniXNU-sheng's coherenceProbe (GpuPowerProbe.cpp at 08cde20,
 // BSD-2-Clause-Patent) before the service is published. Until now nothing set native_adreno_io_coherent here, so the driver cleaned
 // and invalidated every imported page around every submission: T40c's log counted 18 s and 361 GiB of maintenance for about 3000
 // submissions (~6 ms each). A page of kernel memory is imported and mapped write-back inner-shareable (Linux: IOMMU_CACHE), and both
@@ -1295,15 +1295,15 @@ int ucBurst(IOService *svc, UcSteps &step) {
 // maintenance of imports. A failed proof leaves everything maintained as before.
 // Row ([coherence] in the boot log): H d<dirty lines of 64> a<attempts> r<GPU read new>/<old> w<CPU saw GPU>/<DRAM> s<status> k<step>
 extern "C" volatile uint32_t native_adreno_io_coherent __attribute__((weak));
-// T40f test: sheng-gpu-import-skip=1 has the driver skip the per-submission clean of imports without coherence (NativeAdrenoVm.cpp).
+// T40f test: gpu-import-skip=1 has the driver skip the per-submission clean of imports without coherence (NativeAdrenoVm.cpp).
 // T64d: the default. T40f showed no stale content with every import skipped and submissions 7x cheaper; T40g kept the clean for
 // read-only imports, which in T63 was 89 GiB of cleaning in 88 s (about 3 ms of each 4.4 ms submission, under the driver's lock), while
-// every app now draws on the GPU (T62) and few surfaces are CPU-written. sheng-gpu-import-skip=0 cleans them again.
+// every app now draws on the GPU (T62) and few surfaces are CPU-written. gpu-import-skip=0 cleans them again.
 extern "C" volatile uint32_t native_adreno_import_skip __attribute__((weak));
-// T52: per-client maintenance (NativeAdreno NativeAdrenoVm::setOwner), sheng-gpu-own-maint=1.
+// T52: per-client maintenance (NativeAdreno NativeAdrenoVm::setOwner), gpu-own-maint=1.
 extern "C" volatile uint32_t native_adreno_owner_maint __attribute__((weak));
 // T40g: the driver's import policy (NativeAdrenoVm.cpp, default 1): GPU-written imports skip per-submission maintenance, read-only ones
-// keep their clean. sheng-gpu-import-policy=0 maintains every import around every submission, as before.
+// keep their clean. gpu-import-policy=0 maintains every import around every submission, as before.
 extern "C" volatile uint32_t native_adreno_import_policy __attribute__((weak));
 extern "C" {char native_gpu_coherence_row[120]; uint32_t native_gpu_coherence[8];}
 // A throwaway uncached kernel mapping (io_map with VM_WIMG_IO), not IOMemoryDescriptor::map, which would change the page's own
@@ -1334,8 +1334,8 @@ unsigned gCoherenceAttempts;
 void coherenceProbe(NativeAdrenoVm *vm, unsigned bits) {
     uint32_t *k = native_gpu_coherence;
     // Off by default since T40d: the probe passed on the 3a, but with coherence on the GPU stopped at the 134th submission
-    // (every later fence wait timed out, the UI never drew). sheng-gpu-coherent=1 runs the probe.
-    const unsigned wanted = bootArg("sheng-gpu-coherent", 0);
+    // (every later fence wait timed out, the UI never drew). gpu-coherent=1 runs the probe.
+    const unsigned wanted = bootArg("gpu-coherent", 0);
     if (!wanted || !vm || !&native_adreno_io_coherent) {
         snprintf(native_gpu_coherence_row, sizeof native_gpu_coherence_row, "H skip (arg %u vm %d)", wanted, vm != nullptr);
         return;
@@ -1424,9 +1424,9 @@ void ucStart() {
           t1 - t0);
     if (u[3] || u[4]) {native_gpu_power_stage = 0x10f; return;}
     coherenceProbe(vm, bits);
-    if (&native_adreno_import_skip) native_adreno_import_skip = bootArg("sheng-gpu-import-skip", 1) ? 1 : 0;
-    if (&native_adreno_owner_maint) native_adreno_owner_maint = bootArg("sheng-gpu-own-maint", 0) == 1 ? 1 : 0;
-    if (&native_adreno_import_policy) native_adreno_import_policy = bootArg("sheng-gpu-import-policy", 1) ? 1 : 0;
+    if (&native_adreno_import_skip) native_adreno_import_skip = bootArg("gpu-import-skip", 1) ? 1 : 0;
+    if (&native_adreno_owner_maint) native_adreno_owner_maint = bootArg("gpu-own-maint", 0) == 1 ? 1 : 0;
+    if (&native_adreno_import_policy) native_adreno_import_policy = bootArg("gpu-import-policy", 1) ? 1 : 0;
     u[0] = 3;
     native_gpu_power_stage = 0x103;
     if (bootArg("asteroids-gpu-cp-aperture", 0) == 1) openCpAperture();
@@ -1457,7 +1457,7 @@ void ucStart() {
     cpState("uc");
     native_gpu_power_stage = ok ? 0x108 : 0x10e;
 }
-// Mode 18 (T16): what user space does with the published service. The GPU addon (boot-arg sheng-gpu-addon=1) brings a test
+// Mode 18 (T16): what user space does with the published service. The GPU addon (boot-arg gpu-addon=1) brings a test
 // daemon that opens NativeAdrenoGpu from user space, runs the shared user test (two rounds of three CP_MEM_WRITEs through its own
 // mappings, uncached then write-combined) and then a Turnip smoke test (Vulkan instance, device, a compute fill and a triangle).
 // It reports through the driver's open log, progress markers (refused opens of type 0x4147xxxx) and SetMetadata lines; this
@@ -1469,7 +1469,7 @@ extern volatile int native_gpu_addon2_stage __attribute__((weak)), native_gpu_ad
 // Its install step: files in the addon (-1 none), written, already equal, failed, last error.
 extern volatile int native_gpu_addon_files __attribute__((weak)), native_gpu_addon_written __attribute__((weak)),
     native_gpu_addon_same __attribute__((weak)), native_gpu_addon_failed __attribute__((weak)), native_gpu_addon_error __attribute__((weak));
-// The exec log (BootWatchdogPolicy.c, with sheng-gpu-addon=1): all execs, the last eight names, and the daemon's candidate names.
+// The exec log (BootWatchdogPolicy.c, with gpu-addon=1): all execs, the last eight names, and the daemon's candidate names.
 extern volatile uint32_t asteroids_exec_total __attribute__((weak)), asteroids_exec_ngpu __attribute__((weak)),
     asteroids_exec_bluetoothd __attribute__((weak)), asteroids_exec_fdr __attribute__((weak));
 extern char asteroids_exec_last[8][24] __attribute__((weak));
@@ -1604,8 +1604,8 @@ void userWatch() {
 // CP_NOP fence: a working line counts interrupts after the attach (bits latched by the earlier fences) and again after the fence.
 void irqAttach() {
     uint32_t *q = native_gpu_irq;
-    if (!bootArg("sheng-gpu-irq", 1)) {q[0] = 0xff; IOLog("ASTEROIDS GPU: irq off (sheng-gpu-irq=0): fence waits spin\n"); return;}
-    const unsigned us = bootArg("sheng-gpu-pause-us", 1000);
+    if (!bootArg("gpu-irq", 1)) {q[0] = 0xff; IOLog("ASTEROIDS GPU: irq off (sheng-gpu-irq=0): fence waits spin\n"); return;}
+    const unsigned us = bootArg("gpu-pause-us", 1000);
     if (us >= 20 && us <= 100000) gPauseUs = us;
     uint64_t router = ~0ull;
     q[0] = armcpu_spi_attach ? uint32_t(armcpu_spi_attach(kGpuIntid, false, gpuIrq, nullptr, &q[1], &router)) : 0xdead;
@@ -1625,16 +1625,16 @@ void irqAttach() {
           q[4], q[5], gPauseUs, (unsigned long long)native_gpu_idle_sleeps, (unsigned long long)native_gpu_idle_spins,
           (unsigned long long)native_gpu_idle_timeouts);
 }
-// T39: GPU frequency governor (`sheng-gpu-dcvs=1`, after the service is published), UniXNU-sheng's gpuDcvsThread (a338c71a, 36ec562c)
+// T39: GPU frequency governor (`gpu-dcvs=1`, after the service is published), UniXNU-sheng's gpuDcvsThread (a338c71a, 36ec562c)
 // on the A810's levels. The GMU's XO power counter 0 counts 19.2 MHz ticks while the GPU is busy (hw_init's CX_BUSY_MASK 0xff000000,
 // countable 5, enable; read at its A8XX offsets). Every 16 ms it takes the frequency that would have kept that window 50 % busy and
 // goes up at once to the lowest level at or above 1.1 x of it, to the ceiling after a window over 85 % busy or 50 ms busy without a
 // break; it goes down one level after 4 windows in a row (5 right after a step up) that would have needed at most 0.8 x the next lower
 // level, and to the idle level after 80 ms without work. Work after the idle drop starts at the lowest level at or above max(2 x now,
-// 578 MHz) for 50 ms, and a touch report holds the ceiling until `sheng-gpu-dcvs-boost-ms` (default 1000, 0 = off) after the last one.
-// Levels and MHz come from the startup table the GMU was given (1 = 264 ... 9 = 1050 MHz on the 3a's bin). `sheng-gpu-dcvs-min` is
-// the floor (default 3, 510 MHz); `sheng-gpu-dcvs-max` the ceiling, by default the boot vote (`sheng-gpu-level`, default 6, 763 MHz),
-// which T34 kept below the top three because nothing throttles the GPU for temperature yet. asteroids T40e: `sheng-gpu-dcvs-idle`
+// 578 MHz) for 50 ms, and a touch report holds the ceiling until `gpu-dcvs-boost-ms` (default 1000, 0 = off) after the last one.
+// Levels and MHz come from the startup table the GMU was given (1 = 264 ... 9 = 1050 MHz on the 3a's bin). `gpu-dcvs-min` is
+// the floor (default 3, 510 MHz); `gpu-dcvs-max` the ceiling, by default the boot vote (`gpu-level`, default 6, 763 MHz),
+// which T34 kept below the top three because nothing throttles the GPU for temperature yet. asteroids T40e: `gpu-dcvs-idle`
 // (default 1, 264 MHz) is the level after the idle drop, below the floor, which then applies only while there is work (or the wake
 // boost runs): with the board's floor at level 6 the GPU otherwise sat at 763 MHz with nothing to draw. Each change is the boot's HFI
 // GX_BW_PERF_VOTE with that level's bandwidth.
@@ -1675,13 +1675,13 @@ extern "C" volatile uint32_t native_adreno_submit_ibs[4] __attribute__((weak_imp
 void gpuDcvsThread(void *, wait_result_t) {
     if (gStartup.gpu_count < 2 || gStartup.gpu_count > 16) return;
     const unsigned top = unsigned(gStartup.gpu_count) - 1;
-    unsigned ceiling = bootArg("sheng-gpu-dcvs-max", gBootPerf ? gBootPerf : top);
+    unsigned ceiling = bootArg("gpu-dcvs-max", gBootPerf ? gBootPerf : top);
     if (ceiling < 1) ceiling = 1;
     if (ceiling > top) ceiling = top;
-    unsigned floor = bootArg("sheng-gpu-dcvs-min", 3);
+    unsigned floor = bootArg("gpu-dcvs-min", 3);
     if (floor < 1) floor = 1;
     if (floor > ceiling) floor = ceiling;
-    unsigned idleLevel = bootArg("sheng-gpu-dcvs-idle", 1);
+    unsigned idleLevel = bootArg("gpu-dcvs-idle", 1);
     if (idleLevel < 1) idleLevel = 1;
     if (idleLevel > floor) idleLevel = floor;
     const unsigned base = top > 8 ? top - 7 : 1;   // the eight highest levels go to [5..12]
@@ -1692,7 +1692,7 @@ void gpuDcvsThread(void *, wait_result_t) {
     unsigned down = 0, hold = 0;
     uint32_t lastSubmits = &native_adreno_submit_ibs ? native_adreno_submit_ibs[0] : 0;
     uint64_t boostAbs = 0, touchEnd = 0, wakeEnd = 0, wakeAbs = 0;
-    nanoseconds_to_absolutetime((uint64_t)bootArg("sheng-gpu-dcvs-boost-ms", 1000) * 1000000, &boostAbs);
+    nanoseconds_to_absolutetime((uint64_t)bootArg("gpu-dcvs-boost-ms", 1000) * 1000000, &boostAbs);
     nanoseconds_to_absolutetime(50000000ull, &wakeAbs);
     uint32_t touches = &native_hid_input_events ? native_hid_input_events[6] : 0;
     bool idle = false;
@@ -1858,16 +1858,16 @@ void probeThread(void *, wait_result_t) {
         publishMetal();
         metalReport("published");
     }
-    if (gMode >= 17 && native_gpu_power_stage == 0x108 && bootArg("sheng-gpu-dcvs", 0)) startGpuDcvs();
+    if (gMode >= 17 && native_gpu_power_stage == 0x108 && bootArg("gpu-dcvs", 0)) startGpuDcvs();
     if (gMode >= 18 && native_gpu_power_stage == 0x108) userWatch();
     native_gpu_power_stage = 4;
 }
 }
 
 extern "C" void sheng_gpu_power_probe(void) {
-    // asteroids T33: mode 19 (the accelerator for the published Metal plugin) by default; sheng-gpu-power=0 leaves the GPU off.
+    // asteroids T33: mode 19 (the accelerator for the published Metal plugin) by default; gpu-power=0 leaves the GPU off.
     unsigned mode = 19;
-    PE_parse_boot_argn("sheng-gpu-power", &mode, sizeof mode);
+    PE_parse_boot_argn("gpu-power", &mode, sizeof mode);
     if (!mode || native_gpu_power_stage) return;
     if (mode > GPB_MAX_MODE) {
         IOLog("ASTEROIDS GPU: sheng-gpu-power=%u refused; this build has modes 1-%u only\n", mode, GPB_MAX_MODE);

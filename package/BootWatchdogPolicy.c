@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // From Allenwdk/UniXNU-uke package/BootWatchdogPolicy.c. asteroids also runs under Gunyah, so the watchdog pet thread
-// applies here as well. asteroids additions (only with sheng-gpu-addon=1): sheng-lite keeps the bluetoothd job for the GPU addon's
+// applies here as well. asteroids additions (only with gpu-addon=1): lite keeps the bluetoothd job for the GPU addon's
 // daemon (T16b), an exec log for the GPU probe's diagnostics (T16b), and bluetoothd's exec turned into the daemon (T16c,
-// with sheng-gpu-addon-swap=1).
+// with gpu-addon-swap=1).
 // Explicit temporary bring-up policy for an unavailable watchdog backend.
 // Runs after writable scratch Data mounts, before the unchanged launchd exec.
 #include <sys/param.h>
@@ -24,9 +24,9 @@ static const char policy_head[] =
 static const char policy_watchdogd[]="<key>com.apple.watchdogd</key><true/><key>com.apple.watchdog</key><true/>";
 // Bring-up isolation: hardware stacks show identityservicesd, contextstored and locationd in a
 // cycle of synchronous XPC waits. A disabled job makes its Mach service lookups fail instead of hang.
-// sheng-disable-jobs=<label>[,<label>...] (restricted label characters, bounded length).
+// disable-jobs=<label>[,<label>...] (restricted label characters, bounded length).
 static const char policy_tail[]="</dict></plist>\n";
-// sheng-lite=1: jobs that only reach for the network, iCloud or the photo library and have nothing to do on this tablet (no radios, no accounts),
+// lite=1: jobs that only reach for the network, iCloud or the photo library and have nothing to do on this tablet (no radios, no accounts),
 // all of which start at the first boot of a fresh Data and compete with SpringBoard for the CPU and for memory. The first four are the
 // cycle of synchronous XPC waits the isolation work found. Labels are the ones in the target's own LaunchDaemons.
 static const char lite_jobs[]=
@@ -40,8 +40,8 @@ static const char lite_jobs[]=
  "com.apple.fairplayd.A2,com.apple.passd,com.apple.mobile.obliteration";
 static char policy[2048],jobs[200];
 volatile int sheng_watchdog_policy_status=-1;
-// asteroids T16b: with the GPU addon (sheng-gpu-addon=1) its test daemon takes the bluetoothd job name (UniXNU's
-// build-adreno-metal-plugin.py: that job is RunAtLoad and was seen to run on every boot), so sheng-lite leaves that one label enabled.
+// asteroids T16b: with the GPU addon (gpu-addon=1) its test daemon takes the bluetoothd job name (UniXNU's
+// build-adreno-metal-plugin.py: that job is RunAtLoad and was seen to run on every boot), so lite leaves that one label enabled.
 static const char lite_kept_for_addon[]="com.apple.bluetoothd";
 
 // asteroids T16b: an exec log for the boot diagnostics (the GPU probe prints it). A KAUTH_SCOPE_FILEOP listener sees every exec with
@@ -81,7 +81,7 @@ static const char *asteroids_exec_substitute(const char *path) {
  return "/private/var/ngpu/bin/asteroidsgpud";
 }
 
-// sheng-setup=1 or sheng-data-reset=2 (the install entry's "show Hello" choice): remove Setup's completion flags once, so this boot shows the Hello page.
+// setup=1 or data-reset=2 (the install entry's "show Hello" choice): remove Setup's completion flags once, so this boot shows the Hello page.
 // iPadOS writes them again when Setup finishes, so later boots do not show it. Absent files are fine.
 static int sheng_boot_setup_reset(proc_t p,uint64_t scratch) {
  static const char *const files[]={
@@ -160,19 +160,19 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  proc_t p=process;
  int enabled=0,error=0,fd=-1;int32_t result=0;
  uke_gunyah_wdt_start();
- int addon=0;PE_parse_boot_argn("sheng-gpu-addon",&addon,sizeof(addon));
- // The swap only when the addon carries the daemon (sheng-gpu-addon-swap=1, T16c); T17's addon brings the Metal plugin instead.
- int swap=0;PE_parse_boot_argn("sheng-gpu-addon-swap",&swap,sizeof(swap));
+ int addon=0;PE_parse_boot_argn("gpu-addon",&addon,sizeof(addon));
+ // The swap only when the addon carries the daemon (gpu-addon-swap=1, T16c); T17's addon brings the Metal plugin instead.
+ int swap=0;PE_parse_boot_argn("gpu-addon-swap",&swap,sizeof(swap));
  if(addon==1){asteroids_exec_log_start();if(swap==1)native_gpu_addon_exec_substitute=asteroids_exec_substitute;}
- // asteroids T33: on by default (as uke boots); sheng-disable-watchdogd=0 keeps watchdogd.
- enabled=1;PE_parse_boot_argn("sheng-disable-watchdogd",&enabled,sizeof(enabled));
- if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
- int lite=0;PE_parse_boot_argn("sheng-lite",&lite,sizeof(lite));if(lite!=1)lite=0;
+ // asteroids T33: on by default (as uke boots); disable-watchdogd=0 keeps watchdogd.
+ enabled=1;PE_parse_boot_argn("disable-watchdogd",&enabled,sizeof(enabled));
+ if(!PE_parse_boot_argn("disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
+ int lite=0;PE_parse_boot_argn("lite",&lite,sizeof(lite));if(lite!=1)lite=0;
  if(enabled!=1)enabled=0;
  for(const char *c=jobs;*c;++c)if(!((*c>='a'&&*c<='z')||(*c>='A'&&*c<='Z')||(*c>='0'&&*c<='9')||*c=='.'||*c=='-'||*c==','))return EINVAL;
  int setup=0,reset=0;
- PE_parse_boot_argn("sheng-setup",&setup,sizeof(setup));
- PE_parse_boot_argn("sheng-data-reset",&reset,sizeof(reset));   // 2 = erase Data and show the Hello page; 1 = erase Data, Setup stays skipped
+ PE_parse_boot_argn("setup",&setup,sizeof(setup));
+ PE_parse_boot_argn("data-reset",&reset,sizeof(reset));   // 2 = erase Data and show the Hello page; 1 = erase Data, Setup stays skipped
  if(reset==2)setup=1;
  if(setup==1 && (error=sheng_boot_setup_reset(p,scratch))) {
   sheng_watchdog_policy_status=error;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// The battery as iOS reads it (boot argument sheng-battery=1, started by BatteryProbe.cpp; needs sheng-adsp=2): an IOPMPowerSource whose
+// The battery as iOS reads it (boot argument battery=1, started by BatteryProbe.cpp; needs adsp=2): an IOPMPowerSource whose
 // values come from the battery manager in the audio DSP over the PMIC GLINK channel (ShengBattmgr.c). powerd finds every IOPMPowerSource,
 // reads CurrentCapacity/MaxCapacity, IsCharging, ExternalConnected, voltage, amperage and AdapterDetails and listens for the status change
 // message updateStatus sends; the status bar, the lock screen's charging state and Settings > Battery follow from that.
@@ -10,7 +10,7 @@
 // (the fields that hardly change, every tenth time). asteroids (T38d): the notifications are asked for in both forms, the 3a's downstream
 // one first (ShengBattmgr.h), since with no notifications a plug or unplug showed only at the next 60 s refresh; and a change of the
 // external or charging state is published as soon as its field is read, without waiting for the rest of the cycle. Charging itself is the DSP firmware's; the one setting written is the input current
-// limit on a computer's USB port (ShengBattmgr.c; boot argument sheng-usb-sdp-ma, 0 leaves the firmware's limit).
+// limit on a computer's USB port (ShengBattmgr.c; boot argument usb-sdp-ma, 0 leaves the firmware's limit).
 #include <IOKit/IOLib.h>
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/IOTimerEventSource.h>
@@ -249,7 +249,7 @@ public:
     bool startBattery() {
         sheng_battmgr_init(&bm);
         uint32_t ma = 0;
-        if (PE_parse_boot_argn("sheng-usb-sdp-ma", &ma, sizeof ma)) bm.sdp_limit_ua = ma > 3000 ? 3000000u : ma * 1000u;
+        if (PE_parse_boot_argn("usb-sdp-ma", &ma, sizeof ma)) bm.sdp_limit_ua = ma > 3000 ? 3000000u : ma * 1000u;
         sdpLimit = bm.sdp_limit_ua;
         loop = IOWorkLoop::workLoop();
         ringLock = IOSimpleLockAlloc();

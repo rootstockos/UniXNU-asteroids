@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Diagnostic log on UFS (boot argument sheng-log=1): every 2 s the text the board page would show (the diagnostic page, the live
+// Diagnostic log on UFS (boot argument log=1): every 2 s the text the board page would show (the diagnostic page, the live
 // banner, the GPU rows, a caught panic message) and the kernel message buffer are written to the last 32 MiB of userdata through
 // NativeUfs's bounded log window, so a run can be read back afterwards (scripts/read-sheng-log.py over the Linux log reader).
 //
@@ -278,7 +278,7 @@ static uint32_t export_region;   // blocks of the export region, 0 = none
 static uint32_t export_total, export_filled, export_generation, export_target, export_ready, export_ready_bytes, export_ready_first;
 // The diagnostic file export takes the half the ready blob does not hold; from then on the plugin's exports are refused (-7), so neither
 // overwrites the other. diag_status: 0 not asked, 1 running, 2 done, negative failed.
-// The GPU trace export (sheng-gpu-trace-export) runs again and again: each round goes into the quarter of that half the header does
+// The GPU trace export (gpu-trace-export) runs again and again: each round goes into the quarter of that half the header does
 // not name, so the header always names a complete one. The full export, once asked, takes the whole half and ends the rounds.
 static uint32_t diag_first, diag_bytes, diag_rounds;
 static int diag_owned;
@@ -1117,7 +1117,7 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
       at = put(out, at, cap, row, sizeof row);
     }
   }
-  // Direct scanout (sheng-dpu-scanout): the display bank's stage 1 (NativeUfs), then the flips (NativeLegacyDisplay.cpp native_legacy_direct).
+  // Direct scanout (dpu-scanout): the display bank's stage 1 (NativeUfs), then the flips (NativeLegacyDisplay.cpp native_legacy_direct).
   if (&native_ufs_dpu_state && native_ufs_dpu_state) {
     char row[600];
     const volatile uint32_t *c = native_ufs_dpu_check;
@@ -1641,21 +1641,21 @@ static void writer(void *arg, wait_result_t result) {
   if (&boot_progress_tag) strlcpy(h.tag, boot_progress_tag(), sizeof h.tag);
   uint64_t f = 0; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f)); if (!f) f = 19200000;
   const uint64_t start = log_ticks();
-  // The reboot-into-fastboot path, read only: PSCI features and the PMIC cell. sheng-autoreset=<seconds of log time> then writes the cell and
+  // The reboot-into-fastboot path, read only: PSCI features and the PMIC cell. autoreset=<seconds of log time> then writes the cell and
   // restarts once, after that round's log is on the medium, but only when the probe found the cell writable.
   uint32_t autoreset = 0;
   int reset_ok = 0, reset_tried = 0;
   if (&boot_reset_probe) {
     reset_ok = boot_reset_probe(boot_log_reset_probe_text, sizeof boot_log_reset_probe_text) == 0;
-    PE_parse_boot_argn("sheng-autoreset", &autoreset, sizeof autoreset);
+    PE_parse_boot_argn("autoreset", &autoreset, sizeof autoreset);
   }
-  // sheng-diag-export=<seconds of log time>: export the diagnostic files once then (set it shortly before sheng-autoreset).
+  // diag-export=<seconds of log time>: export the diagnostic files once then (set it shortly before autoreset).
   uint32_t diag_at = 0;
-  if (&boot_diag_scan && &boot_diag_stream) PE_parse_boot_argn("sheng-diag-export", &diag_at, sizeof diag_at);
-  // sheng-gpu-trace-export=<seconds>: the GPU trace directory alone, every so many seconds (the first round after one period).
+  if (&boot_diag_scan && &boot_diag_stream) PE_parse_boot_argn("diag-export", &diag_at, sizeof diag_at);
+  // gpu-trace-export=<seconds>: the GPU trace directory alone, every so many seconds (the first round after one period).
   uint32_t gpu_every = 0, gpu_next = 0;
   int diag_full = 0;
-  if (&boot_diag_scan_gpu && &boot_diag_stream) PE_parse_boot_argn("sheng-gpu-trace-export", &gpu_every, sizeof gpu_every);
+  if (&boot_diag_scan_gpu && &boot_diag_stream) PE_parse_boot_argn("gpu-trace-export", &gpu_every, sizeof gpu_every);
   gpu_next = gpu_every;
   uint32_t errors = 0;
   boot_log_state = 2;
@@ -1712,23 +1712,23 @@ static void writer(void *arg, wait_result_t result) {
   }
 }
 
-// Called by the board page's monitor once a second; starts the writer the first time when sheng-log=1.
+// Called by the board page's monitor once a second; starts the writer the first time when log=1.
 void boot_log_tick(unsigned now) {
   (void)now;
   if (boot_log_started) return;
   boot_log_started = 1;
   // An unattended run must come back however it ends: on the desktop past its deadline (int-229 first suspected) or in a panic seconds
   // after the start, before UFS and this log exist (int-229: a duplicate class at PE_lockdown_iokit). So the first tick, independent of
-  // sheng-log, marks the cell (any restart is fastboot) and arms the hypervisor's watchdog, which bites a minute after the pings stop:
+  // log, marks the cell (any restart is fastboot) and arms the hypervisor's watchdog, which bites a minute after the pings stop:
   // after the autoreset deadline, or when a panic parks the cores.
   uint32_t autoreset = 0;
-  if (PE_parse_boot_argn("sheng-autoreset", &autoreset, sizeof autoreset) && autoreset && &boot_reset_probe &&
+  if (PE_parse_boot_argn("autoreset", &autoreset, sizeof autoreset) && autoreset && &boot_reset_probe &&
       boot_reset_probe(boot_log_reset_probe_text, sizeof boot_log_reset_probe_text) == 0) {
     if (&boot_reset_mark_bootloader) boot_reset_mark_bootloader(boot_log_reset_mark, sizeof boot_log_reset_mark);
     if (&boot_reset_watchdog) boot_reset_watchdog(autoreset + 60, boot_log_reset_watchdog, sizeof boot_log_reset_watchdog);
   }
   uint32_t mode = 0;
-  if (!PE_parse_boot_argn("sheng-log", &mode, sizeof mode) || mode != 1) return;
+  if (!PE_parse_boot_argn("log", &mode, sizeof mode) || mode != 1) return;
   if (!&native_ufs_log_open || !&native_ufs_log_write || !&native_ufs_log_sync) return;
   boot_log_buffer = (uint8_t *)IOMallocAligned(LogMsgBlocks * LogBlock, LogBlock);
   if (!boot_log_buffer) return;

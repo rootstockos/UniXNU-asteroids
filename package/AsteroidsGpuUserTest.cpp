@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The 3a's first user-space GPU test (T16, sheng-gpu-power=18 with sheng-gpu-addon=1). launchd starts it from the GPU addon
+// The 3a's first user-space GPU test (T16, gpu-power=18 with gpu-addon=1). launchd starts it from the GPU addon
 // (/private/var/ngpu/bin, its jobs in the addon's union view over /System/Library/LaunchDaemons), outside every sandbox profile.
 // It waits for the NativeAdrenoGpu service the board probe publishes, then runs UniXNU's shared user test
 // (drivers/NativeMetal/NativeAdrenoUserTest.h): two rounds of three CP_MEM_WRITEs from an IB it writes through its own mappings,

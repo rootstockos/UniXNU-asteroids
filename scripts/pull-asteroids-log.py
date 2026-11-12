@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Read the UniXNU diagnostic log (package/BootLog.c, sheng-log=1) of the last boot from the phone and decode it.
+"""Read the UniXNU diagnostic log (package/BootLog.c, log=1) of the last boot from the phone and decode it.
 
 The phone runs LineageOS Recovery with ADB (root shell). The log window is the last 32 MiB of userdata (NativeUfs kLogReserveBlocks,
 8192 blocks of 4096 bytes); it is copied with one dd into
 the phone's /tmp (RAM) and fetched with adb pull, nothing on the phone's storage is written, and sheng's decoder (scripts/read-sheng-log.py
 --decode, UniXNU-sheng 08cde20) writes header.txt, msgbuf.txt, slots.txt and latest.txt. When the header names a diagnostic export
-(sheng-diag-export, or sheng-gpu-trace-export's rounds), it is read from the export region below the window the same way and unpacked
+(diag-export, or gpu-trace-export's rounds), it is read from the export region below the window the same way and unpacked
 into diag/; a GPU trace in it (Turnip's TU_DW_TRACE) is decoded by scripts/gpu-trace.py into gpu-trace.txt.
 
     python3 scripts/pull-asteroids-log.py --out <dir>
