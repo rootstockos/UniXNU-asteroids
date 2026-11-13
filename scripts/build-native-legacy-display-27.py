@@ -596,8 +596,11 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
                                                                'TouchState', 'AsteroidsAudioProbe', 'AsteroidsTouchProbe', 'GpuPowerProbe',
                                                                'AsteroidsBacklight', 'ShengAudioService', 'ShengBattery')],
            KITS / 'LegacyDisplayStubs.c', KITS / 'GpuPowerBoard.h', tfa_gen / 'AsteroidsTfaConfig.h']
+# Sources by tree path; the HID driver comes from the device repository (drivers/ShengHidInput), outside the tree.
+def label(path):
+    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else 'device/' + str(path.relative_to(DEVICE))
 (OUT / 'build-report.json').write_text(json.dumps(dict(
-    source_sha256={str(p.relative_to(ROOT)): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),
+    source_sha256={label(p): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),
     kernelcache_sha256=abi['kernelcache_sha256'], device_class=DEVICE_CLASS, compiled_object_sha256=sha(obj), archive_sha256=sha(archive),
     bindings={n: hex(v) for n, v in bindings.items()}, hid_bindings={n: hex(v) for n, v in hid_bindings.items()},
     virtual_entries=len(slots), owned_entries=owned, inherited_native_entries=native, original_bindings='fixed-collection-addresses',
