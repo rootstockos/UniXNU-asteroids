@@ -80,6 +80,10 @@ fi
 cd "$U"
 if [ $kernel = 1 ]; then
   echo '== kernel (runtime: Data seed)'
+  # The A810 firmware (proprietary-files.txt, checked against its SHA-256) and the pinned Linux sources of the GMU header, as
+  # ci-bootstrap-candidate.sh fetches them for the iPadOS 17 build; both are kept in .cache of this repository.
+  python3 "$DEVICE/scripts/extract-files.py" --device "$DEVICE" >> "$LOG" 2>&1
+  [ -d "$DEVICE/.cache/linux-a8xx/drivers" ] || python3 "$DEVICE/scripts/prepare-asteroids-gmu.py" --fetch >> "$LOG" 2>&1
   ./unixnu fetch -D "$DEVICE" --os $OS >> "$LOG" 2>&1
   ./unixnu ipsw fetch -D "$DEVICE" --os $OS >> "$LOG" 2>&1
   # A fresh .config from the defconfig; the runtime step then writes the Data seed's volume UUID into it before the kernel builds

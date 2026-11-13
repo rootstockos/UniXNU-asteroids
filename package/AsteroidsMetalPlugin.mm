@@ -285,6 +285,8 @@ static const QuartzCoreSites kQuartzCoreSites[] = {
     // iOS 27.0.1 24A446 (iPhone17,4) A54D617A-342B-3A29-8F63-B9F93CE76141: QuartzCore's code at the iPad's addresses, its data 0x4000 higher
     {{0xa5, 0x4d, 0x61, 0x7a, 0x34, 0x2b, 0x3a, 0x29, 0x8f, 0x63, 0xb9, 0xf9, 0x3c, 0xe7, 0x61, 0x41}, 0x1846dce88, 0x1e7024fc0},
 };
+// libdyld exports it, but only the private mach-o/dyld_priv.h declares it, not the iPhoneOS SDK.
+extern "C" bool _dyld_get_shared_cache_uuid(uuid_t uuid);
 // The entry of the running cache, or null: then nothing is read or written by address.
 static const QuartzCoreSites *quartzCoreSites() {
     uuid_t uuid;
@@ -647,8 +649,9 @@ static id deviceForPort(unsigned port) {
         pthread_t primer;
         pthread_create(&primer, &attributes, [](void *) -> void * {
             char list[1024];
+            // false: iOS has no system shader cache to fill (wholeSystem is macOS's), so only the bundles loaded here are primed.
             prime::run((id<MTLDevice>)device, gCacheDirectory, 90,
-                       requestedPath("NativeAdrenoMetal.primelist", list, sizeof list) ? std::string(list) : std::string());
+                       requestedPath("NativeAdrenoMetal.primelist", list, sizeof list) ? std::string(list) : std::string(), false);
             return nullptr;
         }, nullptr);
         pthread_attr_destroy(&attributes);

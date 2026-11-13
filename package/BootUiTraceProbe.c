@@ -12,6 +12,10 @@
 #include <arm/cpu_internal.h>
 #include <kern/processor.h>
 #include <vm/vm_map.h>
+#if __has_include(<vm/vm_map_xnu.h>)
+// xnu-12377 (iOS 27) declares vm_map_read_user and vm_map_reference here, as sheng's copy includes it.
+#include <vm/vm_map_xnu.h>
+#endif
 #include <ipc/ipc_space.h>
 #include <ipc/ipc_port.h>
 #include <string.h>

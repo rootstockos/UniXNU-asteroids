@@ -37,6 +37,8 @@ __pycache__/
 *.spv
 *.metallib
 *.bin
+# The signed root policy headers and the public owner key (VROOTKEY) are inputs of the build; the private key never is.
+!scripts/policies/**/*.bin
 *.mbn
 *.fw
 *.pem

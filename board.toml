@@ -405,7 +405,10 @@ remove = ["adt.chosen.bytes.boot-manifest-hash"]   # the iPadOS 17 manifest's ha
 
 [os_overrides."ios-27.0.1-24A446".components]
 include = ["ArmDTPlatform", "ArmCpu", "RamBlock", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "AppleKeyStoreState",
-           "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "Sm7635Platform", "QcomPmicRtc"]
+           "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "Sm7635Platform", "QcomPmicRtc",
+           # Sources only: build-adreno740-accelerator.py includes AdrenoMetal's OriginalAcceleratorABI.h (as ../NativeMetal/). Its
+           # recipe is a payload-stage one that nothing runs here; this board's own plugin is the GPU addon.
+           "AdrenoMetal"]
 
 [os_overrides."ios-27.0.1-24A446".kernel]
 defconfig = "asteroids_ios27_defconfig"
