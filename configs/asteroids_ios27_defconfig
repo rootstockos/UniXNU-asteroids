@@ -8,7 +8,9 @@ CONFIG_XNU_DT_PANIC_REGION=y
 CONFIG_XNU_ARMVIRT_PLATFORM=n
 # The PMK8550 real-time clock (UniXNU-sm7635-common QcomPmicRtc), as on iPadOS 17.
 CONFIG_XNU_QCOM_PMIC_RTC=y
-CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/sheng-source-storage/libShengSourceStorage.a"
+# The staged Metal accelerator (build-adreno740-accelerator.py), which GpuPowerProbe allocates: with NATIVE_ADRENO off the kernel
+# does not force-load libAdreno740.a, where the builder also places it.
+CONFIG_XNU_EXTRA_LD_ARCHIVES="-Wl,-force_load,{tree}/build/sheng-source-storage/libShengSourceStorage.a -Wl,-force_load,{tree}/build/adreno740-accelerator/libAdreno740Accelerator.late.a"
 CONFIG_XNU_KERNEL_CHAINED_FIXUPS=y
 # The boot image carries the signed policy headers (scripts/policies/ios-27.0.1-24A446, our own owner key); their hash
 # tables are the userdata objects OS.vroot and SystemOS.vroot.

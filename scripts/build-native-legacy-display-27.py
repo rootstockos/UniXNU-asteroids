@@ -426,8 +426,15 @@ sdk_kernel = Path(header_report['sdk']) / 'System/Library/Frameworks/Kernel.fram
 # The device repository's ShengHidInput submodule, as sheng's 27 builder: its catalog recipe builds for iPadOS 17 only, so the
 # component is not selected on 27 and the tree has no drivers/ShengHidInput link.
 DEVICE = Path(os.environ.get('UNIXNU_DEVICE') or ROOT.parents[5] / 'UniXNU-asteroids')
-hid_source = DEVICE / 'drivers/ShengHidInput/NativeHidInput.cpp'
-require(hid_source.is_file(), f'{hid_source} missing: check out the device repository with its submodules')
+require((DEVICE / 'drivers/ShengHidInput/NativeHidInput.cpp').is_file(),
+        f'{DEVICE}/drivers/ShengHidInput/NativeHidInput.cpp missing: check out the device repository with its submodules')
+# Linked into the tree at its catalog path, so the build report names it by a tree path the kernel step re-checks.
+hid_link = ROOT / 'drivers/ShengHidInput'
+if not hid_link.exists():
+    if hid_link.is_symlink():
+        hid_link.unlink()
+    hid_link.symlink_to((DEVICE / 'drivers/ShengHidInput').resolve())
+hid_source = hid_link / 'NativeHidInput.cpp'
 hid_command = source_drivers.compile_command(r, hid_source, SRC / 'NativeHidInput.o', ['-I', str(include), '-idirafter', str(sdk_kernel)],
                                              ['-I', str(ROOT / '.cache/xnu-work/osfmk'), '-DNATIVE_HID_SOURCE_API=1'])
 run(hid_command, cwd=r['directory'])
@@ -582,6 +589,11 @@ for sources_, extra, tag in ((smmu_sources, ('-I', str(smmu4k), '-I', str(pm4)),
         board_objects.append(dst)
 compile_c(KITS / 'LegacyDisplayStubs.c', board_dir / 'LegacyDisplayStubs.o')
 board_objects.append(board_dir / 'LegacyDisplayStubs.o')
+# The audio DSP's firmware reader (the modem partition, or files through the VFS: bsd flags), which iPadOS 17 builds in its
+# boot progress kit, and the iOS 27 stand-ins (Ios27Standins.c) for what this build has no layer for.
+compile_c(KITS / 'AdspFirmware.c', board_dir / 'AdspFirmware.o', recipe='bsd/DEVELOPMENT/kern_exec.o.json')
+compile_c(KITS / 'Ios27Standins.c', board_dir / 'Ios27Standins.o')
+board_objects += [board_dir / 'AdspFirmware.o', board_dir / 'Ios27Standins.o']
 input_objects += board_objects
 print(f'Board drivers: {len(board_objects)} objects')
 archive = OUT / 'libNativeLegacyDisplay.late.a'
@@ -595,12 +607,9 @@ sources = [ROOT / 'drivers/GopFramebuffer/NativeLegacyDisplay.cpp', ROOT / 'driv
            *kit_sources, *[KITS / (stem + '.cpp') for stem in ('CpuFreqProbe', 'PanelProbe', 'AdspProbe', 'BatteryProbe', 'ButtonProbe',
                                                                'TouchState', 'AsteroidsAudioProbe', 'AsteroidsTouchProbe', 'GpuPowerProbe',
                                                                'AsteroidsBacklight', 'ShengAudioService', 'ShengBattery')],
-           KITS / 'LegacyDisplayStubs.c', KITS / 'GpuPowerBoard.h', tfa_gen / 'AsteroidsTfaConfig.h']
-# Sources by tree path; the HID driver comes from the device repository (drivers/ShengHidInput), outside the tree.
-def label(path):
-    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else 'device/' + str(path.relative_to(DEVICE))
+           KITS / 'LegacyDisplayStubs.c', KITS / 'AdspFirmware.c', KITS / 'Ios27Standins.c', KITS / 'GpuPowerBoard.h', tfa_gen / 'AsteroidsTfaConfig.h']
 (OUT / 'build-report.json').write_text(json.dumps(dict(
-    source_sha256={label(p): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),
+    source_sha256={str(p.relative_to(ROOT)): sha(p) for p in sources}, generated_abi_sha256=sha(OUT / 'OriginalLegacyFramebufferABI.h'),
     kernelcache_sha256=abi['kernelcache_sha256'], device_class=DEVICE_CLASS, compiled_object_sha256=sha(obj), archive_sha256=sha(archive),
     bindings={n: hex(v) for n, v in bindings.items()}, hid_bindings={n: hex(v) for n, v in hid_bindings.items()},
     virtual_entries=len(slots), owned_entries=owned, inherited_native_entries=native, original_bindings='fixed-collection-addresses',
